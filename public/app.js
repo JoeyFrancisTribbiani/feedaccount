@@ -682,6 +682,7 @@ async function refreshProfiles({ quiet = false } = {}) {
     }
     setApiStatus(true, "BitBrowser 已连接");
     renderProfiles();
+    renderSchedProfiles();
     renderMetrics();
   } catch (error) {
     setApiStatus(false, "BitBrowser 未连接");
@@ -1774,6 +1775,55 @@ function saveSchedToggles() {
   if (t) localStorage.setItem("sched-enable-tiktok", t.checked ? "1" : "0");
 }
 
+function getSchedProfileIds() {
+  try { return JSON.parse(localStorage.getItem("sched-profile-ids") || "[]"); } catch { return []; }
+}
+
+function saveSchedProfileIds(ids) {
+  localStorage.setItem("sched-profile-ids", JSON.stringify(ids));
+}
+
+function renderSchedProfiles() {
+  const container = document.querySelector("#sched-profile-list");
+  if (!container) return;
+  const profiles = state.profiles
+    .filter((p) => p.seq != null)
+    .sort((a, b) => a.seq - b.seq);
+  if (!profiles.length) {
+    container.innerHTML = '<div class="empty-state compact">未获取到实例列表，请确认 BitBrowser 已连接</div>';
+    return;
+  }
+  const saved = new Set(getSchedProfileIds());
+  const allChecked = saved.size === 0;
+  container.innerHTML = profiles
+    .map((p) => {
+      const checked = allChecked || saved.has(p.id);
+      return `<label class="sched-profile-check">
+        <input type="checkbox" value="${escapeHtml(p.id)}" ${checked ? "checked" : ""} />
+        <span class="sched-seq">#${escapeHtml(p.seq)}</span>
+        <span class="sched-name">${escapeHtml(p.name)}</span>
+      </label>`;
+    })
+    .join("");
+  container.querySelectorAll('input[type="checkbox"]').forEach((cb) => {
+    cb.addEventListener("change", () => {
+      const ids = [...container.querySelectorAll('input[type="checkbox"]:checked')].map((c) => c.value);
+      saveSchedProfileIds(ids);
+      updateSchedSelectAllBtn();
+    });
+  });
+  updateSchedSelectAllBtn();
+}
+
+function updateSchedSelectAllBtn() {
+  const container = document.querySelector("#sched-profile-list");
+  const btn = document.querySelector("#sched-select-all");
+  if (!container || !btn) return;
+  const checks = container.querySelectorAll('input[type="checkbox"]');
+  const checked = container.querySelectorAll('input[type="checkbox"]:checked');
+  btn.textContent = checks.length > 0 && checked.length === checks.length ? "取消全选" : "全选";
+}
+
 function restoreSchedToggles() {
   const r = document.querySelector("#sched-enable-reddit");
   const t = document.querySelector("#sched-enable-tiktok");
@@ -1824,12 +1874,24 @@ async function initScheduler() {
 document.querySelector("#sched-enable-reddit")?.addEventListener("change", () => { saveSchedToggles(); renderScheduler(); });
 document.querySelector("#sched-enable-tiktok")?.addEventListener("change", () => { saveSchedToggles(); renderScheduler(); });
 
+document.querySelector("#sched-select-all")?.addEventListener("click", () => {
+  const container = document.querySelector("#sched-profile-list");
+  const checks = container.querySelectorAll('input[type="checkbox"]');
+  if (!checks.length) return;
+  const allChecked = [...checks].every((cb) => cb.checked);
+  checks.forEach((cb) => (cb.checked = !allChecked));
+  const ids = [...container.querySelectorAll('input[type="checkbox"]:checked')].map((c) => c.value);
+  saveSchedProfileIds(ids);
+  updateSchedSelectAllBtn();
+});
+
 sched.startBtn.addEventListener("click", async () => {
   try {
     const proxyRotateUrl = document.querySelector("#sched-proxy-url")?.value.trim() || "";
     const enableReddit = document.querySelector("#sched-enable-reddit")?.checked ?? true;
     const enableTiktok = document.querySelector("#sched-enable-tiktok")?.checked ?? true;
-    const options = { enableReddit, enableTiktok };
+    const profileIds = [...document.querySelectorAll("#sched-profile-list input[type=checkbox]:checked")].map((cb) => cb.value);
+    const options = { enableReddit, enableTiktok, profileIds };
     if (proxyRotateUrl) options.proxyRotateUrl = proxyRotateUrl;
     const res = await request("/api/scheduler/start", { method: "POST", body: JSON.stringify({ options }) });
     state.scheduler = res.status;
