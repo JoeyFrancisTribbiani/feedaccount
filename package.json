@@ -1,0 +1,15 @@
+{
+  "name": "bitbrowser-reddit-flow-monitor",
+  "version": "1.0.0",
+  "private": true,
+  "description": "BitBrowser Reddit 首页多实例逐帖阅读与本地监控面板",
+  "type": "module",
+  "scripts": {
+    "start": "node --no-warnings src/server.js",
+    "dev": "node --no-warnings --watch src/server.js",
+    "test": "node --no-warnings --test"
+  },
+  "engines": {
+    "node": ">=22.5"
+  }
+}

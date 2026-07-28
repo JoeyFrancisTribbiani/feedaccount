@@ -1,0 +1,2147 @@
+const ACTIVE_STATES = new Set([
+  "connecting",
+  "scrolling",
+  "waiting",
+  "pausing",
+  "paused",
+  "stopping",
+]);
+
+const FALLBACK_OPTIONS = Object.freeze({
+  waitMinSec: 5,
+  waitMaxSec: 15,
+  maxPosts: 0,
+  autoStopAtBottom: false,
+  detailLoopEnabled: true,
+  detailAfterMinPosts: 3,
+  detailAfterMaxPosts: 8,
+  detailWaitMinSec: 2,
+  detailWaitMaxSec: 15,
+  commentScrollMin: 2,
+  commentScrollMax: 7,
+  returnWaitMinSec: 2,
+  returnWaitMaxSec: 4,
+  autoUpvoteEnabled: false,
+  autoUpvoteProbability: 0,
+  autoCommentUpvoteEnabled: false,
+  autoCommentUpvoteProbability: 0,
+});
+
+const OPTIONS_STORAGE_KEY = "reddit-flow-options-v3";
+const LEGACY_OPTIONS_STORAGE_KEY = "reddit-flow-options-v2";
+
+const state = {
+  config: null,
+  profiles: [],
+  jobs: [],
+  tiktokJobs: [],
+  scheduler: null,
+  stats: null,
+  history: [],
+  databaseLogs: [],
+  activeDataTab: "history",
+  selected: new Set(),
+  toastTimer: null,
+  dataRefreshTimer: null,
+  settingsSaveTimer: null,
+  pendingJobActions: new Set(),
+  pendingManualUpvotes: new Set(),
+  pendingManualCommentUpvotes: new Set(),
+};
+
+const elements = {
+  apiStatus: document.querySelector("#api-status"),
+  dbStatus: document.querySelector("#db-status"),
+  streamStatus: document.querySelector("#stream-status"),
+  apiEndpoint: document.querySelector("#api-endpoint"),
+  databaseFile: document.querySelector("#database-file"),
+  targetUrl: document.querySelector("#target-url"),
+  profilesLoading: document.querySelector("#profiles-loading"),
+  profilesGrid: document.querySelector("#profiles-grid"),
+  jobsEmpty: document.querySelector("#jobs-empty"),
+  jobsList: document.querySelector("#jobs-list"),
+  activityList: document.querySelector("#activity-list"),
+  selectionCount: document.querySelector("#selection-count"),
+  startSelected: document.querySelector("#start-selected"),
+  stopSelected: document.querySelector("#stop-selected"),
+  stopAll: document.querySelector("#stop-all"),
+  refreshProfiles: document.querySelector("#refresh-profiles"),
+  selectAll: document.querySelector("#select-all"),
+  resetOptions: document.querySelector("#reset-options"),
+  optionsForm: document.querySelector("#options-form"),
+  waitMin: document.querySelector("#wait-min"),
+  waitMax: document.querySelector("#wait-max"),
+  maxPosts: document.querySelector("#max-posts"),
+  stopAtBottom: document.querySelector("#stop-at-bottom"),
+  detailLoopEnabled: document.querySelector("#detail-loop-enabled"),
+  detailAfterMinPosts: document.querySelector("#detail-after-min-posts"),
+  detailAfterMaxPosts: document.querySelector("#detail-after-max-posts"),
+  detailWaitMin: document.querySelector("#detail-wait-min"),
+  detailWaitMax: document.querySelector("#detail-wait-max"),
+  commentScrollMin: document.querySelector("#comment-scroll-min"),
+  commentScrollMax: document.querySelector("#comment-scroll-max"),
+  returnWaitMin: document.querySelector("#return-wait-min"),
+  returnWaitMax: document.querySelector("#return-wait-max"),
+  autoUpvoteEnabled: document.querySelector("#auto-upvote-enabled"),
+  autoUpvoteProbability: document.querySelector("#auto-upvote-probability"),
+  autoCommentUpvoteEnabled: document.querySelector("#auto-comment-upvote-enabled"),
+  autoCommentUpvoteProbability: document.querySelector("#auto-comment-upvote-probability"),
+  metricProfiles: document.querySelector("#metric-profiles"),
+  metricActive: document.querySelector("#metric-active"),
+  metricPosts: document.querySelector("#metric-posts"),
+  metricDetailVisits: document.querySelector("#metric-detail-visits"),
+  dbRuns: document.querySelector("#db-runs"),
+  dbCompleted: document.querySelector("#db-completed"),
+  dbPosts: document.querySelector("#db-posts"),
+  dbDetailVisits: document.querySelector("#db-detail-visits"),
+  dbEvents: document.querySelector("#db-events"),
+  refreshData: document.querySelector("#refresh-data"),
+  clearLogs: document.querySelector("#clear-logs"),
+  exportHistory: document.querySelector("#export-history"),
+  exportLogs: document.querySelector("#export-logs"),
+  dataProfileFilter: document.querySelector("#data-profile-filter"),
+  historyStatusFilter: document.querySelector("#history-status-filter"),
+  logLevelFilter: document.querySelector("#log-level-filter"),
+  statusFilterWrap: document.querySelector("#status-filter-wrap"),
+  levelFilterWrap: document.querySelector("#level-filter-wrap"),
+  historyView: document.querySelector("#history-view"),
+  logsView: document.querySelector("#logs-view"),
+  historyBody: document.querySelector("#history-body"),
+  historyEmpty: document.querySelector("#history-empty"),
+  databaseLogList: document.querySelector("#database-log-list"),
+  logsEmpty: document.querySelector("#logs-empty"),
+  runDialog: document.querySelector("#run-dialog"),
+  dialogTitle: document.querySelector("#dialog-title"),
+  dialogContent: document.querySelector("#dialog-content"),
+  toast: document.querySelector("#toast"),
+};
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+async function request(path, options = {}) {
+  const response = await fetch(path, {
+    ...options,
+    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const details = Array.isArray(payload.errors)
+      ? payload.errors.map((item) => item.error).filter(Boolean).join("；")
+      : "";
+    throw new Error(payload.error || details || "请求执行失败");
+  }
+  return payload;
+}
+
+function setApiStatus(online, message) {
+  elements.apiStatus.classList.remove("status-loading", "status-online", "status-offline");
+  elements.apiStatus.classList.add(online ? "status-online" : "status-offline");
+  elements.apiStatus.innerHTML = `<span class="status-dot"></span>${escapeHtml(message)}`;
+}
+
+function showToast(message, isError = false) {
+  clearTimeout(state.toastTimer);
+  elements.toast.textContent = message;
+  elements.toast.classList.toggle("error", isError);
+  elements.toast.classList.add("show");
+  state.toastTimer = setTimeout(() => elements.toast.classList.remove("show"), 3200);
+}
+
+function formatNumber(value) {
+  return new Intl.NumberFormat("zh-CN").format(Number(value || 0));
+}
+
+function formatDateTime(value) {
+  if (!value) return "—";
+  return new Date(value).toLocaleString("zh-CN", {
+    hour12: false,
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
+function statusLabel(status, fallback = "") {
+  const labels = {
+    connecting: "正在连接",
+    scrolling: "定位下一帖",
+    waiting: "正在阅读",
+    pausing: "正在暂停",
+    paused: "已暂停",
+    stopping: "正在停止",
+    stopped: "已停止",
+    completed: "已完成",
+    interrupted: "意外中断",
+    error: "运行出错",
+  };
+  return labels[status] || fallback || status;
+}
+
+function workflowPhaseLabel(job) {
+  if (job.workflowPhaseText) return job.workflowPhaseText;
+  const labels = {
+    connecting: "正在连接",
+    feed: "浏览 Feed",
+    feed_align: "定位 Feed 帖子",
+    feed_wait: "阅读 Feed 帖子",
+    opening_detail: "打开帖子详情",
+    detail_wait: "阅读帖子详情",
+    locating_comments: "定位评论区",
+    comment_scrolling: "浏览评论区",
+    return_wait: "返回前停留",
+    returning_feed: "返回 Feed",
+    feed_restore: "恢复 Feed 位置",
+  };
+  return labels[job.workflowPhase] || statusLabel(job.status, job.statusText);
+}
+
+function shortId(id) {
+  return id.length > 12 ? `${id.slice(0, 6)}…${id.slice(-4)}` : id;
+}
+
+function getActiveJobs() {
+  return state.jobs.filter((job) => ACTIVE_STATES.has(job.status));
+}
+
+function jobForProfile(profileId) {
+  return state.jobs.find((job) => job.profileId === profileId);
+}
+
+function renderMetrics() {
+  const active = getActiveJobs();
+  const posts = state.jobs.reduce((sum, job) => sum + Number(job.postCount || 0), 0);
+  const detailVisits = state.jobs.reduce(
+    (sum, job) => sum + Number(job.detailVisitCount || 0),
+    0,
+  );
+  elements.metricProfiles.textContent = state.profiles.length || "0";
+  elements.metricActive.textContent = active.length;
+  elements.metricPosts.textContent = formatNumber(posts);
+  elements.metricDetailVisits.textContent = formatNumber(detailVisits);
+  elements.stopAll.disabled = active.length === 0;
+}
+
+function renderProfiles() {
+  elements.profilesLoading.classList.add("hidden");
+  if (!state.profiles.length) {
+    elements.profilesGrid.innerHTML = `
+      <div class="empty-state compact" style="grid-column: 1 / -1">
+        没有发现可用实例。请确认 BitBrowser 已登录并开启 Local API。
+      </div>`;
+    updateSelectionUi();
+    renderProfileFilter();
+    return;
+  }
+
+  elements.profilesGrid.innerHTML = state.profiles
+    .map((profile) => {
+      const selected = state.selected.has(profile.id);
+      const job = jobForProfile(profile.id);
+      const active = job && ACTIVE_STATES.has(job.status);
+      const stateClass = active ? "active" : profile.running ? "open" : "";
+      const stateText = active
+        ? ["paused", "pausing", "stopping"].includes(job.status)
+          ? statusLabel(job.status, job.statusText)
+          : workflowPhaseLabel(job)
+        : profile.running
+          ? "窗口已打开"
+          : "待启动";
+      return `
+        <button
+          class="profile-card ${selected ? "selected" : ""}"
+          type="button"
+          data-profile-id="${escapeHtml(profile.id)}"
+          aria-pressed="${selected}"
+        >
+          <span class="profile-check" aria-hidden="true"></span>
+          <span class="profile-main">
+            <span class="profile-title">
+              <span class="sequence">#${escapeHtml(profile.seq ?? "—")}</span>
+              <strong>${escapeHtml(profile.name)}</strong>
+            </span>
+            <span class="profile-meta">
+              <span title="${escapeHtml(profile.id)}">ID ${escapeHtml(shortId(profile.id))}</span>
+              ${profile.pid ? `<span>PID ${escapeHtml(profile.pid)}</span>` : ""}
+            </span>
+          </span>
+          <span class="profile-state ${stateClass}">${escapeHtml(stateText)}</span>
+        </button>`;
+    })
+    .join("");
+
+  for (const card of elements.profilesGrid.querySelectorAll("[data-profile-id]")) {
+    card.addEventListener("click", () => {
+      const profileId = card.dataset.profileId;
+      if (state.selected.has(profileId)) state.selected.delete(profileId);
+      else state.selected.add(profileId);
+      renderProfiles();
+    });
+  }
+  updateSelectionUi();
+  renderProfileFilter();
+}
+
+function updateSelectionUi() {
+  const selectedCount = state.selected.size;
+  const startableCount = [...state.selected].filter((profileId) => {
+    const job = jobForProfile(profileId);
+    return !job || !ACTIVE_STATES.has(job.status);
+  }).length;
+  elements.selectionCount.textContent = selectedCount
+    ? startableCount === selectedCount
+      ? `已选择 ${selectedCount} 个实例`
+      : `已选择 ${selectedCount} 个实例，其中 ${startableCount} 个可启动`
+    : "尚未选择实例";
+  elements.startSelected.disabled = startableCount === 0;
+  const selectedHasActive = [...state.selected].some((profileId) => {
+    const job = jobForProfile(profileId);
+    return job && ACTIVE_STATES.has(job.status);
+  });
+  elements.stopSelected.disabled = !selectedHasActive;
+  elements.selectAll.textContent =
+    state.profiles.length > 0 && selectedCount === state.profiles.length ? "取消全选" : "全选";
+}
+
+function remainingText(job) {
+  if (job.alignmentPending) {
+    if (job.nextActionAt) {
+      const remaining = Math.max(0, new Date(job.nextActionAt).getTime() - Date.now());
+      return `<strong data-countdown="${escapeHtml(job.nextActionAt)}">${(remaining / 1000).toFixed(1)} 秒</strong> 后继续校正`;
+    }
+    return "正在验证帖子是否完整入镜";
+  }
+  if (job.status === "waiting" && job.nextActionAt) {
+    const remaining = Math.max(0, new Date(job.nextActionAt).getTime() - Date.now());
+    const nextCopy = {
+      detail_wait: "后开始查看评论",
+      return_wait: "后返回 Feed",
+      feed_wait: "后继续浏览 Feed",
+      comment_scrolling: "后继续浏览评论",
+    }[job.workflowPhase] || "后继续下一步";
+    return `<strong data-countdown="${escapeHtml(job.nextActionAt)}">${(remaining / 1000).toFixed(1)} 秒</strong> ${nextCopy}`;
+  }
+  if (job.workflowPhase === "opening_detail") return "正在打开普通帖子详情";
+  if (job.workflowPhase === "locating_comments") return "正在定位评论区";
+  if (job.workflowPhase === "comment_scrolling") {
+    return `评论区第 ${formatNumber(job.commentScrollProgress)}/${formatNumber(job.commentScrollTarget)} 次移动`;
+  }
+  if (job.workflowPhase === "returning_feed") return "正在返回 Feed";
+  if (job.workflowPhase === "feed_restore") return "正在恢复上次 Feed 阅读位置";
+  if (job.status === "scrolling") return "正在分析帖子并定位";
+  if (job.status === "connecting") return "正在连接 Reddit 首页";
+  if (job.status === "pausing") return "当前浏览动作完成后暂停";
+  if (job.status === "paused") return "任务连接保持中";
+  if (job.status === "error") return escapeHtml(job.error || "任务出现错误");
+  return escapeHtml(job.statusText);
+}
+
+function isOrdinaryCurrentPost(post) {
+  return Boolean(post?.postId) &&
+    post.isPromoted !== true &&
+    post.promoted !== true &&
+    post.ineligibleReason !== "promoted";
+}
+
+function canManuallyUpvote(job) {
+  return job?.status === "waiting" &&
+    job.workflowPhase === "feed_wait" &&
+    isOrdinaryCurrentPost(job.currentPost) &&
+    job.manualUpvoteAvailable !== false &&
+    job.manualActionPending !== true &&
+    job.manualCommentActionPending !== true;
+}
+
+function isCommentReadingWait(job) {
+  return ["waiting", "paused"].includes(job?.status) &&
+    ["comment_scrolling", "return_wait"].includes(job.workflowPhase);
+}
+
+function canManuallyUpvoteCurrentComment(job) {
+  return isCommentReadingWait(job) &&
+    Boolean(job.currentComment?.commentId) &&
+    job.manualCommentUpvoteAvailable === true &&
+    job.manualCommentActionPending !== true &&
+    job.manualActionPending !== true;
+}
+
+function manualCommentUpvoteControlHtml(
+  job,
+  actionPending,
+  manualCommentUpvotePending,
+) {
+  if (!isCommentReadingWait(job) || !job.currentComment?.commentId) return "";
+
+  const manualCommentUpvoteEnabled =
+    canManuallyUpvoteCurrentComment(job) && !actionPending;
+  const commentUpvoteDisabled = manualCommentUpvoteEnabled ? "" : " disabled";
+  const commentUpvoteTitle = manualCommentUpvotePending
+    ? "正在确认当前评论的点赞状态"
+    : job.manualCommentUpvoteState === "upvoted"
+      ? "当前评论已点赞"
+      : job.manualCommentUpvoteState === "attempted-unknown"
+        ? job.manualCommentUpvoteBlockedReason ||
+          "此前结果未确认，为避免取消点赞已禁止重试"
+        : job.manualCommentUpvoteAvailable === false
+          ? job.manualCommentUpvoteBlockedReason || "当前评论暂不可点赞"
+          : "确认后仅点赞当前显示的这一条评论";
+  const commentUpvoteLabel = manualCommentUpvotePending
+    ? "点赞中…"
+    : job.manualCommentUpvoteState === "upvoted"
+      ? "已点赞"
+      : "确认赞评论";
+  return `<button class="manual-comment-upvote-job${manualCommentUpvotePending ? " pending" : ""}" type="button" data-job-action="manual-comment-upvote" data-job-id="${escapeHtml(job.profileId)}" data-comment-id="${escapeHtml(job.currentComment.commentId)}" title="${escapeHtml(commentUpvoteTitle)}" aria-busy="${manualCommentUpvotePending}"${commentUpvoteDisabled}>${commentUpvoteLabel}</button>`;
+}
+
+function jobControlHtml(job) {
+  if (!ACTIVE_STATES.has(job.status)) return "";
+  if (job.status === "stopping") return '<span class="job-control-state">正在停止…</span>';
+  const manualUpvotePending =
+    state.pendingManualUpvotes.has(job.profileId) || job.manualActionPending === true;
+  const manualCommentUpvotePending =
+    state.pendingManualCommentUpvotes.has(job.profileId) ||
+    job.manualCommentActionPending === true;
+  const actionPending =
+    state.pendingJobActions.has(job.profileId) ||
+    manualUpvotePending ||
+    manualCommentUpvotePending;
+  const disabled = actionPending ? " disabled" : "";
+  const stopDisabled = state.pendingJobActions.has(job.profileId) ? " disabled" : "";
+  const controls = [];
+  if (job.status === "waiting") {
+    controls.push(
+      `<button class="trigger-job" type="button" data-job-action="trigger" data-job-id="${escapeHtml(job.profileId)}"${disabled}>立即继续</button>`,
+    );
+    if (job.workflowPhase === "feed_wait") {
+      const manualUpvoteEnabled = canManuallyUpvote(job) && !actionPending;
+      const upvoteDisabled = manualUpvoteEnabled ? "" : " disabled";
+      const upvoteTitle = isOrdinaryCurrentPost(job.currentPost)
+        ? manualUpvotePending
+          ? "正在确认当前帖的点赞状态"
+          : job.manualUpvoteState === "upvoted"
+            ? "当前帖子已点赞"
+            : job.manualUpvoteState === "attempted-unknown"
+              ? job.manualUpvoteBlockedReason || "此前结果未确认，为避免取消点赞已禁止重试"
+          : job.manualUpvoteAvailable === false
+            ? "当前帖子暂不可点赞"
+            : "确认后仅点赞当前这一帖"
+        : "当前不是可点赞的普通帖子";
+      const upvoteLabel = manualUpvotePending
+        ? "点赞中…"
+        : job.manualUpvoteState === "upvoted"
+          ? "已点赞"
+          : "确认点赞";
+      controls.push(
+        `<button class="manual-upvote-job${manualUpvotePending ? " pending" : ""}" type="button" data-job-action="manual-upvote" data-job-id="${escapeHtml(job.profileId)}" data-post-id="${escapeHtml(job.currentPost?.postId || "")}" title="${escapeHtml(upvoteTitle)}" aria-busy="${manualUpvotePending}"${upvoteDisabled}>${upvoteLabel}</button>`,
+      );
+    }
+    const commentUpvoteControl = manualCommentUpvoteControlHtml(
+      job,
+      actionPending,
+      manualCommentUpvotePending,
+    );
+    if (commentUpvoteControl) controls.push(commentUpvoteControl);
+  }
+  if (["connecting", "scrolling", "waiting"].includes(job.status)) {
+    controls.push(
+      `<button class="pause-job" type="button" data-job-action="pause" data-job-id="${escapeHtml(job.profileId)}"${disabled}>暂停</button>`,
+    );
+  }
+  if (job.status === "paused") {
+    controls.push(
+      `<button class="resume-job" type="button" data-job-action="resume" data-job-id="${escapeHtml(job.profileId)}"${disabled}>继续</button>`,
+    );
+    const commentUpvoteControl = manualCommentUpvoteControlHtml(
+      job,
+      actionPending,
+      manualCommentUpvotePending,
+    );
+    if (commentUpvoteControl) controls.push(commentUpvoteControl);
+  }
+  controls.push(
+    `<button class="stop-job" type="button" data-job-action="stop" data-job-id="${escapeHtml(job.profileId)}"${stopDisabled}>停止</button>`,
+  );
+  return `<span class="job-controls">${controls.join("")}</span>`;
+}
+
+function renderJobs() {
+  const sorted = [...state.jobs].sort((left, right) => {
+    const leftActive = ACTIVE_STATES.has(left.status) ? 1 : 0;
+    const rightActive = ACTIVE_STATES.has(right.status) ? 1 : 0;
+    return rightActive - leftActive || new Date(right.updatedAt) - new Date(left.updatedAt);
+  });
+
+  elements.jobsEmpty.classList.toggle("hidden", sorted.length > 0);
+  elements.jobsList.innerHTML = sorted
+    .map((job) => {
+      const post = job.currentPost || null;
+      const detailPhases = new Set([
+        "opening_detail",
+        "detail_wait",
+        "locating_comments",
+        "comment_scrolling",
+        "return_wait",
+        "returning_feed",
+      ]);
+      const inDetail = detailPhases.has(job.workflowPhase);
+      const displayPost = inDetail && job.currentDetailPost ? job.currentDetailPost : post;
+      const visibleRatio = post
+        ? Math.max(0, Math.min(1, Number(post.visibleRatio || 0)))
+        : 0;
+      const visibility = Math.round(visibleRatio * 100);
+      const commentPhase = ["locating_comments", "comment_scrolling", "return_wait"].includes(
+        job.workflowPhase,
+      );
+      const progressCurrent = commentPhase
+        ? Number(job.commentScrollProgress || 0)
+        : Number(job.feedPostsSinceDetail || 0);
+      const progressTarget = commentPhase
+        ? Number(job.commentScrollTarget || 0)
+        : Number(job.feedPostsTarget || 0);
+      const progressPercent = progressTarget > 0
+        ? Math.max(0, Math.min(100, Math.round((progressCurrent / progressTarget) * 100)))
+        : visibility;
+      const cycleProgress = job.workflowMode === "feed_detail_readonly"
+        ? `${formatNumber(job.feedPostsSinceDetail)}/${job.feedPostsTarget ? formatNumber(job.feedPostsTarget) : "…"}`
+        : "仅 Feed";
+      const postTitle = displayPost
+        ? displayPost.title || "无标题帖子"
+        : "正在识别当前帖子";
+      const terminalStatus = ["paused", "pausing", "stopping", "stopped", "completed", "error", "interrupted"].includes(job.status);
+      const badgeText = job.alignmentPending
+        ? "正在校正"
+        : terminalStatus
+          ? statusLabel(job.status, job.statusText)
+          : workflowPhaseLabel(job);
+      return `
+        <article class="job-card">
+          <div class="job-topline">
+            <div class="job-title">
+              <strong>#${escapeHtml(job.seq ?? "—")} · ${escapeHtml(job.name || "未命名实例")}</strong>
+              <small>${escapeHtml(job.pageTitle || "Reddit 首页")} · 数据库任务 #${escapeHtml(job.runId ?? "—")}</small>
+              <span class="job-post-title" title="${escapeHtml(postTitle)}">${escapeHtml(postTitle)}</span>
+            </div>
+            <span class="job-badge ${escapeHtml(job.status)}">${escapeHtml(badgeText)}</span>
+          </div>
+          <div class="job-stats">
+            <div class="job-stat"><span>已展示帖子</span><strong>${formatNumber(job.postCount)}</strong></div>
+            <div class="job-stat"><span>本轮 Feed</span><strong>${escapeHtml(cycleProgress)}</strong></div>
+            <div class="job-stat"><span>查看详情</span><strong>${formatNumber(job.detailVisitCount)}</strong></div>
+            <div class="job-stat"><span>当前阶段</span><strong>${escapeHtml(workflowPhaseLabel(job))}</strong></div>
+          </div>
+          ${(Number(job.autoUpvoteCount) > 0 || Number(job.autoCommentUpvoteCount) > 0) ? `<div class="job-stats">
+            <div class="job-stat"><span>自动点赞</span><strong>${formatNumber(job.autoUpvoteCount)} 帖</strong></div>
+            <div class="job-stat"><span>自动赞评</span><strong>${formatNumber(job.autoCommentUpvoteCount)} 条</strong></div>
+            <div class="job-stat"><span>已锁帖</span><strong>${formatNumber(job.upvotedPostCount)}</strong></div>
+          </div>` : ""}
+          <div class="progress-track" title="${escapeHtml(commentPhase ? "评论浏览进度" : "本轮 Feed 进度")} ${progressPercent}%"><i style="width: ${progressPercent}%"></i></div>
+          <div class="job-footer">
+            <span class="next-action">${remainingText(job)}</span>
+            ${jobControlHtml(job)}
+          </div>
+        </article>`;
+    })
+    .join("");
+
+  for (const button of elements.jobsList.querySelectorAll("[data-job-action]")) {
+    button.addEventListener("click", () => {
+      if (button.dataset.jobAction === "manual-upvote") {
+        void manuallyUpvoteCurrentPost(button.dataset.jobId, button.dataset.postId);
+        return;
+      }
+      if (button.dataset.jobAction === "manual-comment-upvote") {
+        void manuallyUpvoteCurrentComment(button.dataset.jobId, button.dataset.commentId);
+        return;
+      }
+      void controlJob(button.dataset.jobId, button.dataset.jobAction);
+    });
+  }
+  renderActivity();
+  renderMetrics();
+  updateSelectionUi();
+}
+
+function renderActivity() {
+  const entries = state.jobs
+    .flatMap((job) =>
+      job.logs.map((log) => ({ ...log, seq: job.seq, name: job.name || "未命名实例" })),
+    )
+    .sort((left, right) => new Date(right.time) - new Date(left.time))
+    .slice(0, 18);
+
+  elements.activityList.innerHTML = entries.length
+    ? entries
+        .map((entry) => `
+          <li class="activity-item">
+            <span class="activity-time">${new Date(entry.time).toLocaleTimeString("zh-CN", { hour12: false })}</span>
+            <span class="activity-copy"><strong>#${escapeHtml(entry.seq ?? "—")}</strong> ${escapeHtml(entry.message)}</span>
+          </li>`)
+        .join("")
+    : '<li class="muted-activity">任务启动后会在这里显示记录。</li>';
+}
+
+function readOptions({ persistLocal = true } = {}) {
+  const options = {
+    waitMinSec: Number(elements.waitMin.value),
+    waitMaxSec: Number(elements.waitMax.value),
+    maxPosts: Number(elements.maxPosts.value),
+    autoStopAtBottom: elements.stopAtBottom.checked,
+    detailLoopEnabled: elements.detailLoopEnabled.checked,
+    detailAfterMinPosts: Number(elements.detailAfterMinPosts.value),
+    detailAfterMaxPosts: Number(elements.detailAfterMaxPosts.value),
+    detailWaitMinSec: Number(elements.detailWaitMin.value),
+    detailWaitMaxSec: Number(elements.detailWaitMax.value),
+    commentScrollMin: Number(elements.commentScrollMin.value),
+    commentScrollMax: Number(elements.commentScrollMax.value),
+    returnWaitMinSec: Number(elements.returnWaitMin.value),
+    returnWaitMaxSec: Number(elements.returnWaitMax.value),
+    autoUpvoteEnabled: elements.autoUpvoteEnabled.checked,
+    autoUpvoteProbability: Number(elements.autoUpvoteProbability.value),
+    autoCommentUpvoteEnabled: elements.autoCommentUpvoteEnabled.checked,
+    autoCommentUpvoteProbability: Number(elements.autoCommentUpvoteProbability.value),
+  };
+  if (!elements.optionsForm.reportValidity()) throw new Error("请检查任务参数");
+  if (options.waitMinSec > options.waitMaxSec) throw new Error("最短等待不能大于最长等待");
+  if (options.detailAfterMinPosts > options.detailAfterMaxPosts) {
+    throw new Error("进入详情前最少浏览帖子数不能大于最多浏览帖子数");
+  }
+  if (options.detailWaitMinSec > options.detailWaitMaxSec) {
+    throw new Error("详情页最短等待不能大于最长等待");
+  }
+  if (options.commentScrollMin > options.commentScrollMax) {
+    throw new Error("评论区最少移动次数不能大于最多移动次数");
+  }
+  if (options.returnWaitMinSec > options.returnWaitMaxSec) {
+    throw new Error("返回前最短停留不能大于最长停留");
+  }
+  if (persistLocal) localStorage.setItem(OPTIONS_STORAGE_KEY, JSON.stringify(options));
+  return options;
+}
+
+function applyOptions(options = {}) {
+  elements.waitMin.value = options.waitMinSec ?? FALLBACK_OPTIONS.waitMinSec;
+  elements.waitMax.value = options.waitMaxSec ?? FALLBACK_OPTIONS.waitMaxSec;
+  elements.maxPosts.value = options.maxPosts ?? options.maxScrolls ?? FALLBACK_OPTIONS.maxPosts;
+  elements.stopAtBottom.checked = Boolean(
+    options.autoStopAtBottom ?? FALLBACK_OPTIONS.autoStopAtBottom,
+  );
+  elements.detailLoopEnabled.checked = Boolean(
+    options.detailLoopEnabled ?? FALLBACK_OPTIONS.detailLoopEnabled,
+  );
+  elements.detailAfterMinPosts.value =
+    options.detailAfterMinPosts ?? FALLBACK_OPTIONS.detailAfterMinPosts;
+  elements.detailAfterMaxPosts.value =
+    options.detailAfterMaxPosts ?? FALLBACK_OPTIONS.detailAfterMaxPosts;
+  elements.detailWaitMin.value = options.detailWaitMinSec ?? FALLBACK_OPTIONS.detailWaitMinSec;
+  elements.detailWaitMax.value = options.detailWaitMaxSec ?? FALLBACK_OPTIONS.detailWaitMaxSec;
+  elements.commentScrollMin.value = options.commentScrollMin ?? FALLBACK_OPTIONS.commentScrollMin;
+  elements.commentScrollMax.value = options.commentScrollMax ?? FALLBACK_OPTIONS.commentScrollMax;
+  elements.returnWaitMin.value = options.returnWaitMinSec ?? FALLBACK_OPTIONS.returnWaitMinSec;
+  elements.returnWaitMax.value = options.returnWaitMaxSec ?? FALLBACK_OPTIONS.returnWaitMaxSec;
+  elements.autoUpvoteEnabled.checked = Boolean(
+    options.autoUpvoteEnabled ?? FALLBACK_OPTIONS.autoUpvoteEnabled,
+  );
+  elements.autoUpvoteProbability.value =
+    options.autoUpvoteProbability ?? FALLBACK_OPTIONS.autoUpvoteProbability;
+  elements.autoCommentUpvoteEnabled.checked = Boolean(
+    options.autoCommentUpvoteEnabled ?? FALLBACK_OPTIONS.autoCommentUpvoteEnabled,
+  );
+  elements.autoCommentUpvoteProbability.value =
+    options.autoCommentUpvoteProbability ?? FALLBACK_OPTIONS.autoCommentUpvoteProbability;
+}
+
+async function saveOptionsToDatabase() {
+  try {
+    const options = readOptions();
+    await request("/api/settings", {
+      method: "PUT",
+      body: JSON.stringify({ options }),
+    });
+    elements.dbStatus.textContent = "DB 参数已保存";
+  } catch {
+    // Invalid intermediate form values are saved after the user finishes editing.
+  }
+}
+
+async function refreshProfiles({ quiet = false } = {}) {
+  if (!quiet) elements.refreshProfiles.disabled = true;
+  try {
+    const payload = await request("/api/profiles");
+    state.profiles = payload.profiles;
+    const visibleIds = new Set(state.profiles.map((profile) => profile.id));
+    for (const selectedId of state.selected) {
+      if (!visibleIds.has(selectedId)) state.selected.delete(selectedId);
+    }
+    setApiStatus(true, "BitBrowser 已连接");
+    renderProfiles();
+    renderMetrics();
+  } catch (error) {
+    setApiStatus(false, "BitBrowser 未连接");
+    if (!quiet) {
+      state.profiles = [];
+      state.selected.clear();
+      renderProfiles();
+      showToast(error.message, true);
+    }
+  } finally {
+    elements.refreshProfiles.disabled = false;
+  }
+}
+
+async function startSelectedJobs() {
+  let options;
+  try {
+    options = readOptions();
+  } catch (error) {
+    showToast(error.message, true);
+    return;
+  }
+
+  elements.startSelected.disabled = true;
+  try {
+    const profileIds = [...state.selected].filter((profileId) => {
+      const job = jobForProfile(profileId);
+      return !job || !ACTIVE_STATES.has(job.status);
+    });
+    if (!profileIds.length) throw new Error("所选实例都已有任务在运行");
+    const payload = await request("/api/jobs/start", {
+      method: "POST",
+      body: JSON.stringify({ profileIds, options }),
+    });
+    if (payload.errors?.length) {
+      showToast(`已启动 ${payload.started.length} 个任务，${payload.errors.length} 个未启动`, true);
+    } else {
+      showToast(`已启动 ${payload.started.length} 个独立任务`);
+    }
+    await refreshProfiles({ quiet: true });
+    scheduleDataRefresh();
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    updateSelectionUi();
+  }
+}
+
+async function manuallyUpvoteCurrentPost(profileId, expectedPostId) {
+  const initialJob = jobForProfile(profileId);
+  if (
+    state.pendingJobActions.has(profileId) ||
+    state.pendingManualUpvotes.has(profileId) ||
+    state.pendingManualCommentUpvotes.has(profileId) ||
+    initialJob?.manualActionPending === true ||
+    initialJob?.manualCommentActionPending === true
+  ) {
+    showToast("当前帖的点赞操作正在处理中");
+    return;
+  }
+  if (
+    !canManuallyUpvote(initialJob) ||
+    initialJob.currentPost.postId !== expectedPostId
+  ) {
+    showToast("当前帖子已变化或暂不可点赞，请等待页面状态更新", true);
+    return;
+  }
+
+  const postTitle = initialJob.currentPost.title || "当前帖子";
+  const confirmed = window.confirm(
+    `确定为当前帖子“${postTitle}”点赞吗？\n\n本次只会操作这一帖。`,
+  );
+  if (!confirmed) return;
+
+  const currentJob = jobForProfile(profileId);
+  if (
+    !canManuallyUpvote(currentJob) ||
+    currentJob.currentPost.postId !== expectedPostId ||
+    state.pendingJobActions.has(profileId) ||
+    state.pendingManualUpvotes.has(profileId) ||
+    state.pendingManualCommentUpvotes.has(profileId)
+  ) {
+    showToast("当前帖子已变化，请重新确认", true);
+    renderJobs();
+    return;
+  }
+
+  state.pendingManualUpvotes.add(profileId);
+  renderJobs();
+  showToast("正在确认当前帖的点赞状态…");
+
+  try {
+    const payload = await request(
+      `/api/jobs/${encodeURIComponent(profileId)}/manual-upvote`,
+      {
+        method: "POST",
+        body: JSON.stringify({ expectedPostId }),
+      },
+    );
+    const result = payload.result || {};
+    if (result.ok !== true) {
+      throw new Error(result.error || "未能确认点赞状态");
+    }
+    if (result.postId && result.postId !== expectedPostId) {
+      throw new Error("返回的帖子与确认时不一致");
+    }
+
+    if (payload.job?.profileId === profileId) {
+      state.jobs = state.jobs.map((job) =>
+        job.profileId === profileId ? { ...job, ...payload.job } : job,
+      );
+    }
+    if (result.changed === true) {
+      showToast("已点赞");
+    } else if (result.alreadyUpvoted === true) {
+      showToast("该帖已是点赞状态，未重复点击");
+    } else {
+      showToast("当前帖的点赞状态已确认");
+    }
+    scheduleDataRefresh();
+  } catch (error) {
+    showToast(`点赞失败：${error.message}`, true);
+  } finally {
+    state.pendingManualUpvotes.delete(profileId);
+    renderJobs();
+  }
+}
+
+async function manuallyUpvoteCurrentComment(profileId, expectedCommentId) {
+  const initialJob = jobForProfile(profileId);
+  if (
+    state.pendingJobActions.has(profileId) ||
+    state.pendingManualUpvotes.has(profileId) ||
+    state.pendingManualCommentUpvotes.has(profileId) ||
+    initialJob?.manualActionPending === true ||
+    initialJob?.manualCommentActionPending === true
+  ) {
+    showToast("当前评论的点赞操作正在处理中");
+    return;
+  }
+  if (
+    !canManuallyUpvoteCurrentComment(initialJob) ||
+    initialJob.currentComment.commentId !== expectedCommentId
+  ) {
+    showToast("当前评论已变化或暂不可点赞，请等待页面状态更新", true);
+    return;
+  }
+
+  const confirmed = window.confirm(
+    "确定点赞当前显示的这条评论吗？\n\n本次只会操作这一条评论。",
+  );
+  if (!confirmed) return;
+
+  const currentJob = jobForProfile(profileId);
+  if (
+    !canManuallyUpvoteCurrentComment(currentJob) ||
+    currentJob.currentComment.commentId !== expectedCommentId ||
+    state.pendingJobActions.has(profileId) ||
+    state.pendingManualUpvotes.has(profileId) ||
+    state.pendingManualCommentUpvotes.has(profileId)
+  ) {
+    showToast("当前评论已变化，请重新确认", true);
+    renderJobs();
+    return;
+  }
+
+  state.pendingManualCommentUpvotes.add(profileId);
+  renderJobs();
+  showToast("正在确认当前评论的点赞状态…");
+
+  try {
+    const payload = await request(
+      `/api/jobs/${encodeURIComponent(profileId)}/manual-comment-upvote`,
+      {
+        method: "POST",
+        body: JSON.stringify({ expectedCommentId }),
+      },
+    );
+    const result = payload.result || {};
+    if (result.ok !== true) {
+      throw new Error(result.error || "未能确认评论点赞状态");
+    }
+    if (result.commentId && result.commentId !== expectedCommentId) {
+      throw new Error("返回的评论与确认时不一致");
+    }
+
+    if (payload.job?.profileId === profileId) {
+      state.jobs = state.jobs.map((job) =>
+        job.profileId === profileId ? { ...job, ...payload.job } : job,
+      );
+    }
+    if (result.changed === true) {
+      showToast("已点赞当前评论");
+    } else if (result.alreadyUpvoted === true) {
+      showToast("该评论已是点赞状态，未重复点击");
+    } else {
+      showToast("当前评论的点赞状态已确认");
+    }
+    scheduleDataRefresh();
+  } catch (error) {
+    showToast(`评论点赞失败：${error.message}`, true);
+  } finally {
+    state.pendingManualCommentUpvotes.delete(profileId);
+    renderJobs();
+  }
+}
+
+async function controlJob(profileId, action) {
+  if (state.pendingJobActions.has(profileId)) return;
+  state.pendingJobActions.add(profileId);
+  renderJobs();
+  try {
+    await request(`/api/jobs/${encodeURIComponent(profileId)}/${action}`, {
+      method: "POST",
+      body: "{}",
+    });
+    const messages = {
+      stop: "任务已停止",
+      pause: "暂停请求已发送",
+      resume: "任务已继续",
+      trigger: "已要求立即继续",
+    };
+    showToast(messages[action] || "操作已执行");
+    scheduleDataRefresh();
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    state.pendingJobActions.delete(profileId);
+    renderJobs();
+  }
+}
+
+async function stopSelectedJobs() {
+  const activeIds = [...state.selected].filter((profileId) => {
+    const job = jobForProfile(profileId);
+    return job && ACTIVE_STATES.has(job.status);
+  });
+  if (!activeIds.length) return;
+  elements.stopSelected.disabled = true;
+  await Promise.all(activeIds.map((profileId) => controlJob(profileId, "stop")));
+}
+
+async function stopAllJobs() {
+  elements.stopAll.disabled = true;
+  try {
+    await request("/api/jobs/stop-all", { method: "POST", body: "{}" });
+    showToast("所有任务已停止");
+    scheduleDataRefresh();
+  } catch (error) {
+    showToast(error.message, true);
+  }
+}
+
+function renderProfileFilter() {
+  const current = elements.dataProfileFilter.value;
+  elements.dataProfileFilter.innerHTML = [
+    '<option value="">全部实例</option>',
+    ...state.profiles.map(
+      (profile) =>
+        `<option value="${escapeHtml(profile.id)}">#${escapeHtml(profile.seq ?? "—")} · ${escapeHtml(profile.name)}</option>`,
+    ),
+  ].join("");
+  if (state.profiles.some((profile) => profile.id === current)) {
+    elements.dataProfileFilter.value = current;
+  }
+}
+
+function dataQuery(kind) {
+  const params = new URLSearchParams({ limit: kind === "history" ? "100" : "200" });
+  if (elements.dataProfileFilter.value) params.set("profileId", elements.dataProfileFilter.value);
+  if (kind === "history" && elements.historyStatusFilter.value) {
+    params.set("status", elements.historyStatusFilter.value);
+  }
+  if (kind === "logs" && elements.logLevelFilter.value) {
+    params.set("level", elements.logLevelFilter.value);
+  }
+  return params;
+}
+
+function updateExportLinks() {
+  const history = dataQuery("history");
+  const logs = dataQuery("logs");
+  history.delete("limit");
+  logs.delete("limit");
+  elements.exportHistory.href = `/api/export/history.csv?${history}`;
+  elements.exportLogs.href = `/api/export/logs.csv?${logs}`;
+}
+
+async function refreshData({ quiet = false } = {}) {
+  if (!quiet) elements.refreshData.disabled = true;
+  try {
+    const [statsPayload, historyPayload, logsPayload] = await Promise.all([
+      request("/api/stats"),
+      request(`/api/history?${dataQuery("history")}`),
+      request(`/api/logs?${dataQuery("logs")}`),
+    ]);
+    state.stats = statsPayload.stats;
+    state.history = historyPayload.runs;
+    state.databaseLogs = logsPayload.logs;
+    elements.dbStatus.textContent = "DB 已同步";
+    renderDatabase();
+  } catch (error) {
+    elements.dbStatus.textContent = "DB 读取失败";
+    if (!quiet) showToast(error.message, true);
+  } finally {
+    elements.refreshData.disabled = false;
+  }
+}
+
+function scheduleDataRefresh() {
+  clearTimeout(state.dataRefreshTimer);
+  state.dataRefreshTimer = setTimeout(() => refreshData({ quiet: true }), 600);
+}
+
+function renderDatabase() {
+  const stats = state.stats || {};
+  elements.dbRuns.textContent = formatNumber(stats.runCount);
+  elements.dbCompleted.textContent = formatNumber(stats.completedCount);
+  elements.dbPosts.textContent = formatNumber(stats.postCount);
+  elements.dbDetailVisits.textContent = formatNumber(stats.detailVisitCount);
+  elements.dbEvents.textContent = formatNumber(stats.eventCount);
+  renderHistory();
+  renderDatabaseLogs();
+  updateExportLinks();
+}
+
+function renderHistory() {
+  elements.historyEmpty.classList.toggle("hidden", state.history.length > 0);
+  elements.historyBody.innerHTML = state.history
+    .map((run) => {
+      const isPostTask = run.taskMode === "post";
+      const shownPosts = isPostTask
+        ? formatNumber(run.postCount)
+        : `<span class="legacy-task-value" title="旧版任务按固定像素滚动，不能换算成帖子数">旧版 · ${formatNumber(run.scrollCount)} 次滚动</span>`;
+      const detailVisits = !isPostTask
+        ? '<span class="legacy-task-value">不适用</span>'
+        : run.workflowMode === "feed_detail_readonly"
+          ? formatNumber(run.detailVisitCount)
+          : '<span class="legacy-task-value">仅 Feed</span>';
+      const commentScrolls = !isPostTask
+        ? '<span class="legacy-task-value">不适用</span>'
+        : run.workflowMode === "feed_detail_readonly"
+          ? formatNumber(run.commentScrollCount)
+          : '<span class="legacy-task-value">仅 Feed</span>';
+      return `
+        <tr>
+          <td class="history-id">#${escapeHtml(run.id)}</td>
+          <td><strong>#${escapeHtml(run.profileSeq ?? "—")}</strong> · ${escapeHtml(run.profileName)}</td>
+          <td><span class="history-status ${escapeHtml(run.status)}">${escapeHtml(statusLabel(run.status, run.statusText))}</span></td>
+          <td>${escapeHtml(formatDateTime(run.startedAt))}</td>
+          <td>${shownPosts}</td>
+          <td>${detailVisits}</td>
+          <td>${commentScrolls}</td>
+          <td><button class="detail-button" type="button" data-run-detail="${escapeHtml(run.id)}">详情</button></td>
+        </tr>`;
+    })
+    .join("");
+  for (const button of elements.historyBody.querySelectorAll("[data-run-detail]")) {
+    button.addEventListener("click", () => showRunDetail(button.dataset.runDetail));
+  }
+}
+
+function renderDatabaseLogs() {
+  elements.logsEmpty.classList.toggle("hidden", state.databaseLogs.length > 0);
+  elements.databaseLogList.innerHTML = state.databaseLogs
+    .map(
+      (log) => `
+        <li class="database-log-item">
+          <time class="database-log-time">${escapeHtml(formatDateTime(log.createdAt))}</time>
+          <span class="log-level ${escapeHtml(log.level)}">${escapeHtml(log.level)}</span>
+          <span class="database-log-profile">#${escapeHtml(log.profileSeq ?? "—")} ${escapeHtml(log.profileName)}</span>
+          <span class="database-log-message">${escapeHtml(log.message)}</span>
+        </li>`,
+    )
+    .join("");
+}
+
+async function showRunDetail(runId) {
+  try {
+    const payload = await request(`/api/history/${encodeURIComponent(runId)}`);
+    const run = payload.run;
+    const isPostTask = run.taskMode === "post";
+    const currentPostTitle = run.currentPost?.title || "—";
+    const detailPostTitle = run.currentDetailPost?.title || "—";
+    const isDetailWorkflow = isPostTask && run.workflowMode === "feed_detail_readonly";
+    const taskMetrics = isPostTask
+      ? `
+        <div><span>任务模式</span><strong>${isDetailWorkflow ? "Feed 与详情只读循环" : "仅 Feed 逐帖阅读"}</strong></div>
+        <div><span>展示帖子</span><strong>${formatNumber(run.postCount)}</strong></div>
+        <div><span>完整入镜</span><strong>${formatNumber(run.fullPostCount)}</strong></div>
+        <div><span>当前帖子</span><strong title="${escapeHtml(currentPostTitle)}">${escapeHtml(currentPostTitle)}</strong></div>
+        <div><span>查看详情</span><strong>${formatNumber(run.detailVisitCount)}</strong></div>
+        <div><span>评论区移动</span><strong>${formatNumber(run.commentScrollCount)}</strong></div>
+        <div><span>跳过广告</span><strong>${formatNumber(run.skippedPromotedCount)}</strong></div>
+        <div><span>自动点赞</span><strong>${formatNumber(run.autoUpvoteCount)} 帖 / ${formatNumber(run.autoCommentUpvoteCount)} 评</strong></div>
+        <div><span>最后详情帖</span><strong title="${escapeHtml(detailPostTitle)}">${escapeHtml(detailPostTitle)}</strong></div>
+        <div><span>最后阶段</span><strong>${escapeHtml(workflowPhaseLabel(run))}</strong></div>`
+      : `
+        <div><span>任务模式</span><strong>旧版像素滚动</strong></div>
+        <div><span>滚动次数</span><strong>${formatNumber(run.scrollCount)}</strong></div>
+        <div><span>累计距离</span><strong>${formatNumber(run.totalPixels)}px</strong></div>
+        <div><span>距离范围</span><strong>${formatNumber(run.options?.scrollMinPx)}–${formatNumber(run.options?.scrollMaxPx)}px</strong></div>`;
+    elements.dialogTitle.textContent = `任务 #${run.id} · 实例 #${run.profileSeq ?? "—"}`;
+    elements.dialogContent.innerHTML = `
+      <div class="detail-grid">
+        <div><span>状态</span><strong>${escapeHtml(statusLabel(run.status, run.statusText))}</strong></div>
+        ${taskMetrics}
+        <div><span>开始时间</span><strong>${escapeHtml(formatDateTime(run.startedAt))}</strong></div>
+        <div><span>结束时间</span><strong>${escapeHtml(formatDateTime(run.stoppedAt))}</strong></div>
+        <div><span>${isPostTask ? "Feed 每帖停留" : "等待范围"}</span><strong>${run.options?.waitMinSec ?? "—"}–${run.options?.waitMaxSec ?? "—"} 秒</strong></div>
+        ${isDetailWorkflow ? `
+          <div><span>进入详情阈值</span><strong>${run.options?.detailAfterMinPosts ?? "—"}–${run.options?.detailAfterMaxPosts ?? "—"} 篇</strong></div>
+          <div><span>详情等待</span><strong>${run.options?.detailWaitMinSec ?? "—"}–${run.options?.detailWaitMaxSec ?? "—"} 秒</strong></div>
+          <div><span>评论区移动</span><strong>${run.options?.commentScrollMin ?? "—"}–${run.options?.commentScrollMax ?? "—"} 次</strong></div>
+          <div><span>返回前停留</span><strong>${run.options?.returnWaitMinSec ?? "—"}–${run.options?.returnWaitMaxSec ?? "—"} 秒</strong></div>
+        ` : ""}
+      </div>
+      ${run.error ? `<p class="database-log-message">错误：${escapeHtml(run.error)}</p>` : ""}
+      <ol class="detail-events">
+        ${run.events
+          .map(
+            (event) => `
+              <li>
+                <time>${escapeHtml(new Date(event.createdAt).toLocaleTimeString("zh-CN", { hour12: false }))}</time>
+                <span>${escapeHtml(event.message)}</span>
+              </li>`,
+          )
+          .join("")}
+      </ol>`;
+    elements.runDialog.showModal();
+  } catch (error) {
+    showToast(error.message, true);
+  }
+}
+
+function switchDataTab(tab) {
+  state.activeDataTab = tab;
+  for (const button of document.querySelectorAll("[data-data-tab]")) {
+    const active = button.dataset.dataTab === tab;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-selected", String(active));
+  }
+  elements.historyView.classList.toggle("hidden", tab !== "history");
+  elements.logsView.classList.toggle("hidden", tab !== "logs");
+  elements.statusFilterWrap.classList.toggle("hidden", tab !== "history");
+  elements.levelFilterWrap.classList.toggle("hidden", tab !== "logs");
+}
+
+async function clearDatabaseLogs() {
+  const profileId = elements.dataProfileFilter.value;
+  const scope = profileId ? "当前筛选实例" : "全部实例";
+  if (!window.confirm(`确定清空${scope}的持久化日志吗？任务历史和统计数据会保留。`)) return;
+  try {
+    const payload = await request("/api/logs", {
+      method: "DELETE",
+      body: JSON.stringify({ profileId: profileId || null }),
+    });
+    showToast(`已清理 ${payload.deleted} 条日志`);
+    await refreshData({ quiet: true });
+  } catch (error) {
+    showToast(error.message, true);
+  }
+}
+
+function connectEventStream() {
+  const stream = new EventSource("/api/events");
+  stream.addEventListener("open", () => {
+    elements.streamStatus.textContent = "实时监控已连接";
+  });
+  stream.addEventListener("jobs", (event) => {
+    state.jobs = JSON.parse(event.data);
+    renderJobs();
+    renderProfiles();
+    scheduleDataRefresh();
+  });
+  stream.addEventListener("tiktok-jobs", (event) => {
+    state.tiktokJobs = JSON.parse(event.data);
+    renderTiktokJobs();
+  });
+  stream.addEventListener("scheduler", (event) => {
+    state.scheduler = JSON.parse(event.data);
+    renderScheduler();
+  });
+  stream.addEventListener("error", () => {
+    elements.streamStatus.textContent = "实时监控正在重连";
+  });
+}
+
+function updateCountdowns() {
+  for (const element of document.querySelectorAll("[data-countdown]")) {
+    const remaining = Math.max(0, new Date(element.dataset.countdown).getTime() - Date.now());
+    element.textContent = `${(remaining / 1000).toFixed(1)} 秒`;
+  }
+}
+
+async function initialize() {
+  try {
+    const [config, jobsPayload] = await Promise.all([
+      request("/api/config"),
+      request("/api/jobs"),
+    ]);
+    state.config = config;
+    state.jobs = jobsPayload.jobs;
+    elements.targetUrl.textContent = config.targetUrl;
+    elements.apiEndpoint.textContent = config.bitBrowserApiUrl;
+    elements.databaseFile.textContent = config.databaseFile;
+    let localOptions = null;
+    try {
+      localOptions = JSON.parse(
+        localStorage.getItem(OPTIONS_STORAGE_KEY) ||
+          localStorage.getItem(LEGACY_OPTIONS_STORAGE_KEY),
+      );
+    } catch {
+      localOptions = null;
+    }
+    applyOptions(config.savedOptions || localOptions || config.defaults);
+    renderJobs();
+  } catch (error) {
+    showToast(error.message, true);
+  }
+
+  await refreshProfiles();
+  await refreshData({ quiet: true });
+  connectEventStream();
+  initTiktok();
+  initScheduler();
+}
+
+elements.refreshProfiles.addEventListener("click", () => refreshProfiles());
+elements.selectAll.addEventListener("click", () => {
+  if (state.selected.size === state.profiles.length) state.selected.clear();
+  else state.selected = new Set(state.profiles.map((profile) => profile.id));
+  renderProfiles();
+});
+elements.resetOptions.addEventListener("click", async () => {
+  applyOptions(state.config?.defaults || FALLBACK_OPTIONS);
+  localStorage.removeItem(OPTIONS_STORAGE_KEY);
+  localStorage.removeItem(LEGACY_OPTIONS_STORAGE_KEY);
+  await saveOptionsToDatabase();
+  showToast("已恢复并保存默认参数");
+});
+elements.optionsForm.addEventListener("input", () => {
+  clearTimeout(state.settingsSaveTimer);
+  state.settingsSaveTimer = setTimeout(saveOptionsToDatabase, 650);
+});
+elements.startSelected.addEventListener("click", startSelectedJobs);
+elements.stopSelected.addEventListener("click", stopSelectedJobs);
+elements.stopAll.addEventListener("click", stopAllJobs);
+elements.refreshData.addEventListener("click", () => refreshData());
+elements.clearLogs.addEventListener("click", clearDatabaseLogs);
+elements.dataProfileFilter.addEventListener("change", () => refreshData({ quiet: true }));
+elements.historyStatusFilter.addEventListener("change", () => refreshData({ quiet: true }));
+elements.logLevelFilter.addEventListener("change", () => refreshData({ quiet: true }));
+for (const button of document.querySelectorAll("[data-data-tab]")) {
+  button.addEventListener("click", () => switchDataTab(button.dataset.dataTab));
+}
+
+setInterval(updateCountdowns, 200);
+setInterval(() => refreshProfiles({ quiet: true }), 15000);
+setInterval(() => refreshData({ quiet: true }), 30000);
+void initialize();
+
+// ---- TikTok 养号 ----
+const TK_FALLBACK = Object.freeze({
+  watchMinSec: 8,
+  watchMaxSec: 25,
+  maxVideos: 0,
+  likeEnabled: false,
+  likeProbability: 0,
+  commentWatchEnabled: false,
+  commentWatchProbability: 0,
+  commentEnabled: false,
+  commentProbability: 0,
+  commentTexts: [],
+});
+
+const tk = {
+  profileSelect: document.querySelector("#tk-profile"),
+  watchMin: document.querySelector("#tk-watch-min"),
+  watchMax: document.querySelector("#tk-watch-max"),
+  maxVideos: document.querySelector("#tk-max-videos"),
+  likeEnabled: document.querySelector("#tk-like-enabled"),
+  likeProb: document.querySelector("#tk-like-prob"),
+  commentWatchEnabled: document.querySelector("#tk-comment-watch-enabled"),
+  commentWatchProb: document.querySelector("#tk-comment-watch-prob"),
+  commentEnabled: document.querySelector("#tk-comment-enabled"),
+  commentProb: document.querySelector("#tk-comment-prob"),
+  commentTexts: document.querySelector("#tk-comment-texts"),
+  resetBtn: document.querySelector("#tk-reset"),
+  startBtn: document.querySelector("#tk-start"),
+  stopBtn: document.querySelector("#tk-stop"),
+  jobList: document.querySelector("#tk-jobs"),
+  refreshData: document.querySelector("#tk-refresh-data"),
+  historyBody: document.querySelector("#tk-history-body"),
+  historyEmpty: document.querySelector("#tk-history-empty"),
+  logList: document.querySelector("#tk-log-list"),
+  logsEmpty: document.querySelector("#tk-logs-empty"),
+  historyView: document.querySelector("#tk-history-view"),
+  logsView: document.querySelector("#tk-logs-view"),
+};
+
+const tkState = { history: [], logs: [] };
+
+function applyTiktokOptions(options) {
+  const o = { ...TK_FALLBACK, ...options };
+  tk.watchMin.value = o.watchMinSec;
+  tk.watchMax.value = o.watchMaxSec;
+  tk.maxVideos.value = o.maxVideos;
+  tk.likeEnabled.checked = Boolean(o.likeEnabled);
+  tk.likeProb.value = o.likeProbability;
+  tk.commentWatchEnabled.checked = Boolean(o.commentWatchEnabled);
+  tk.commentWatchProb.value = o.commentWatchProbability;
+  tk.commentEnabled.checked = Boolean(o.commentEnabled);
+  tk.commentProb.value = o.commentProbability;
+  tk.commentTexts.value = Array.isArray(o.commentTexts) ? o.commentTexts.join("\n") : "";
+}
+
+function collectTiktokOptions() {
+  const texts = tk.commentTexts.value.split("\n").map((s) => s.trim()).filter(Boolean);
+  return {
+    watchMinSec: Number(tk.watchMin.value),
+    watchMaxSec: Number(tk.watchMax.value),
+    maxVideos: Number(tk.maxVideos.value),
+    likeEnabled: tk.likeEnabled.checked,
+    likeProbability: Number(tk.likeProb.value),
+    commentWatchEnabled: tk.commentWatchEnabled.checked,
+    commentWatchProbability: Number(tk.commentWatchProb.value),
+    commentEnabled: tk.commentEnabled.checked,
+    commentProbability: Number(tk.commentProb.value),
+    commentTexts: texts,
+  };
+}
+
+function renderTiktokJobs() {
+  if (!tk.jobList) return;
+  const jobs = state.tiktokJobs || [];
+  if (jobs.length === 0) {
+    tk.jobList.innerHTML = `<div class="empty-state compact">没有运行中的 TikTok 任务。</div>`;
+    return;
+  }
+  tk.jobList.innerHTML = jobs.map((job) => `
+    <div class="tk-job-card">
+      <div class="tk-job-head">
+        <strong>${escapeHtml(job.profileName)}</strong>
+        <span class="tk-status tk-status-${escapeHtml(job.status)}">${escapeHtml(job.statusText || job.status)}</span>
+      </div>
+      <div class="tk-job-stats">
+        <span>视频 ${job.videoCount}</span>
+        <span>点赞 ${job.likeCount}</span>
+        <span>评论 ${job.commentCount}</span>
+        ${job.currentVideo ? `<span class="tk-current">${escapeHtml(job.currentVideo.author)} · ${escapeHtml(job.currentVideo.likeCount || "")}</span>` : ""}
+      </div>
+      ${job.error ? `<div class="tk-job-error">${escapeHtml(job.error)}</div>` : ""}
+    </div>
+  `).join("");
+}
+
+function renderTiktokHistory() {
+  const runs = tkState.history || [];
+  tk.historyEmpty.classList.toggle("hidden", runs.length > 0);
+  if (runs.length === 0) { tk.historyBody.innerHTML = ""; return; }
+  tk.historyBody.innerHTML = `<table class="history-table"><thead><tr><th>实例</th><th>状态</th><th>视频</th><th>点赞</th><th>评论</th><th>开始</th><th>结束</th></tr></thead><tbody>${runs.map((r) => `
+    <tr>
+      <td>${escapeHtml(r.profileName)}</td>
+      <td><span class="tk-status tk-status-${escapeHtml(r.status)}">${escapeHtml(r.statusText || r.status)}</span></td>
+      <td>${r.videoCount}</td>
+      <td>${r.likeCount}</td>
+      <td>${r.commentCount}</td>
+      <td>${formatDateTime(r.startedAt)}</td>
+      <td>${formatDateTime(r.stoppedAt)}</td>
+    </tr>`).join("")}</tbody></table>`;
+}
+
+function renderTiktokLogs() {
+  const logs = tkState.logs || [];
+  tk.logsEmpty.classList.toggle("hidden", logs.length > 0);
+  tk.logList.innerHTML = logs.map((l) => `
+    <li class="log-item log-${escapeHtml(l.level)}">
+      <span class="log-time">${formatDateTime(l.createdAt)}</span>
+      <span class="log-level">${escapeHtml(l.level)}</span>
+      <span class="log-msg">${escapeHtml(l.message)}</span>
+    </li>`).join("");
+}
+
+async function refreshTiktokData() {
+  try {
+    const [h, l] = await Promise.all([
+      request("/api/tiktok/history?limit=100"),
+      request("/api/tiktok/logs?limit=200"),
+    ]);
+    tkState.history = h.runs || [];
+    tkState.logs = l.logs || [];
+    renderTiktokHistory();
+    renderTiktokLogs();
+  } catch (e) {
+    showToast("TikTok 数据加载失败：" + e.message, true);
+  }
+}
+
+// ---- TikTok 扩展模块: 账号映射, 素材库, 自动化发布 ----
+const tkExt = {
+  bindProfileSelect: document.querySelector("#bind-profile-select"),
+  bindAccountName: document.querySelector("#bind-account-name"),
+  bindRegion: document.querySelector("#bind-region"),
+  bindStage: document.querySelector("#bind-stage"),
+  btnSaveBind: document.querySelector("#btn-save-account-bind"),
+  accountsTableBody: document.querySelector("#tk-accounts-table-body"),
+  btnRefreshAccounts: document.querySelector("#tk-refresh-accounts"),
+
+  matTitle: document.querySelector("#mat-title"),
+  matFilePath: document.querySelector("#mat-file-path"),
+  matHashtags: document.querySelector("#mat-hashtags"),
+  matCategory: document.querySelector("#mat-category"),
+  btnAddMaterial: document.querySelector("#btn-add-material"),
+  materialsList: document.querySelector("#materials-list"),
+  btnRefreshMaterials: document.querySelector("#btn-refresh-materials"),
+
+  pubProfileSelect: document.querySelector("#pub-profile-select"),
+  pubMaterialSelect: document.querySelector("#pub-material-select"),
+  btnCreatePublishJob: document.querySelector("#btn-create-publish-job"),
+  publishJobsList: document.querySelector("#publish-jobs-list"),
+  btnRefreshPublishJobs: document.querySelector("#btn-refresh-publish-jobs"),
+};
+
+const tkExtState = { accounts: [], materials: [], publishJobs: [] };
+
+async function refreshTkAccounts() {
+  try {
+    const res = await request("/api/tiktok/accounts");
+    tkExtState.accounts = res.accounts || [];
+    renderTkAccounts();
+  } catch (e) {
+    showToast("账号映射加载失败：" + e.message, true);
+  }
+}
+
+function renderTkAccounts() {
+  if (!tkExt.accountsTableBody) return;
+  const list = tkExtState.accounts;
+  if (!list.length) {
+    tkExt.accountsTableBody.innerHTML = `<tr><td colspan="7" style="text-align: center; color: var(--text-dim); padding: 20px;">暂无已绑定的 TK 账号映射</td></tr>`;
+    return;
+  }
+  const stageMap = {
+    warmup_day1_3: '冷启动 (Day 1-3)',
+    interest_building: '兴趣打标 (Day 4-7)',
+    high_weight: '权重提升 (Day 8-14)',
+    mature: '成熟期账号'
+  };
+  tkExt.accountsTableBody.innerHTML = list.map(a => `
+    <tr>
+      <td><strong>${escapeHtml(a.accountName || '未命名')}</strong></td>
+      <td>${escapeHtml(a.profileName)}</td>
+      <td>${escapeHtml(a.region)}</td>
+      <td>${escapeHtml(stageMap[a.nurtureStage] || a.nurtureStage)}</td>
+      <td><strong style="color: #4cd964;">${a.healthScore} 分</strong></td>
+      <td><span class="status-pill status-${a.status === 'active' ? 'success' : 'loading'}">${escapeHtml(a.status)}</span></td>
+      <td>
+        <button class="danger-button data-danger" style="padding: 2px 8px; font-size: 11px;" onclick="window.deleteTkAccount('${escapeHtml(a.id)}')">解绑</button>
+      </td>
+    </tr>
+  `).join("");
+}
+
+window.deleteTkAccount = async function(id) {
+  if (!confirm("确定解绑此 TK 账号映射关系吗？")) return;
+  try {
+    await request(`/api/tiktok/accounts/${encodeURIComponent(id)}`, { method: "DELETE" });
+    showToast("映射记录已删除");
+    await refreshTkAccounts();
+  } catch (e) {
+    showToast(e.message, true);
+  }
+};
+
+async function refreshTkMaterials() {
+  try {
+    const res = await request("/api/tiktok/materials");
+    tkExtState.materials = res.materials || [];
+    renderTkMaterials();
+    updatePublishMaterialSelect();
+  } catch (e) {
+    showToast("素材库加载失败：" + e.message, true);
+  }
+}
+
+function renderTkMaterials() {
+  if (!tkExt.materialsList) return;
+  const list = tkExtState.materials;
+  if (!list.length) {
+    tkExt.materialsList.innerHTML = `<div style="text-align: center; color: var(--text-dim); padding: 15px;">素材库为空</div>`;
+    return;
+  }
+  tkExt.materialsList.innerHTML = list.map(m => `
+    <div style="background: rgba(255,255,255,0.03); border: 1px solid var(--border-color); padding: 8px 12px; border-radius: 6px; display: flex; justify-content: space-between; align-items: center;">
+      <div>
+        <strong style="font-size: 13px;">${escapeHtml(m.title)}</strong>
+        <div style="font-size: 11px; color: var(--text-dim); margin-top: 2px;">
+          <span>路径: ${escapeHtml(m.filePath)}</span>
+          ${m.hashtags && m.hashtags.length ? `<span style="margin-left: 8px; color: #58a6ff;">${escapeHtml(m.hashtags.join(' '))}</span>` : ''}
+        </div>
+      </div>
+      <button class="danger-button data-danger" style="padding: 2px 6px; font-size: 11px;" onclick="window.deleteTkMaterial('${escapeHtml(m.id)}')">删除</button>
+    </div>
+  `).join("");
+}
+
+window.deleteTkMaterial = async function(id) {
+  try {
+    await request(`/api/tiktok/materials/${encodeURIComponent(id)}`, { method: "DELETE" });
+    showToast("素材已删除");
+    await refreshTkMaterials();
+  } catch (e) {
+    showToast(e.message, true);
+  }
+};
+
+function updatePublishMaterialSelect() {
+  if (!tkExt.pubMaterialSelect) return;
+  tkExt.pubMaterialSelect.innerHTML = tkExtState.materials.length
+    ? tkExtState.materials.map(m => `<option value="${escapeHtml(m.id)}">${escapeHtml(m.title)} (${escapeHtml(m.filePath.split(/[/\\]/).pop())})</option>`).join("")
+    : `<option value="">请先添加素材</option>`;
+}
+
+async function refreshTkPublishJobs() {
+  try {
+    const res = await request("/api/tiktok/publish/jobs");
+    tkExtState.publishJobs = res.jobs || [];
+    renderTkPublishJobs();
+  } catch (e) {
+    showToast("发布任务队列加载失败：" + e.message, true);
+  }
+}
+
+function renderTkPublishJobs() {
+  if (!tkExt.publishJobsList) return;
+  const list = tkExtState.publishJobs;
+  if (!list.length) {
+    tkExt.publishJobsList.innerHTML = `<div style="text-align: center; color: var(--text-dim); padding: 15px;">无待执行的发布任务</div>`;
+    return;
+  }
+  const statusColor = { pending: '#e3b341', running: '#58a6ff', success: '#3fb950', failed: '#f85149' };
+  const statusText = { pending: '等待发布', running: '正在上传发布...', success: '发布成功', failed: '发布失败' };
+
+  tkExt.publishJobsList.innerHTML = list.map(j => `
+    <div style="background: rgba(255,255,255,0.03); border: 1px solid var(--border-color); padding: 8px 12px; border-radius: 6px; display: flex; justify-content: space-between; align-items: center;">
+      <div>
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <strong style="font-size: 13px;">${escapeHtml(j.materialTitle || '素材 #' + j.materialId)}</strong>
+          <span style="font-size: 11px; padding: 2px 6px; border-radius: 4px; background: rgba(255,255,255,0.1); color: ${statusColor[j.status] || '#fff'}; font-weight: bold;">${statusText[j.status] || j.status}</span>
+        </div>
+        <div style="font-size: 11px; color: var(--text-dim); margin-top: 2px;">
+          发布目标: <strong>${escapeHtml(j.accountName)}</strong> (${escapeHtml(j.profileName)})
+          ${j.errorMessage ? `<span style="color: #f85149; margin-left: 8px;">错误: ${escapeHtml(j.errorMessage)}</span>` : ''}
+          ${j.publishedVideoUrl ? `<a href="${escapeHtml(j.publishedVideoUrl)}" target="_blank" style="color: #58a6ff; margin-left: 8px;">查看视频</a>` : ''}
+        </div>
+      </div>
+      <div style="display: flex; gap: 6px;">
+        ${j.status !== 'running' ? `<button class="button button-primary" style="padding: 2px 8px; font-size: 11px;" onclick="window.triggerExecutePublishJob('${escapeHtml(j.id)}')">立即发布</button>` : ''}
+        <button class="danger-button data-danger" style="padding: 2px 6px; font-size: 11px;" onclick="window.deleteTkPublishJob('${escapeHtml(j.id)}')">删除</button>
+      </div>
+    </div>
+  `).join("");
+}
+
+window.triggerExecutePublishJob = async function(id) {
+  try {
+    await request(`/api/tiktok/publish/jobs/${encodeURIComponent(id)}/execute`, { method: "POST" });
+    showToast("已启动全自动视频发布过程");
+    setTimeout(refreshTkPublishJobs, 1500);
+  } catch (e) {
+    showToast(e.message, true);
+  }
+};
+
+window.deleteTkPublishJob = async function(id) {
+  try {
+    await request(`/api/tiktok/publish/jobs/${encodeURIComponent(id)}`, { method: "DELETE" });
+    showToast("发布任务已删除");
+    await refreshTkPublishJobs();
+  } catch (e) {
+    showToast(e.message, true);
+  }
+};
+
+async function initTiktokExt() {
+  await Promise.all([
+    refreshTkAccounts(),
+    refreshTkMaterials(),
+    refreshTkPublishJobs()
+  ]);
+
+  if (tkExt.bindProfileSelect && state.profiles) {
+    const optionsHtml = state.profiles.map(p => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)} (${p.seq ?? '?'})</option>`).join('');
+    tkExt.bindProfileSelect.innerHTML = optionsHtml;
+    if (tkExt.pubProfileSelect) tkExt.pubProfileSelect.innerHTML = optionsHtml;
+  }
+}
+
+// 绑定保存账号映射事件
+tkExt.btnSaveBind?.addEventListener("click", async () => {
+  const profileId = tkExt.bindProfileSelect.value;
+  const accountName = tkExt.bindAccountName.value.trim();
+  const region = tkExt.bindRegion.value;
+  const nurtureStage = tkExt.bindStage.value;
+
+  if (!profileId) { showToast("请选择目标实例", true); return; }
+  try {
+    await request("/api/tiktok/accounts", {
+      method: "POST",
+      body: JSON.stringify({ profileId, accountName, region, nurtureStage })
+    });
+    showToast("TK 账号与实例绑定已保存");
+    tkExt.bindAccountName.value = "";
+    await refreshTkAccounts();
+  } catch (e) {
+    showToast(e.message, true);
+  }
+});
+
+// 存入素材库事件
+tkExt.btnAddMaterial?.addEventListener("click", async () => {
+  const title = tkExt.matTitle.value.trim();
+  const filePath = tkExt.matFilePath.value.trim();
+  const rawTags = tkExt.matHashtags.value.trim();
+  const category = tkExt.matCategory.value.trim();
+
+  if (!title || !filePath) { showToast("标题和文件路径为必填项", true); return; }
+  const hashtags = rawTags ? rawTags.split(/\s+/).filter(Boolean) : [];
+
+  try {
+    await request("/api/tiktok/materials", {
+      method: "POST",
+      body: JSON.stringify({ title, filePath, hashtags, category })
+    });
+    showToast("已存入视频素材库");
+    tkExt.matTitle.value = "";
+    tkExt.matFilePath.value = "";
+    tkExt.matHashtags.value = "";
+    await refreshTkMaterials();
+  } catch (e) {
+    showToast(e.message, true);
+  }
+});
+
+// 创建发布任务事件
+tkExt.btnCreatePublishJob?.addEventListener("click", async () => {
+  const profileId = tkExt.pubProfileSelect.value;
+  const materialId = tkExt.pubMaterialSelect.value;
+
+  if (!profileId || !materialId) { showToast("必须选择实例和对应的视频素材", true); return; }
+  try {
+    await request("/api/tiktok/publish/jobs", {
+      method: "POST",
+      body: JSON.stringify({ profileId, materialId })
+    });
+    showToast("自动发布任务已加入队列");
+    await refreshTkPublishJobs();
+  } catch (e) {
+    showToast(e.message, true);
+  }
+});
+
+tkExt.btnRefreshAccounts?.addEventListener("click", refreshTkAccounts);
+tkExt.btnRefreshMaterials?.addEventListener("click", refreshTkMaterials);
+tkExt.btnRefreshPublishJobs?.addEventListener("click", refreshTkPublishJobs);
+
+async function initTiktok() {
+  try {
+    const [cfg, profilesPayload] = await Promise.all([
+      request("/api/tiktok/config"),
+      request("/api/profiles"),
+    ]);
+    state.tiktokJobs = cfg.jobs || [];
+    state.tiktokConfig = cfg.saved || cfg.defaults;
+    applyTiktokOptions(cfg.saved || cfg.defaults || {});
+    tk.profileSelect.innerHTML = (profilesPayload.profiles || [])
+      .map((p) => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)}（${p.seq ?? "?"}）</option>`)
+      .join("");
+    renderTiktokJobs();
+    await refreshTiktokData();
+    await initTiktokExt();
+  } catch (e) {
+    showToast("TikTok 初始化失败：" + e.message, true);
+  }
+}
+
+tk.resetBtn.addEventListener("click", () => {
+  applyTiktokOptions(TK_FALLBACK);
+  scheduleTiktokSave();
+  showToast("已恢复 TikTok 默认参数");
+});
+
+let tkSaveTimer = null;
+function scheduleTiktokSave() {
+  clearTimeout(tkSaveTimer);
+  tkSaveTimer = setTimeout(async () => {
+    try {
+      await request("/api/tiktok/settings", { method: "PUT", body: JSON.stringify({ options: collectTiktokOptions() }) });
+    } catch {}
+  }, 800);
+}
+document.querySelector("#tk-options-form")?.addEventListener("input", scheduleTiktokSave);
+
+tk.startBtn.addEventListener("click", async () => {
+  const profileId = tk.profileSelect.value;
+  if (!profileId) { showToast("请先选择实例", true); return; }
+  const options = collectTiktokOptions();
+  try {
+    await request(`/api/tiktok/jobs/${encodeURIComponent(profileId)}/start`, {
+      method: "POST",
+      body: JSON.stringify({ options }),
+    });
+    showToast("TikTok 任务已启动");
+  } catch (e) {
+    showToast(e.message, true);
+  }
+});
+
+tk.stopBtn.addEventListener("click", async () => {
+  const profileId = tk.profileSelect.value;
+  if (!profileId) return;
+  try {
+    await request(`/api/tiktok/jobs/${encodeURIComponent(profileId)}/stop`, {
+      method: "POST",
+      body: "{}",
+    });
+    showToast("已停止 TikTok 任务");
+  } catch (e) {
+    showToast(e.message, true);
+  }
+});
+
+tk.refreshData.addEventListener("click", () => refreshTiktokData());
+
+for (const btn of document.querySelectorAll("[data-tk-tab]")) {
+  btn.addEventListener("click", () => {
+    for (const b of document.querySelectorAll("[data-tk-tab]")) {
+      b.classList.toggle("active", b === btn);
+    }
+    const tab = btn.dataset.tkTab;
+    tk.historyView.classList.toggle("hidden", tab !== "history");
+    tk.logsView.classList.toggle("hidden", tab !== "logs");
+  });
+}
+
+for (const btn of document.querySelectorAll(".platform-tab")) {
+  btn.addEventListener("click", () => {
+    for (const b of document.querySelectorAll(".platform-tab")) {
+      b.classList.toggle("active", b === btn);
+      b.setAttribute("aria-selected", b === btn ? "true" : "false");
+    }
+    const platform = btn.dataset.platform;
+    document.querySelectorAll(".reddit-tab").forEach((el) => el.classList.toggle("hidden", platform !== "reddit"));
+    document.querySelectorAll(".tiktok-tab").forEach((el) => el.classList.toggle("hidden", platform !== "tiktok"));
+  });
+}
+
+// ---- 轮换调度 ----
+const sched = {
+  startBtn: document.querySelector("#sched-start"),
+  stopBtn: document.querySelector("#sched-stop"),
+  status: document.querySelector("#sched-status"),
+};
+
+function formatRemaining(ms) {
+  if (!ms || ms <= 0) return "0:00";
+  const s = Math.ceil(ms / 1000);
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+
+const PHASE_LABELS = {
+  idle: "空闲", starting: "启动中", switching: "切换实例", opening: "打开浏览器",
+  running: "养号中", stopping: "停止任务", finishing: "收尾", completed: "已完成", stopped: "已停止", error: "出错",
+};
+
+function schedPlatformHint() {
+  const r = document.querySelector("#sched-enable-reddit")?.checked ?? true;
+  const t = document.querySelector("#sched-enable-tiktok")?.checked ?? true;
+  if (r && t) return "Reddit 与 TikTok 任务并发调度";
+  if (r) return "仅 Reddit 任务";
+  if (t) return "仅 TikTok 任务";
+  return "未选择任何平台";
+}
+
+function saveSchedToggles() {
+  const r = document.querySelector("#sched-enable-reddit");
+  const t = document.querySelector("#sched-enable-tiktok");
+  if (r) localStorage.setItem("sched-enable-reddit", r.checked ? "1" : "0");
+  if (t) localStorage.setItem("sched-enable-tiktok", t.checked ? "1" : "0");
+}
+
+function restoreSchedToggles() {
+  const r = document.querySelector("#sched-enable-reddit");
+  const t = document.querySelector("#sched-enable-tiktok");
+  if (r) r.checked = localStorage.getItem("sched-enable-reddit") !== "0";
+  if (t) t.checked = localStorage.getItem("sched-enable-tiktok") !== "0";
+}
+
+function renderScheduler() {
+  const s = state.scheduler;
+  if (!s) return;
+  sched.startBtn.disabled = s.running;
+  sched.stopBtn.disabled = !s.running;
+  if (!s.running && (s.phase === "idle" || !s.phase)) {
+    sched.status.innerHTML = `<div class="empty-state compact">未启动轮换调度。点击「启动轮换」按序号 1→10 依次养号，每个实例随机 23-35 分钟，${schedPlatformHint()}。</div>`;
+    return;
+  }
+  const progress = s.totalProfiles > 0 ? `${s.profileIndex + 1} / ${s.totalProfiles}` : "-";
+  const current = s.currentSeq ? `#${s.currentSeq} ${escapeHtml(s.currentName || "")}` : "-";
+  const remaining = s.running && s.remainingMs > 0 ? formatRemaining(s.remainingMs) : "—";
+  const logs = (s.log || []).slice(-6).map((l) => `<li class="log-item log-${escapeHtml(l.level)}"><span class="log-time">${formatDateTime(l.at)}</span><span class="log-level">${escapeHtml(l.level)}</span><span class="log-msg">${escapeHtml(l.message)}</span></li>`).join("");
+  const ipChange = s.ipChange
+    ? `<div class="sched-ip-change"><span>代理IP</span><strong><span class="ip-old">${escapeHtml(s.ipChange.old || "—")}</span><span class="ip-arrow">→</span><span class="ip-new">${escapeHtml(s.ipChange.new || "未知")}</span></strong></div>`
+    : "";
+  sched.status.innerHTML = `
+    <div class="sched-grid">
+      <div class="sched-stat"><span>进度</span><strong>${progress}</strong></div>
+      <div class="sched-stat"><span>当前实例</span><strong>${current}</strong></div>
+      <div class="sched-stat"><span>阶段</span><strong>${PHASE_LABELS[s.phase] || s.phase}</strong></div>
+      <div class="sched-stat"><span>剩余</span><strong>${remaining}</strong></div>
+    </div>
+    ${ipChange}
+    ${logs ? `<ol class="database-log-list sched-log">${logs}</ol>` : ""}`;
+}
+
+async function initScheduler() {
+  try {
+    restoreSchedToggles();
+    const res = await request("/api/scheduler/status");
+    state.scheduler = res.status;
+    const proxyInput = document.querySelector("#sched-proxy-url");
+    if (proxyInput && res.proxyRotateUrl) proxyInput.value = res.proxyRotateUrl;
+    renderScheduler();
+  } catch (e) {
+    showToast("调度器初始化失败：" + e.message, true);
+  }
+}
+
+document.querySelector("#sched-enable-reddit")?.addEventListener("change", () => { saveSchedToggles(); renderScheduler(); });
+document.querySelector("#sched-enable-tiktok")?.addEventListener("change", () => { saveSchedToggles(); renderScheduler(); });
+
+sched.startBtn.addEventListener("click", async () => {
+  try {
+    const proxyRotateUrl = document.querySelector("#sched-proxy-url")?.value.trim() || "";
+    const enableReddit = document.querySelector("#sched-enable-reddit")?.checked ?? true;
+    const enableTiktok = document.querySelector("#sched-enable-tiktok")?.checked ?? true;
+    const options = { enableReddit, enableTiktok };
+    if (proxyRotateUrl) options.proxyRotateUrl = proxyRotateUrl;
+    const res = await request("/api/scheduler/start", { method: "POST", body: JSON.stringify({ options }) });
+    state.scheduler = res.status;
+    renderScheduler();
+    showToast("轮换调度已启动");
+  } catch (e) {
+    showToast(e.message, true);
+  }
+});
+
+sched.stopBtn.addEventListener("click", async () => {
+  try {
+    const res = await request("/api/scheduler/stop", { method: "POST", body: "{}" });
+    state.scheduler = res.status;
+    renderScheduler();
+    showToast("已请求停止轮换调度");
+  } catch (e) {
+    showToast(e.message, true);
+  }
+});
+
+// ==========================================================================
+// 视频素材库模块 - 拖拽上传 / 自动解析 / 多账号快速发布
+// ==========================================================================
+
+const mat = {
+  dropZone: document.querySelector("#material-drop-zone"),
+  fileInput: document.querySelector("#mat-file-input"),
+  titleInput: document.querySelector("#mat-title"),
+  filePathInput: document.querySelector("#mat-file-path"),
+  hashtagsInput: document.querySelector("#mat-hashtags"),
+  categoryInput: document.querySelector("#mat-category"),
+  addBtn: document.querySelector("#btn-add-material"),
+  refreshBtn: document.querySelector("#btn-refresh-materials"),
+  list: document.querySelector("#materials-list"),
+};
+
+const pubDialog = {
+  el: document.querySelector("#quick-publish-dialog"),
+  matTitle: document.querySelector("#quick-pub-mat-title"),
+  matPath: document.querySelector("#quick-pub-mat-path"),
+  matTags: document.querySelector("#quick-pub-mat-tags"),
+  accountList: document.querySelector("#pub-account-list"),
+  selectAllBtn: document.querySelector("#pub-select-all"),
+  deselectAllBtn: document.querySelector("#pub-deselect-all"),
+  privacySelect: document.querySelector("#pub-privacy"),
+  scheduledAtInput: document.querySelector("#pub-scheduled-at"),
+  confirmBtn: document.querySelector("#btn-confirm-publish"),
+};
+
+let currentPubMaterialId = null;
+let tkAccountsCache = [];
+
+function parseFileNameMeta(filename) {
+  const nameWithoutExt = filename.replace(/\.[^.]+$/, "").trim();
+  const hashtagMatches = nameWithoutExt.match(/#[\w\u4e00-\u9fa5]+/g) || [];
+  const hashtags = hashtagMatches.map((t) => t.trim());
+  let title = nameWithoutExt.replace(/#[\w\u4e00-\u9fa5]+/g, "").trim();
+  title = title.replace(/[-_]+$/, "").replace(/^[-_]+/, "").replace(/\s+/g, " ").trim();
+  if (!title) title = nameWithoutExt;
+  return { title, hashtags };
+}
+
+async function handleFilesDrop(files) {
+  if (!files || files.length === 0) return;
+  if (files.length === 1) {
+    const file = files[0];
+    const { title, hashtags } = parseFileNameMeta(file.name);
+    if (mat.titleInput) mat.titleInput.value = title;
+    if (mat.hashtagsInput) mat.hashtagsInput.value = hashtags.join(" ");
+    if (mat.filePathInput) mat.filePathInput.value = file.name;
+    showToast("已自动解析文件名：" + title);
+  } else {
+    let successCount = 0;
+    for (const file of files) {
+      const { title, hashtags } = parseFileNameMeta(file.name);
+      try {
+        await request("/api/tiktok/materials", {
+          method: "POST",
+          body: JSON.stringify({ title, filePath: file.name, hashtags, category: "general" }),
+        });
+        successCount++;
+      } catch { /* 单个失败不阻断 */ }
+    }
+    showToast("批量导入 " + successCount + " 个素材，请逐一补全绝对路径");
+    await loadMaterials();
+  }
+}
+
+function renderMaterials(materials) {
+  if (!mat.list) return;
+  if (!materials || materials.length === 0) {
+    mat.list.innerHTML = "<div class=\"empty-state compact\">素材库尚无内容，请上传视频文件或手动录入</div>";
+    return;
+  }
+  mat.list.innerHTML = materials.map((m) => {
+    const tags = (m.hashtags || []).map((t) => `<span class="material-tag">${escapeHtml(t)}</span>`).join("");
+    const shortPath = m.filePath ? m.filePath.replace(/^.*[\\\/]/, "") : "—";
+    const safeTagsJson = escapeHtml(JSON.stringify(m.hashtags || []));
+    return `<div class="material-card">
+      <div class="material-info">
+        <span class="material-title">${escapeHtml(m.title)}</span>
+        <div class="material-meta"><span>📂 ${escapeHtml(shortPath)}</span>${m.category ? `<span>· ${escapeHtml(m.category)}</span>` : ""}</div>
+        ${tags ? `<div class="material-tags" style="margin-top:5px;">${tags}</div>` : ""}
+      </div>
+      <div class="material-actions">
+        <button class="button button-primary btn-qp"
+          data-mid="${escapeHtml(m.id)}" data-mtitle="${escapeHtml(m.title)}"
+          data-mpath="${escapeHtml(m.filePath || "")}" data-mtags="${safeTagsJson}"
+          style="font-size:12px;padding:0 12px;min-height:32px;white-space:nowrap;">🚀 发布</button>
+        <button class="danger-button btn-del-mat" data-mid="${escapeHtml(m.id)}"
+          style="font-size:11px;padding:5px 10px;">删除</button>
+      </div>
+    </div>`;
+  }).join("");
+
+  mat.list.querySelectorAll(".btn-qp").forEach((btn) => {
+    btn.addEventListener("click", () => openQuickPublishDialog(btn.dataset));
+  });
+  mat.list.querySelectorAll(".btn-del-mat").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      if (!confirm("确认删除此素材？")) return;
+      try {
+        await request("/api/tiktok/materials/" + encodeURIComponent(btn.dataset.mid), { method: "DELETE" });
+        showToast("素材已删除");
+        await loadMaterials();
+      } catch (e) { showToast(e.message, true); }
+    });
+  });
+}
+
+async function loadMaterials() {
+  try {
+    const res = await request("/api/tiktok/materials");
+    renderMaterials(res.materials || []);
+  } catch (e) {
+    if (mat.list) mat.list.innerHTML = `<div class="empty-state compact" style="color:var(--red);">加载失败: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+if (mat.dropZone) {
+  mat.dropZone.addEventListener("click", () => mat.fileInput && mat.fileInput.click());
+  mat.dropZone.addEventListener("dragover", (e) => { e.preventDefault(); mat.dropZone.classList.add("dragover"); });
+  mat.dropZone.addEventListener("dragleave", () => mat.dropZone.classList.remove("dragover"));
+  mat.dropZone.addEventListener("drop", async (e) => {
+    e.preventDefault();
+    mat.dropZone.classList.remove("dragover");
+    const files = [...(e.dataTransfer.files || [])].filter((f) => f.type.startsWith("video/") || /\.(mp4|mov|avi|mkv|webm)$/i.test(f.name));
+    if (!files.length) { showToast("请拖入视频文件", true); return; }
+    await handleFilesDrop(files);
+  });
+}
+
+if (mat.fileInput) {
+  mat.fileInput.addEventListener("change", async (e) => {
+    const files = [...(e.target.files || [])];
+    if (files.length > 0) await handleFilesDrop(files);
+    e.target.value = "";
+  });
+}
+
+if (mat.addBtn) {
+  mat.addBtn.addEventListener("click", async () => {
+    const title = mat.titleInput && mat.titleInput.value.trim();
+    const filePath = mat.filePathInput && mat.filePathInput.value.trim();
+    if (!title || !filePath) { showToast("请填写标题与视频路径", true); return; }
+    const hashtagsRaw = (mat.hashtagsInput && mat.hashtagsInput.value.trim()) || "";
+    const hashtags = hashtagsRaw.split(/\s+/).filter((t) => t.startsWith("#"));
+    const category = (mat.categoryInput && mat.categoryInput.value.trim()) || "general";
+    try {
+      mat.addBtn.disabled = true;
+      mat.addBtn.textContent = "保存中...";
+      await request("/api/tiktok/materials", {
+        method: "POST",
+        body: JSON.stringify({ title, filePath, hashtags, category }),
+      });
+      showToast("素材已保存到素材库");
+      if (mat.titleInput) mat.titleInput.value = "";
+      if (mat.filePathInput) mat.filePathInput.value = "";
+      if (mat.hashtagsInput) mat.hashtagsInput.value = "";
+      if (mat.categoryInput) mat.categoryInput.value = "";
+      await loadMaterials();
+    } catch (e) {
+      showToast(e.message, true);
+    } finally {
+      mat.addBtn.disabled = false;
+      mat.addBtn.textContent = "保存素材录入";
+    }
+  });
+}
+
+if (mat.refreshBtn) {
+  mat.refreshBtn.addEventListener("click", () => loadMaterials());
+}
+
+function openQuickPublishDialog(dataset) {
+  currentPubMaterialId = dataset.mid;
+  if (pubDialog.matTitle) pubDialog.matTitle.textContent = dataset.mtitle || "";
+  if (pubDialog.matPath) pubDialog.matPath.textContent = dataset.mpath || "";
+  if (pubDialog.matTags) {
+    try {
+      const tags = JSON.parse(dataset.mtags || "[]");
+      pubDialog.matTags.innerHTML = tags.map((t) => `<span class="material-tag">${escapeHtml(t)}</span>`).join("");
+    } catch { pubDialog.matTags.innerHTML = ""; }
+  }
+  renderPubAccountList();
+  if (pubDialog.el) pubDialog.el.showModal();
+}
+
+function renderPubAccountList() {
+  if (!pubDialog.accountList) return;
+  if (!tkAccountsCache.length) {
+    pubDialog.accountList.innerHTML = "<div class=\"empty-state compact\">暂无绑定 TikTok 账号，请先在账号矩阵模块绑定账号</div>";
+    return;
+  }
+  pubDialog.accountList.innerHTML = tkAccountsCache.map((acc) => `
+    <label class="pub-account-item">
+      <input type="checkbox" name="pub-account" value="${escapeHtml(acc.profileId)}" />
+      <div style="flex:1;min-width:0;">
+        <div style="font-size:13px;font-weight:700;color:var(--text-primary);">${escapeHtml(acc.accountName || acc.profileName || acc.profileId)}</div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:2px;">
+          实例: ${escapeHtml(acc.profileName || acc.profileId)} · 地区: ${escapeHtml(acc.region || "US")}
+          · <span style="color:${acc.status === "active" ? "var(--green-dark)" : "var(--amber-dark)"}">
+              ${acc.status === "active" ? "✓ 活跃" : "⚠ " + escapeHtml(acc.status || "—")}
+            </span>
+        </div>
+      </div>
+    </label>`).join("");
+
+  pubDialog.accountList.querySelectorAll("input[type=checkbox]").forEach((cb) => {
+    cb.addEventListener("change", () => {
+      const item = cb.closest(".pub-account-item");
+      if (item) item.classList.toggle("selected", cb.checked);
+    });
+  });
+}
+
+if (pubDialog.selectAllBtn) {
+  pubDialog.selectAllBtn.addEventListener("click", () => {
+    if (!pubDialog.accountList) return;
+    pubDialog.accountList.querySelectorAll("input[type=checkbox]").forEach((cb) => {
+      cb.checked = true;
+      const item = cb.closest(".pub-account-item");
+      if (item) item.classList.add("selected");
+    });
+  });
+}
+
+if (pubDialog.deselectAllBtn) {
+  pubDialog.deselectAllBtn.addEventListener("click", () => {
+    if (!pubDialog.accountList) return;
+    pubDialog.accountList.querySelectorAll("input[type=checkbox]").forEach((cb) => {
+      cb.checked = false;
+      const item = cb.closest(".pub-account-item");
+      if (item) item.classList.remove("selected");
+    });
+  });
+}
+
+if (pubDialog.confirmBtn) {
+  pubDialog.confirmBtn.addEventListener("click", async () => {
+    if (!currentPubMaterialId) return;
+    const checked = pubDialog.accountList
+      ? [...pubDialog.accountList.querySelectorAll("input[type=checkbox]:checked")]
+      : [];
+    if (!checked.length) { showToast("请至少选择一个发布账号", true); return; }
+    const scheduledAt = pubDialog.scheduledAtInput && pubDialog.scheduledAtInput.value
+      ? new Date(pubDialog.scheduledAtInput.value).toISOString()
+      : null;
+    pubDialog.confirmBtn.disabled = true;
+    pubDialog.confirmBtn.textContent = "⏳ 创建发布任务中...";
+    let successCount = 0;
+    const errors = [];
+    for (const inp of checked) {
+      const profileId = inp.value;
+      const acc = tkAccountsCache.find((a) => a.profileId === profileId);
+      try {
+        const jobRes = await request("/api/tiktok/publish/jobs", {
+          method: "POST",
+          body: JSON.stringify({
+            profileId,
+            accountId: acc ? acc.id : profileId,
+            materialId: currentPubMaterialId,
+            ...(scheduledAt ? { scheduledAt } : {}),
+          }),
+        });
+        if (!scheduledAt && jobRes.job && jobRes.job.id) {
+          await request("/api/tiktok/publish/jobs/" + encodeURIComponent(jobRes.job.id) + "/execute", {
+            method: "POST", body: "{}",
+          }).catch(() => {});
+        }
+        successCount++;
+      } catch (e) { errors.push(e.message); }
+    }
+    pubDialog.confirmBtn.disabled = false;
+    pubDialog.confirmBtn.textContent = "🚀 确认发布到选中账号";
+    if (successCount > 0) {
+      showToast("已为 " + successCount + " 个账号创建发布任务");
+      if (pubDialog.el) pubDialog.el.close();
+    }
+    if (errors.length > 0) {
+      showToast(errors.length + " 个账号创建失败：" + errors[0], true);
+    }
+  });
+}
+
+async function loadTkAccountsForPub() {
+  try {
+    const res = await request("/api/tiktok/accounts");
+    tkAccountsCache = res.accounts || [];
+  } catch { tkAccountsCache = []; }
+}
+
+loadMaterials();
+loadTkAccountsForPub();

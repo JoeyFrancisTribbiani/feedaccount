@@ -1,0 +1,1686 @@
+import { EventEmitter } from "node:events";
+
+import { BrowserSession } from "./browser-session.js";
+import { TARGET_URL, publicOptions, randomInteger } from "./config.js";
+
+export const ACTIVE_JOB_STATES = new Set([
+  "connecting",
+  "scrolling",
+  "waiting",
+  "pausing",
+  "paused",
+  "stopping",
+]);
+
+const MAX_LOG_ENTRIES = 80;
+const ALIGNMENT_RETRY_MIN_MS = 200;
+const ALIGNMENT_RETRY_MAX_MS = 500;
+const MAX_CONSECUTIVE_ALIGNMENT_RETRIES = 12;
+const MAX_COMMENT_NO_PROGRESS_RETRIES = 3;
+const DEFAULT_COMMENT_STEP_WAIT_MIN_MS = 700;
+const DEFAULT_COMMENT_STEP_WAIT_MAX_MS = 1_600;
+const MANUAL_COMMENT_PHASES = new Set(["comment_scrolling", "return_wait"]);
+
+function nowIso() {
+  return new Date().toISOString();
+}
+
+function finiteNumber(value, fallback = 0) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+}
+
+function redditCommentToken(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  try {
+    const url = new URL(raw);
+    const segments = url.pathname.split("/").filter(Boolean);
+    const commentsIndex = segments.findIndex((segment) => segment.toLowerCase() === "comments");
+    if (commentsIndex >= 0 && segments.length > commentsIndex + 3) {
+      return segments.at(-1).replace(/^t1_/i, "").toLowerCase();
+    }
+  } catch {
+    // Normal Reddit thing IDs are not URLs.
+  }
+  return raw.replace(/^t1_/i, "").toLowerCase();
+}
+
+function commentIdentity(comment) {
+  if (!comment) return "";
+  const candidates = [
+    comment.canonicalCommentId,
+    comment.commentId,
+    ...(Array.isArray(comment.commentIdAliases) ? comment.commentIdAliases : []),
+  ];
+  return candidates.map(redditCommentToken).find(Boolean) || "";
+}
+
+function commentMatchesIdentifier(comment, value) {
+  if (!comment || !value) return false;
+  const raw = String(value);
+  const aliases = [
+    comment.commentId,
+    comment.canonicalCommentId,
+    ...(Array.isArray(comment.commentIdAliases) ? comment.commentIdAliases : []),
+  ].filter(Boolean).map(String);
+  if (aliases.includes(raw)) return true;
+  const token = redditCommentToken(raw);
+  return Boolean(token) && aliases.some((alias) => redditCommentToken(alias) === token);
+}
+
+export class JobManager extends EventEmitter {
+  constructor({ bitBrowserApi, sessionFactory, randomIntegerFn, persistence } = {}) {
+    super();
+    this.bitBrowserApi = bitBrowserApi;
+    this.sessionFactory = sessionFactory || (() => new BrowserSession());
+    this.randomInteger = randomIntegerFn || randomInteger;
+    this.persistence = persistence || null;
+    this.jobs = new Map();
+  }
+
+  start(profile, options) {
+    const existing = this.jobs.get(profile.id);
+    if (existing && ACTIVE_JOB_STATES.has(existing.status)) {
+      throw new Error(`实例 ${profile.seq ?? profile.id} 已在运行`);
+    }
+
+    const startedAt = nowIso();
+    const detailLoopEnabled = options.detailLoopEnabled === true;
+    const runId = this.persistence?.createRun(profile, options, TARGET_URL, startedAt) ?? null;
+    const job = {
+      runId,
+      profileId: profile.id,
+      seq: profile.seq,
+      name: profile.name,
+      status: "connecting",
+      statusText: "正在连接",
+      options,
+      startedAt,
+      updatedAt: startedAt,
+      stoppedAt: null,
+      nextActionAt: null,
+      nextOperation: "feed-scroll",
+      scheduledDeadlineMs: null,
+      scheduledStatus: null,
+      scheduledStatusText: null,
+      pausedRemainingMs: null,
+      postCount: 0,
+      fullPostCount: 0,
+      totalPixels: 0,
+      lastScrollPixels: 0,
+      currentY: 0,
+      maxY: 0,
+      currentPost: null,
+      currentPostComplete: true,
+      alignmentPending: false,
+      alignmentRetryCount: 0,
+      alignmentRetryPostId: null,
+      alignmentReason: null,
+      alignmentResidualPx: null,
+      alignmentAttempts: 0,
+      countedPostIds: new Set(),
+      fullPostIds: new Set(),
+      countedFeedUnitIds: new Set(),
+      skippedPromotedIds: new Set(),
+      pageTitle: "",
+      pageUrl: "",
+      workflowMode: detailLoopEnabled ? "feed_detail_readonly" : "feed_only",
+      workflowPhase: "connecting",
+      feedPostsSinceDetail: 0,
+      feedPostsTarget: detailLoopEnabled ? this.#drawFeedTarget(options) : 0,
+      detailVisitCount: 0,
+      commentScrollCount: 0,
+      commentScrollProgress: 0,
+      commentScrollTarget: 0,
+      commentNoProgressCount: 0,
+      skippedPromotedCount: 0,
+      currentDetailPost: null,
+      currentComment: null,
+      manualCommentActionPending: false,
+      manualCommentUpvoteState: "unknown",
+      manualCommentUpvoteBlockedReason: null,
+      lastManualCommentUpvote: null,
+      error: null,
+      persistenceError: null,
+      logs: [],
+      timer: null,
+      session: null,
+      cancelled: false,
+      pauseRequested: false,
+      manualActionPending: false,
+      currentPostUpvoted: null,
+      manualUpvoteState: "unknown",
+      manualUpvoteBlockedReason: null,
+      lastManualUpvote: null,
+      upvotedPostIds: new Set(),
+      upvotedCommentIds: new Set(),
+      autoUpvoteCount: 0,
+      autoCommentUpvoteCount: 0,
+    };
+
+    this.jobs.set(profile.id, job);
+
+    if (this.persistence?.getUpvotedIdsForProfile) {
+      try {
+        const previous = this.persistence.getUpvotedIdsForProfile(profile.id);
+        if (previous?.postIds instanceof Set && previous.postIds.size > 0) {
+          for (const id of previous.postIds) job.upvotedPostIds.add(id);
+          this.#log(
+            job,
+            `从历史记录恢复了 ${job.upvotedPostIds.size} 个已点赞帖子的幂等记录`,
+            "info",
+            "upvote_restore",
+          );
+        }
+        if (previous?.commentIds instanceof Set && previous.commentIds.size > 0) {
+          for (const id of previous.commentIds) job.upvotedCommentIds.add(id);
+          this.#log(
+            job,
+            `从历史记录恢复了 ${job.upvotedCommentIds.size} 个已点赞评论的幂等记录`,
+            "info",
+            "upvote_restore",
+          );
+        }
+      } catch (restoreError) {
+        this.#log(job, `恢复历史点赞记录失败：${restoreError.message}`, "warning", "upvote_restore");
+      }
+    }
+
+    this.#log(job, "正在连接指定的 BitBrowser 实例", "info", "lifecycle");
+    if (detailLoopEnabled) {
+      this.#log(
+        job,
+        `本轮将在向下阅读 ${job.feedPostsTarget} 个 Feed 单元后查看普通帖子详情`,
+        "info",
+        "detail_cycle_planned",
+        { feedPostsTarget: job.feedPostsTarget, readonly: true },
+      );
+    }
+    void this.#run(job);
+    return this.#publicJob(job);
+  }
+
+  async pause(profileId) {
+    const job = this.#requiredJob(profileId);
+    if (!ACTIVE_JOB_STATES.has(job.status) || job.status === "stopping") {
+      throw new Error("该任务当前不能暂停");
+    }
+    if (job.status === "paused" || job.status === "pausing") return this.#publicJob(job);
+
+    job.pauseRequested = true;
+    if (job.timer) {
+      job.pausedRemainingMs = Math.max(0, (job.scheduledDeadlineMs || Date.now()) - Date.now());
+      clearTimeout(job.timer);
+      job.timer = null;
+      this.#log(job, "收到前端暂停请求", "info", "control");
+      this.#enterPaused(job);
+    } else {
+      this.#log(job, "收到前端暂停请求", "info", "control");
+      this.#setStatus(job, "pausing", "等待当前只读操作完成");
+    }
+    return this.#publicJob(job);
+  }
+
+  resume(profileId) {
+    const job = this.#requiredJob(profileId);
+    if (job.manualActionPending || job.manualCommentActionPending) {
+      throw new Error("正在处理人工确认点赞，请稍候");
+    }
+    if (job.status !== "paused") throw new Error("该任务当前不处于暂停状态");
+
+    job.pauseRequested = false;
+    this.#log(job, "收到前端继续请求", "info", "control");
+    if (job.pausedRemainingMs !== null) {
+      const delayMs = job.pausedRemainingMs;
+      job.pausedRemainingMs = null;
+      this.#schedule(job, job.nextOperation, delayMs, {
+        status: job.scheduledStatus || "waiting",
+        statusText: job.scheduledStatusText || this.#waitingStatusText(job),
+      });
+    } else {
+      void this.#dispatch(job);
+    }
+    return this.#publicJob(job);
+  }
+
+  triggerNow(profileId) {
+    const job = this.#requiredJob(profileId);
+    if (job.manualActionPending || job.manualCommentActionPending) {
+      throw new Error("正在处理人工确认点赞，请稍候");
+    }
+    if (job.status !== "waiting") throw new Error("只有等待中的任务可以立即继续");
+
+    if (job.timer) {
+      clearTimeout(job.timer);
+      job.timer = null;
+    }
+    job.pausedRemainingMs = null;
+    job.scheduledDeadlineMs = null;
+    job.nextActionAt = null;
+    this.#log(job, "收到前端立即继续请求", "info", "control", {
+      operation: job.nextOperation,
+      workflowPhase: job.workflowPhase,
+    });
+    void this.#dispatch(job);
+    return this.#publicJob(job);
+  }
+
+  async manualUpvote(profileId, expectedPostId) {
+    const job = this.#requiredJob(profileId);
+    const normalizedPostId = String(expectedPostId || "").trim();
+
+    if (job.manualActionPending || job.manualCommentActionPending) {
+      throw new Error("正在处理人工确认点赞，请勿重复提交");
+    }
+    if (job.status !== "waiting" || job.workflowPhase !== "feed_wait") {
+      throw new Error("只能在 Feed 当前帖子阅读等待期间确认点赞");
+    }
+    if (!job.session || typeof job.session.manualUpvoteCurrentPost !== "function") {
+      throw new Error("当前浏览器会话不支持手动点赞");
+    }
+    if (!normalizedPostId) throw new Error("缺少待确认的帖子 ID");
+    if (!job.currentPost?.postId || String(job.currentPost.postId) !== normalizedPostId) {
+      throw new Error("当前帖子已变化，请刷新监控页后重新确认");
+    }
+    if (this.#isPromoted(job.currentPost)) throw new Error("广告帖禁止点赞");
+    if (job.currentPost.clickEligible === false) throw new Error("当前帖子不可安全操作");
+    if (job.manualUpvoteState === "upvoted") throw new Error("当前帖子已是点赞状态");
+    if (job.manualUpvoteState === "attempted-unknown") {
+      throw new Error(job.manualUpvoteBlockedReason || "此前的点赞结果无法确认，为避免取消点赞已禁止重试");
+    }
+    if (!job.timer || !Number.isFinite(job.scheduledDeadlineMs)) {
+      throw new Error("当前帖子等待计时已结束，请稍后重试");
+    }
+
+    const frozenSchedule = {
+      operation: job.nextOperation,
+      remainingMs: Math.max(0, job.scheduledDeadlineMs - Date.now()),
+      status: job.scheduledStatus || "waiting",
+      statusText: job.scheduledStatusText || this.#waitingStatusText(job),
+    };
+    clearTimeout(job.timer);
+    job.timer = null;
+    job.nextActionAt = null;
+    job.scheduledDeadlineMs = null;
+    job.manualActionPending = true;
+    this.#setStatus(job, "waiting", "正在确认当前帖子点赞");
+    this.#log(job, `已收到当前帖“${job.currentPost.title || normalizedPostId}”的确认点赞`, "info", "manual_upvote_requested", {
+      postId: normalizedPostId,
+      postTitle: job.currentPost.title || null,
+      workflowPhase: job.workflowPhase,
+      nextOperation: frozenSchedule.operation,
+      remainingDelayMs: frozenSchedule.remainingMs,
+      manual: true,
+    });
+
+    let result = null;
+    let failure = null;
+    try {
+      result = await job.session.manualUpvoteCurrentPost({
+        expectedPostId: normalizedPostId,
+      });
+      if (job.cancelled) throw new Error("任务已停止，手动点赞未完成");
+      if (!result?.ok) throw new Error(result?.reason || "未能确认点赞结果");
+      if (String(result.postId || "") !== normalizedPostId) {
+        throw new Error("浏览器中的帖子已变化，未执行点赞");
+      }
+
+      job.currentPostUpvoted = Boolean(
+        result.alreadyUpvoted || result.changed || result.afterState === "upvoted",
+      );
+      job.manualUpvoteState = job.currentPostUpvoted ? "upvoted" : "unknown";
+      job.manualUpvoteBlockedReason = null;
+      job.lastManualUpvote = {
+        at: nowIso(),
+        postId: normalizedPostId,
+        changed: Boolean(result.changed),
+        alreadyUpvoted: Boolean(result.alreadyUpvoted),
+        beforeState: result.beforeState ?? null,
+        afterState: result.afterState ?? null,
+      };
+      this.#log(
+        job,
+        result.alreadyUpvoted
+          ? `当前帖“${job.currentPost.title || normalizedPostId}”已是点赞状态，未重复点击`
+          : `已手动点赞当前帖“${job.currentPost.title || normalizedPostId}”`,
+        "info",
+        result.alreadyUpvoted ? "manual_upvote_skipped" : "manual_upvote_succeeded",
+        { ...job.lastManualUpvote, manual: true },
+      );
+    } catch (error) {
+      failure = error instanceof Error ? error : new Error(String(error));
+      if (
+        result?.uncertain === true ||
+        ["already-attempted", "upvote-already-attempted"].includes(result?.reason)
+      ) {
+        job.manualUpvoteState = "attempted-unknown";
+        job.manualUpvoteBlockedReason =
+          "点赞点击可能已经生效，但页面未能确认；为避免再次点击取消点赞，本帖已锁定";
+        job.lastManualUpvote = {
+          at: nowIso(),
+          postId: normalizedPostId,
+          changed: false,
+          alreadyUpvoted: false,
+          beforeState: result?.beforeState ?? null,
+          afterState: result?.afterState ?? null,
+          uncertain: true,
+          error: failure.message,
+        };
+      }
+      if (!job.cancelled) {
+        this.#log(
+          job,
+          `手动点赞未完成：${failure.message}`,
+          "error",
+          "manual_upvote_failed",
+          {
+            postId: normalizedPostId,
+            postTitle: job.currentPost?.title || null,
+            manual: true,
+            reason: result?.reason || "session-error",
+            beforeState: result?.beforeState ?? null,
+            afterState: result?.afterState ?? null,
+            uncertain: Boolean(result?.uncertain),
+            error: failure.message,
+          },
+        );
+      }
+    } finally {
+      job.manualActionPending = false;
+      job.nextOperation = frozenSchedule.operation;
+      job.scheduledStatus = frozenSchedule.status;
+      job.scheduledStatusText = frozenSchedule.statusText;
+
+      if (job.cancelled || !ACTIVE_JOB_STATES.has(job.status)) {
+        this.#setStatus(job, job.status, job.statusText);
+      } else if (job.pauseRequested) {
+        job.pausedRemainingMs = frozenSchedule.remainingMs;
+        this.#enterPaused(job);
+      } else {
+        job.pausedRemainingMs = null;
+        this.#schedule(job, frozenSchedule.operation, frozenSchedule.remainingMs, {
+          status: frozenSchedule.status,
+          statusText: frozenSchedule.statusText,
+        });
+      }
+    }
+
+    if (failure) throw failure;
+    return result;
+  }
+
+  async manualCommentUpvote(profileId, expectedCommentId) {
+    const job = this.#requiredJob(profileId);
+    const normalizedCommentId = String(expectedCommentId || "").trim();
+    const startedPaused = job.status === "paused";
+    const allowedState =
+      MANUAL_COMMENT_PHASES.has(job.workflowPhase) &&
+      (job.status === "waiting" || startedPaused);
+
+    if (job.manualActionPending || job.manualCommentActionPending) {
+      throw new Error("正在处理人工确认点赞，请勿重复提交");
+    }
+    if (!allowedState) {
+      throw new Error("只能在评论阅读等待或评论区暂停期间确认点赞");
+    }
+    if (!job.session || typeof job.session.manualUpvoteCurrentComment !== "function") {
+      throw new Error("当前浏览器会话不支持评论确认点赞");
+    }
+    if (!normalizedCommentId) throw new Error("缺少待确认的评论 ID");
+    if (!job.currentComment?.commentId || !commentMatchesIdentifier(job.currentComment, normalizedCommentId)) {
+      throw new Error("当前评论已变化，请等待监控页更新后重新确认");
+    }
+    if (job.manualCommentUpvoteState === "upvoted") {
+      throw new Error("当前评论已是点赞状态");
+    }
+    if (job.manualCommentUpvoteState === "attempted-unknown") {
+      throw new Error(
+        job.manualCommentUpvoteBlockedReason ||
+          "此前的评论点赞结果无法确认，为避免取消点赞已禁止重试",
+      );
+    }
+    if (
+      !startedPaused &&
+      (!job.timer || !Number.isFinite(job.scheduledDeadlineMs))
+    ) {
+      throw new Error("当前评论等待计时已结束，请稍后重试");
+    }
+
+    const frozenSchedule = {
+      operation: job.nextOperation,
+      remainingMs: startedPaused
+        ? job.pausedRemainingMs
+        : Math.max(0, job.scheduledDeadlineMs - Date.now()),
+      status: job.scheduledStatus || "waiting",
+      statusText: job.scheduledStatusText || this.#waitingStatusText(job),
+    };
+    if (job.timer) clearTimeout(job.timer);
+    job.timer = null;
+    job.nextActionAt = null;
+    job.scheduledDeadlineMs = null;
+    job.manualCommentActionPending = true;
+    this.#setStatus(
+      job,
+      startedPaused ? "paused" : "waiting",
+      "正在确认当前评论点赞",
+    );
+    this.#log(job, "已收到当前可见评论的确认点赞", "info", "manual_comment_upvote_requested", {
+      commentId: normalizedCommentId,
+      workflowPhase: job.workflowPhase,
+      nextOperation: frozenSchedule.operation,
+      remainingDelayMs: frozenSchedule.remainingMs,
+      startedPaused,
+      manual: true,
+    });
+
+    let result = null;
+    let failure = null;
+    try {
+      result = await job.session.manualUpvoteCurrentComment({
+        expectedCommentId: normalizedCommentId,
+      });
+      if (job.cancelled) throw new Error("任务已停止，评论点赞未完成");
+      if (!result?.ok) throw new Error(result?.reason || "未能确认评论点赞结果");
+      if (!result?.commentId || !commentMatchesIdentifier(job.currentComment, result.commentId)) {
+        throw new Error("浏览器中的当前评论已变化，未执行点赞");
+      }
+      result = { ...result, commentId: normalizedCommentId };
+
+      const upvoted = Boolean(
+        result.alreadyUpvoted || result.changed || result.afterState === "upvoted",
+      );
+      job.manualCommentUpvoteState = upvoted ? "upvoted" : "unknown";
+      job.manualCommentUpvoteBlockedReason = null;
+      job.lastManualCommentUpvote = {
+        at: nowIso(),
+        commentId: normalizedCommentId,
+        changed: Boolean(result.changed),
+        alreadyUpvoted: Boolean(result.alreadyUpvoted),
+        beforeState: result.beforeState ?? null,
+        afterState: result.afterState ?? null,
+      };
+      this.#log(
+        job,
+        result.alreadyUpvoted
+          ? "当前评论已是点赞状态，未重复点击"
+          : "已手动点赞当前评论",
+        "info",
+        result.alreadyUpvoted
+          ? "manual_comment_upvote_skipped"
+          : "manual_comment_upvote_succeeded",
+        { ...job.lastManualCommentUpvote, manual: true },
+      );
+    } catch (error) {
+      failure = error instanceof Error ? error : new Error(String(error));
+      if (
+        result?.uncertain === true ||
+        String(result?.reason || "").includes("already-attempted")
+      ) {
+        job.manualCommentUpvoteState = "attempted-unknown";
+        job.manualCommentUpvoteBlockedReason =
+          "评论点赞点击可能已经生效，但页面未能确认；为避免再次点击取消点赞，本评论已锁定";
+        job.lastManualCommentUpvote = {
+          at: nowIso(),
+          commentId: normalizedCommentId,
+          changed: false,
+          alreadyUpvoted: false,
+          beforeState: result?.beforeState ?? null,
+          afterState: result?.afterState ?? null,
+          uncertain: true,
+          error: failure.message,
+        };
+      }
+      if (!job.cancelled) {
+        this.#log(
+          job,
+          `评论确认点赞未完成：${failure.message}`,
+          "error",
+          "manual_comment_upvote_failed",
+          {
+            commentId: normalizedCommentId,
+            manual: true,
+            reason: result?.reason || "session-error",
+            beforeState: result?.beforeState ?? null,
+            afterState: result?.afterState ?? null,
+            uncertain: Boolean(result?.uncertain),
+            error: failure.message,
+          },
+        );
+      }
+    } finally {
+      job.manualCommentActionPending = false;
+      job.nextOperation = frozenSchedule.operation;
+      job.scheduledStatus = frozenSchedule.status;
+      job.scheduledStatusText = frozenSchedule.statusText;
+
+      if (job.cancelled || !ACTIVE_JOB_STATES.has(job.status)) {
+        this.#setStatus(job, job.status, job.statusText);
+      } else if (startedPaused) {
+        job.pausedRemainingMs = frozenSchedule.remainingMs;
+        this.#setStatus(job, "paused", "已暂停");
+      } else if (job.pauseRequested) {
+        job.pausedRemainingMs = frozenSchedule.remainingMs;
+        this.#enterPaused(job);
+      } else {
+        job.pausedRemainingMs = null;
+        this.#schedule(job, frozenSchedule.operation, frozenSchedule.remainingMs, {
+          status: frozenSchedule.status,
+          statusText: frozenSchedule.statusText,
+        });
+      }
+    }
+
+    if (failure) throw failure;
+    return result;
+  }
+
+  async stop(profileId, reason = "已由用户停止") {
+    const job = this.#requiredJob(profileId);
+    if (!ACTIVE_JOB_STATES.has(job.status)) return this.#publicJob(job);
+
+    job.cancelled = true;
+    job.pauseRequested = false;
+    if (job.timer) {
+      clearTimeout(job.timer);
+      job.timer = null;
+    }
+    job.pausedRemainingMs = null;
+    job.scheduledDeadlineMs = null;
+    this.#setStatus(job, "stopping", "正在停止");
+    this.#log(job, reason, "info", "control");
+    await job.session?.close().catch(() => {});
+    job.session = null;
+    job.nextActionAt = null;
+    job.stoppedAt = nowIso();
+    this.#setStatus(job, "stopped", "已停止");
+    return this.#publicJob(job);
+  }
+
+  async stopAll() {
+    const active = [...this.jobs.values()].filter((job) => ACTIVE_JOB_STATES.has(job.status));
+    return Promise.all(active.map((job) => this.stop(job.profileId)));
+  }
+
+  list() {
+    return [...this.jobs.values()]
+      .sort((left, right) => Number(left.seq ?? 0) - Number(right.seq ?? 0))
+      .map((job) => this.#publicJob(job));
+  }
+
+  get(profileId) {
+    const job = this.jobs.get(profileId);
+    return job ? this.#publicJob(job) : null;
+  }
+
+  #requiredJob(profileId) {
+    const job = this.jobs.get(profileId);
+    if (!job) throw new Error("未找到该实例的任务");
+    return job;
+  }
+
+  async #run(job) {
+    try {
+      const connection = await this.bitBrowserApi.openProfile(job.profileId);
+      if (job.cancelled) return;
+
+      job.session = this.sessionFactory(job);
+      const page = await job.session.connect(connection.wsUrl);
+      if (job.cancelled) {
+        await job.session.close().catch(() => {});
+        return;
+      }
+
+      job.pageTitle = page.title || "Reddit 首页";
+      job.pageUrl = page.url || "";
+      job.currentY = page.y || 0;
+      job.maxY = page.max || 0;
+      job.currentPost = page.currentPost || null;
+      job.workflowPhase = "feed_align";
+      job.nextOperation = "feed-scroll";
+      this.#log(
+        job,
+        job.options.detailLoopEnabled
+          ? "Reddit 首页已连接，开始自动只读浏览"
+          : "Reddit 首页已连接，开始逐帖阅读",
+        "info",
+        "lifecycle",
+      );
+      if (job.pauseRequested) {
+        this.#enterPaused(job);
+        return;
+      }
+      await this.#dispatch(job);
+    } catch (error) {
+      await this.#failJob(job, error);
+    }
+  }
+
+  async #dispatch(job) {
+    if (job.cancelled) return;
+    if (job.pauseRequested) {
+      this.#enterPaused(job);
+      return;
+    }
+    job.nextActionAt = null;
+    job.scheduledDeadlineMs = null;
+
+    switch (job.nextOperation) {
+      case "open-detail":
+        await this.#openDetail(job);
+        break;
+      case "locate-comments":
+        await this.#locateComments(job);
+        break;
+      case "comment-scroll":
+        await this.#scrollComments(job);
+        break;
+      case "return-feed":
+        await this.#returnToFeed(job);
+        break;
+      case "feed-scroll":
+      default:
+        await this.#stepFeed(job);
+        break;
+    }
+  }
+
+  async #stepFeed(job) {
+    if (this.#maximumPostsReached(job)) {
+      await this.#complete(job, "已达到设定的帖子数");
+      return;
+    }
+
+    job.workflowPhase = "feed_align";
+    job.nextOperation = "feed-scroll";
+    this.#setStatus(job, "scrolling", "正在定位下一篇帖子");
+
+    try {
+      const result = await job.session.scroll();
+      if (job.cancelled) return;
+      this.#applyPageResult(job, result);
+
+      if (this.#isAlignmentPending(job, result)) {
+        this.#handleAlignmentPending(job, result);
+        return;
+      }
+
+      job.alignmentPending = false;
+      job.alignmentRetryCount = 0;
+      job.alignmentRetryPostId = null;
+
+      if (result.noPostAvailable) {
+        if (result.atBottom && job.options.autoStopAtBottom) {
+          await this.#complete(job, "没有下一篇帖子，任务已完成");
+          return;
+        }
+        this.#log(
+          job,
+          result.atBottom ? "当前已到信息流末尾，等待新内容" : "正在等待 Reddit 加载下一篇帖子",
+          "info",
+          "feed",
+          { atBottom: result.atBottom, retryable: !result.atBottom },
+        );
+      } else {
+        this.#recordFeedUnit(job, result);
+      }
+
+      if (job.pauseRequested) {
+        this.#enterPaused(job);
+        return;
+      }
+      if (this.#maximumPostsReached(job)) {
+        await this.#complete(job, "已达到设定的帖子数");
+        return;
+      }
+
+      const shouldOpen = this.#shouldOpenCurrentPost(job, result);
+      if (shouldOpen) {
+        job.nextOperation = "open-detail";
+      } else {
+        job.nextOperation = "feed-scroll";
+      }
+      let waitMs = this.randomInteger(job.options.waitMinMs, job.options.waitMaxMs);
+      job.workflowPhase = "feed_wait";
+
+      if (
+        !result.noPostAvailable &&
+        job.currentPost?.postId &&
+        !this.#isPromoted(job.currentPost)
+      ) {
+        await this.#tryAutoUpvotePost(job);
+        if (job.cancelled) return;
+      }
+
+      this.#log(
+        job,
+        shouldOpen
+          ? `${(waitMs / 1000).toFixed(1)} 秒后打开当前普通帖详情`
+          : `${(waitMs / 1000).toFixed(1)} 秒后继续浏览 Feed`,
+        "info",
+        "schedule",
+        { waitMs, nextOperation: job.nextOperation },
+      );
+      this.#schedule(job, job.nextOperation, waitMs, {
+        status: "waiting",
+        statusText: result.noPostAvailable ? "等待下一篇帖子" : "正在阅读当前帖子",
+      });
+    } catch (error) {
+      await this.#failJob(job, error);
+    }
+  }
+
+  #applyPageResult(job, result) {
+    const actualDistance = Math.max(0, finiteNumber(result.actualDistance));
+    job.lastScrollPixels = actualDistance;
+    job.totalPixels += actualDistance;
+    job.currentY = finiteNumber(result.currentY, job.currentY);
+    job.maxY = finiteNumber(result.maxY, job.maxY);
+    job.pageTitle = result.title || job.pageTitle;
+    job.pageUrl = result.url || result.detailUrl || job.pageUrl;
+    const previousPostId = job.currentPost?.postId || null;
+    job.currentPost = result.currentPost || job.currentPost;
+    if (job.currentPost?.postId && job.currentPost.postId !== previousPostId) {
+      job.currentPostUpvoted = null;
+      job.manualUpvoteState = "unknown";
+      job.manualUpvoteBlockedReason = null;
+    }
+    if (Object.prototype.hasOwnProperty.call(result, "currentComment")) {
+      const previousCommentId = commentIdentity(job.currentComment);
+      job.currentComment = result.currentComment || null;
+      if (commentIdentity(job.currentComment) !== previousCommentId) {
+        job.manualCommentUpvoteState = "unknown";
+        job.manualCommentUpvoteBlockedReason = null;
+      }
+    }
+    if (result.postComplete !== undefined) job.currentPostComplete = Boolean(result.postComplete);
+    job.alignmentReason = result.alignmentReason || null;
+    job.alignmentResidualPx = Number.isFinite(result.alignmentResidualPx)
+      ? result.alignmentResidualPx
+      : null;
+    job.alignmentAttempts = Number(result.alignmentAttempts || 0);
+  }
+
+  #handleAlignmentPending(job, result) {
+    const retryPostId = result.currentPost?.postId || null;
+    if (job.alignmentRetryPostId !== retryPostId) {
+      job.alignmentRetryPostId = retryPostId;
+      job.alignmentRetryCount = 0;
+    }
+    job.alignmentPending = true;
+    job.alignmentRetryCount += 1;
+
+    if (job.pauseRequested) {
+      this.#enterPaused(job);
+      return;
+    }
+
+    if (job.alignmentRetryCount >= MAX_CONSECUTIVE_ALIGNMENT_RETRIES) {
+      const postTitle = result.currentPost?.title || "未识别帖子";
+      const visiblePercent = Math.round(
+        Math.max(0, Math.min(1, Number(result.currentPost?.visibleRatio || 0))) * 100,
+      );
+      throw new Error(
+        `帖子“${postTitle}”连续 ${job.alignmentRetryCount} 次未能完整对齐` +
+          `（当前可见 ${visiblePercent}%）。请检查页面弹窗、固定遮挡或网络加载状态后重试。`,
+      );
+    }
+
+    const requestedRetryMs = Number(
+      this.randomInteger(ALIGNMENT_RETRY_MIN_MS, ALIGNMENT_RETRY_MAX_MS),
+    );
+    const retryMs = Math.max(
+      ALIGNMENT_RETRY_MIN_MS,
+      Math.min(
+        ALIGNMENT_RETRY_MAX_MS,
+        Number.isFinite(requestedRetryMs) ? requestedRetryMs : ALIGNMENT_RETRY_MIN_MS,
+      ),
+    );
+    job.workflowPhase = "feed_align";
+    job.nextOperation = "feed-scroll";
+    this.#schedule(job, "feed-scroll", retryMs, {
+      status: "scrolling",
+      statusText: `正在校正帖子位置（${job.alignmentRetryCount}/${MAX_CONSECUTIVE_ALIGNMENT_RETRIES}）`,
+    });
+    if (job.alignmentRetryCount === 1 || job.alignmentRetryCount % 4 === 0) {
+      this.#log(
+        job,
+        `帖子尚未完整对齐，${retryMs} 毫秒后继续校正`,
+        "info",
+        "alignment_retry",
+        {
+          postId: result.currentPost?.postId,
+          postTitle: result.currentPost?.title,
+          visibleRatio: result.currentPost?.visibleRatio,
+          fullyVisible: result.currentPost?.fullyVisible,
+          oversized: result.currentPost?.oversized,
+          scrollKind: result.scrollKind,
+          alignmentReason: result.alignmentReason,
+          alignmentResidualPx: result.alignmentResidualPx,
+          alignmentAttempts: result.alignmentAttempts,
+          retryCount: job.alignmentRetryCount,
+          retryMs,
+        },
+      );
+    }
+  }
+
+  #recordFeedUnit(job, result) {
+    const post = result.currentPost;
+    const postId = post?.postId || null;
+    const promoted = this.#isPromoted(post);
+    let countedNewPost = false;
+    let countedFeedStep = false;
+
+    if (result.newPost && postId && !promoted && !job.countedPostIds.has(postId)) {
+      job.countedPostIds.add(postId);
+      job.postCount += 1;
+      countedNewPost = true;
+    }
+    if (
+      postId &&
+      !promoted &&
+      post?.fullyVisible &&
+      job.countedPostIds.has(postId) &&
+      !job.fullPostIds.has(postId)
+    ) {
+      job.fullPostIds.add(postId);
+      job.fullPostCount += 1;
+    }
+    if (
+      job.options.detailLoopEnabled &&
+      result.newPost &&
+      postId &&
+      finiteNumber(result.actualDistance) > 0 &&
+      !job.countedFeedUnitIds.has(postId)
+    ) {
+      job.countedFeedUnitIds.add(postId);
+      job.feedPostsSinceDetail += 1;
+      countedFeedStep = true;
+    }
+
+    const postTitle = post?.title || (promoted ? "广告帖" : "未命名帖子");
+    const message = promoted
+      ? `已识别广告单元：${postTitle}`
+      : countedNewPost
+        ? `第 ${job.postCount} 篇：${postTitle}`
+        : post?.oversized
+          ? `继续阅读长帖：${postTitle}`
+          : `重新定位当前帖子：${postTitle}`;
+    this.#log(job, message, "info", "post_navigation", {
+      postId,
+      postTitle,
+      postType: post?.postType,
+      feedIndex: post?.feedIndex,
+      permalink: post?.permalink,
+      postHeight: post?.height,
+      visibleRatio: post?.visibleRatio,
+      fullyVisible: post?.fullyVisible,
+      fitPossible: post?.fitPossible,
+      oversized: post?.oversized,
+      isPromoted: promoted,
+      clickEligible: post?.clickEligible,
+      postComplete: result.postComplete,
+      scrollKind: result.scrollKind,
+      actualDistance: result.actualDistance,
+      currentY: result.currentY,
+      maxY: result.maxY,
+      inputMethod: result.inputMethod,
+      alignmentReason: result.alignmentReason,
+      alignmentResidualPx: result.alignmentResidualPx,
+      alignmentAttempts: result.alignmentAttempts,
+      countedFeedStep,
+      feedPostsSinceDetail: job.feedPostsSinceDetail,
+      feedPostsTarget: job.feedPostsTarget,
+    });
+  }
+
+  #shouldOpenCurrentPost(job, result) {
+    if (!job.options.detailLoopEnabled) return false;
+    if (result.noPostAvailable || !result.currentPost || !result.postComplete) return false;
+    if (job.feedPostsSinceDetail < job.feedPostsTarget) return false;
+
+    const post = result.currentPost;
+    if (this.#isPromoted(post) || post.clickEligible === false) {
+      const postId = post.postId || `unknown-${post.feedIndex ?? ""}`;
+      if (!job.skippedPromotedIds.has(postId)) {
+        job.skippedPromotedIds.add(postId);
+        if (this.#isPromoted(post)) job.skippedPromotedCount += 1;
+        this.#log(
+          job,
+          this.#isPromoted(post) ? "达到本轮阈值，但当前是广告帖，继续向下浏览" : "当前帖子没有安全标题链接，继续向下浏览",
+          "info",
+          "detail_candidate_skipped",
+          {
+            postId: post.postId,
+            postTitle: post.title,
+            reason: this.#isPromoted(post) ? "promoted" : post.ineligibleReason || "not-clickable",
+            feedPostsSinceDetail: job.feedPostsSinceDetail,
+            feedPostsTarget: job.feedPostsTarget,
+          },
+        );
+      }
+      return false;
+    }
+    return true;
+  }
+
+  async #tryAutoUpvotePost(job) {
+    if (!job.options.autoUpvoteEnabled) return;
+    if (!job.currentPost?.postId) return;
+    if (this.#isPromoted(job.currentPost)) return;
+    if (!job.session || typeof job.session.manualUpvoteCurrentPost !== "function") return;
+
+    const postId = String(job.currentPost.postId);
+    if (job.upvotedPostIds.has(postId)) {
+      job.manualUpvoteState = "upvoted";
+      job.currentPostUpvoted = true;
+      return;
+    }
+
+    const probability = Number(job.options.autoUpvoteProbability || 0);
+    if (probability <= 0) return;
+    const roll = this.randomInteger(0, 99);
+    if (roll >= probability) {
+      this.#log(
+        job,
+        `自动点赞概率未命中（${roll + 1}% >= ${probability}%），跳过当前帖`,
+        "info",
+        "auto_upvote_skipped",
+        { postId, roll: roll + 1, threshold: probability },
+      );
+      return;
+    }
+
+    this.#setStatus(job, "scrolling", "正在自动点赞当前帖");
+    this.#log(
+      job,
+      `自动点赞概率命中（${roll + 1}% < ${probability}%），准备点赞当前帖`,
+      "info",
+      "auto_upvote_attempt",
+      { postId, postTitle: job.currentPost.title, roll: roll + 1, threshold: probability },
+    );
+
+    try {
+      const result = await job.session.manualUpvoteCurrentPost({ expectedPostId: postId });
+      if (job.cancelled) return;
+
+      if (result.ok || result.uncertain) {
+        job.upvotedPostIds.add(postId);
+        job.autoUpvoteCount += 1;
+        job.currentPostUpvoted = Boolean(
+          result.alreadyUpvoted || result.changed || result.afterState === "upvoted",
+        );
+        job.manualUpvoteState = job.currentPostUpvoted ? "upvoted" : "unknown";
+        job.lastManualUpvote = {
+          at: nowIso(),
+          source: "auto",
+          changed: Boolean(result.changed),
+          alreadyUpvoted: Boolean(result.alreadyUpvoted),
+          uncertain: Boolean(result.uncertain),
+          beforeState: result.beforeState,
+          afterState: result.afterState,
+          reason: result.reason || null,
+        };
+        this.#log(
+          job,
+          result.changed
+            ? "自动点赞成功，已点赞当前帖"
+            : result.alreadyUpvoted
+              ? "当前帖已是点赞状态，自动确认"
+              : result.uncertain
+                ? `自动点赞结果不确定（${result.reason || "unknown"}），已锁定防止重复操作`
+                : "自动点赞完成",
+          result.uncertain ? "warning" : "info",
+          "auto_upvote",
+          { postId, result },
+        );
+        this.persistence?.updateRun(job);
+      } else {
+        this.#log(
+          job,
+          `自动点赞未执行：${result.reason || "unknown"}`,
+          "info",
+          "auto_upvote_skipped",
+          { postId, reason: result.reason },
+        );
+      }
+    } catch (error) {
+      this.#log(
+        job,
+        `自动点赞出错：${error.message}`,
+        "warning",
+        "auto_upvote_error",
+        { postId, error: error.message },
+      );
+    }
+  }
+
+  async #tryAutoUpvoteComment(job) {
+    if (!job.options.autoCommentUpvoteEnabled) return;
+    if (!job.currentComment?.commentId) return;
+    if (job.currentComment.hasVisibleUpvote === false) return;
+    if (job.currentComment.anchorInSafeViewport === false) return;
+    if (job.currentComment.readable === false) return;
+    if (!job.session || typeof job.session.manualUpvoteCurrentComment !== "function") return;
+
+    const commentId = commentIdentity(job.currentComment);
+    if (!commentId) return;
+    if (job.upvotedCommentIds.has(commentId)) {
+      job.manualCommentUpvoteState = "upvoted";
+      return;
+    }
+
+    const probability = Number(job.options.autoCommentUpvoteProbability || 0);
+    if (probability <= 0) return;
+    const roll = this.randomInteger(0, 99);
+    if (roll >= probability) {
+      this.#log(
+        job,
+        `评论自动点赞概率未命中（${roll + 1}% >= ${probability}%），跳过`,
+        "info",
+        "auto_comment_upvote_skipped",
+        { commentId, roll: roll + 1, threshold: probability },
+      );
+      return;
+    }
+
+    this.#setStatus(job, "scrolling", "正在自动点赞当前评论");
+    this.#log(
+      job,
+      `评论自动点赞概率命中（${roll + 1}% < ${probability}%），准备点赞`,
+      "info",
+      "auto_comment_upvote_attempt",
+      { commentId, roll: roll + 1, threshold: probability },
+    );
+
+    try {
+      const result = await job.session.manualUpvoteCurrentComment({
+        expectedCommentId: job.currentComment.commentId,
+      });
+      if (job.cancelled) return;
+
+      if (result.ok || result.uncertain) {
+        job.upvotedCommentIds.add(commentId);
+        job.autoCommentUpvoteCount += 1;
+        const upvoted = Boolean(
+          result.alreadyUpvoted || result.changed || result.afterState === "upvoted",
+        );
+        job.manualCommentUpvoteState = upvoted ? "upvoted" : "unknown";
+        job.lastManualCommentUpvote = {
+          at: nowIso(),
+          source: "auto",
+          changed: Boolean(result.changed),
+          alreadyUpvoted: Boolean(result.alreadyUpvoted),
+          uncertain: Boolean(result.uncertain),
+          beforeState: result.beforeState,
+          afterState: result.afterState,
+          reason: result.reason || null,
+        };
+        this.#log(
+          job,
+          result.changed
+            ? "自动评论点赞成功"
+            : result.alreadyUpvoted
+              ? "当前评论已是点赞状态，自动确认"
+              : result.uncertain
+                ? `自动评论点赞结果不确定（${result.reason || "unknown"}），已锁定`
+                : "自动评论点赞完成",
+          result.uncertain ? "warning" : "info",
+          "auto_comment_upvote",
+          { commentId, result },
+        );
+        this.persistence?.updateRun(job);
+      } else {
+        this.#log(
+          job,
+          `自动评论点赞未执行：${result.reason || "unknown"}`,
+          "info",
+          "auto_comment_upvote_skipped",
+          { commentId, reason: result.reason },
+        );
+      }
+    } catch (error) {
+      this.#log(
+        job,
+        `自动评论点赞出错：${error.message}`,
+        "warning",
+        "auto_comment_upvote_error",
+        { commentId, error: error.message },
+      );
+    }
+  }
+
+  async #openDetail(job) {
+    if (this.#maximumPostsReached(job)) {
+      await this.#complete(job, "已达到设定的帖子数");
+      return;
+    }
+    job.workflowPhase = "opening_detail";
+    this.#setStatus(job, "scrolling", "正在打开普通帖子详情");
+
+    try {
+      const expectedPost = job.currentPost;
+      const result = await job.session.openCurrentPost({
+        expectedPostId: expectedPost?.postId,
+      });
+      if (job.cancelled) return;
+      if (!result?.opened) {
+        if (result?.reason === "promoted") {
+          const postId = expectedPost?.postId || "unknown";
+          if (!job.skippedPromotedIds.has(postId)) {
+            job.skippedPromotedIds.add(postId);
+            job.skippedPromotedCount += 1;
+          }
+        }
+        this.#log(
+          job,
+          result?.reason === "promoted"
+            ? "打开前再次确认是广告帖，已跳过"
+            : "当前帖子无法安全打开，继续浏览 Feed",
+          "info",
+          "detail_candidate_skipped",
+          {
+            postId: expectedPost?.postId,
+            postTitle: expectedPost?.title,
+            reason: result?.reason || "open-failed",
+          },
+        );
+        job.workflowPhase = "feed_align";
+        job.nextOperation = "feed-scroll";
+        this.#schedule(job, "feed-scroll", 0, {
+          status: "scrolling",
+          statusText: "继续定位下一篇普通帖子",
+        });
+        return;
+      }
+
+      job.pageUrl = result.detailUrl || result.url || job.pageUrl;
+      job.pageTitle = result.title || job.pageTitle;
+      job.currentDetailPost = {
+        postId: result.postId || expectedPost?.postId || null,
+        title: result.postTitle || expectedPost?.title || "未命名帖子",
+        permalink: result.detailUrl || result.url || expectedPost?.permalink || null,
+        openedAt: nowIso(),
+      };
+      job.currentComment = null;
+      job.manualCommentUpvoteState = "unknown";
+      job.manualCommentUpvoteBlockedReason = null;
+      job.detailVisitCount += 1;
+      this.#log(job, `已打开详情：${job.currentDetailPost.title}`, "info", "detail_open", {
+        ...job.currentDetailPost,
+        navigationMode: result.navigationMode || null,
+        readonly: true,
+      });
+
+      const waitMs = this.#randomMs(job.options, "detailWait", 2_000, 15_000);
+      job.workflowPhase = "detail_wait";
+      job.nextOperation = "locate-comments";
+      this.#log(
+        job,
+        `${(waitMs / 1000).toFixed(1)} 秒后开始查看评论区`,
+        "info",
+        "detail_wait_scheduled",
+        { waitMs },
+      );
+      this.#schedule(job, "locate-comments", waitMs, {
+        status: "waiting",
+        statusText: "正在阅读帖子详情",
+      });
+    } catch (error) {
+      await this.#failJob(job, error);
+    }
+  }
+
+  async #locateComments(job) {
+    job.workflowPhase = "locating_comments";
+    job.nextOperation = "locate-comments";
+    this.#setStatus(job, "scrolling", "正在定位评论区");
+    try {
+      const result = await job.session.locateComments();
+      if (job.cancelled) return;
+      this.#applyPageResult(job, result || {});
+      job.commentScrollProgress = 0;
+      job.commentNoProgressCount = 0;
+      job.commentScrollTarget = this.randomInteger(
+        job.options.commentScrollMin,
+        job.options.commentScrollMax,
+      );
+      this.#log(job, "评论区定位完成", "info", "comments_located", {
+        available: result?.available !== false,
+        commentCount: result?.commentCount ?? null,
+        actualDistance: result?.actualDistance ?? 0,
+        atBottom: Boolean(result?.atBottom),
+        commentScrollTarget: job.commentScrollTarget,
+      });
+
+      if (job.pauseRequested) {
+        job.nextOperation = result?.available === false || result?.atBottom
+          ? "return-feed"
+          : "comment-scroll";
+        this.#enterPaused(job);
+        return;
+      }
+      if (result?.available === false || result?.commentsClosed || result?.atBottom) {
+        this.#scheduleReturn(job);
+        return;
+      }
+      job.workflowPhase = "comment_scrolling";
+      job.nextOperation = "comment-scroll";
+      this.#schedule(job, "comment-scroll", 0, {
+        status: "scrolling",
+        statusText: "开始只读浏览评论",
+      });
+    } catch (error) {
+      await this.#failJob(job, error);
+    }
+  }
+
+  async #scrollComments(job) {
+    if (job.commentScrollProgress >= job.commentScrollTarget) {
+      this.#scheduleReturn(job);
+      return;
+    }
+    job.workflowPhase = "comment_scrolling";
+    job.nextOperation = "comment-scroll";
+    this.#setStatus(
+      job,
+      "scrolling",
+      `正在浏览评论（${job.commentScrollProgress + 1}/${job.commentScrollTarget}）`,
+    );
+    try {
+      const scrollMethod = job.session.scrollComments || job.session.scrollCommentStep;
+      if (typeof scrollMethod !== "function") {
+        throw new Error("当前浏览器会话不支持评论区滚动");
+      }
+      const result = await scrollMethod.call(job.session);
+      if (job.cancelled) return;
+      this.#applyPageResult(job, result || {});
+      const actualDistance = Math.max(0, finiteNumber(result?.actualDistance));
+      const moved = result?.moved === true || actualDistance > 0;
+      if (moved) {
+        job.commentScrollProgress += 1;
+        job.commentScrollCount += 1;
+        job.commentNoProgressCount = 0;
+        this.#log(
+          job,
+          `评论区第 ${job.commentScrollProgress}/${job.commentScrollTarget} 次向下移动`,
+          "info",
+          "comment_scroll",
+          {
+            actualDistance,
+            currentY: result?.currentY,
+            maxY: result?.maxY,
+            atBottom: Boolean(result?.atBottom),
+          },
+        );
+      } else {
+        job.commentNoProgressCount += 1;
+      }
+
+      if (
+        result?.atBottom ||
+        job.commentScrollProgress >= job.commentScrollTarget ||
+        job.commentNoProgressCount >= MAX_COMMENT_NO_PROGRESS_RETRIES
+      ) {
+        this.#scheduleReturn(job);
+        return;
+      }
+      if (job.pauseRequested) {
+        this.#enterPaused(job);
+        return;
+      }
+
+      const commentStepMin = Number.isInteger(job.options.commentStepWaitMinMs)
+        ? job.options.commentStepWaitMinMs
+        : DEFAULT_COMMENT_STEP_WAIT_MIN_MS;
+      const gapMs = this.randomInteger(
+        commentStepMin,
+        Number.isInteger(job.options.commentStepWaitMaxMs)
+          ? job.options.commentStepWaitMaxMs
+          : DEFAULT_COMMENT_STEP_WAIT_MAX_MS,
+      );
+
+      if (moved && job.currentComment?.commentId) {
+        await this.#tryAutoUpvoteComment(job);
+        if (job.cancelled) return;
+      }
+
+      this.#schedule(job, "comment-scroll", gapMs, {
+        status: "waiting",
+        statusText: `正在阅读评论（${job.commentScrollProgress}/${job.commentScrollTarget}）`,
+      });
+    } catch (error) {
+      await this.#failJob(job, error);
+    }
+  }
+
+  #scheduleReturn(job) {
+    const waitMs = this.#randomMs(job.options, "returnWait", 2_000, 4_000);
+    job.workflowPhase = "return_wait";
+    job.nextOperation = "return-feed";
+    this.#log(
+      job,
+      `${(waitMs / 1000).toFixed(1)} 秒后返回 Feed`,
+      "info",
+      "return_scheduled",
+      {
+        waitMs,
+        commentScrollProgress: job.commentScrollProgress,
+        commentScrollTarget: job.commentScrollTarget,
+      },
+    );
+    this.#schedule(job, "return-feed", waitMs, {
+      status: "waiting",
+      statusText: "正在阅读当前评论位置",
+    });
+  }
+
+  async #returnToFeed(job) {
+    job.workflowPhase = "returning_feed";
+    job.nextOperation = "return-feed";
+    this.#setStatus(job, "scrolling", "正在返回 Feed");
+    try {
+      const result = await job.session.returnToFeed();
+      if (job.cancelled) return;
+      if (result?.returned === false) {
+        throw new Error(result.reason || "无法返回原 Feed 页面");
+      }
+      job.workflowPhase = "feed_restore";
+      this.#applyPageResult(job, result || {});
+      job.currentComment = null;
+      job.manualCommentUpvoteState = "unknown";
+      job.manualCommentUpvoteBlockedReason = null;
+      this.#log(job, "已返回并恢复 Feed 阅读位置", "info", "feed_restored", {
+        anchorRestored: result?.anchorRestored !== false,
+        currentY: result?.currentY ?? result?.y ?? job.currentY,
+        postId: result?.currentPost?.postId || job.currentPost?.postId,
+      });
+      this.#log(job, "本轮只读详情浏览完成", "info", "detail_cycle_complete", {
+        detailVisitCount: job.detailVisitCount,
+        commentScrollProgress: job.commentScrollProgress,
+        commentScrollTarget: job.commentScrollTarget,
+      });
+
+      job.feedPostsSinceDetail = 0;
+      job.feedPostsTarget = this.#drawFeedTarget(job.options);
+      job.commentScrollProgress = 0;
+      job.commentScrollTarget = 0;
+      job.commentNoProgressCount = 0;
+      job.workflowPhase = "feed_align";
+      job.nextOperation = "feed-scroll";
+      this.#log(
+        job,
+        `新一轮将在向下阅读 ${job.feedPostsTarget} 个 Feed 单元后查看普通帖子详情`,
+        "info",
+        "detail_cycle_planned",
+        { feedPostsTarget: job.feedPostsTarget, readonly: true },
+      );
+      if (job.pauseRequested) {
+        this.#enterPaused(job);
+        return;
+      }
+      this.#schedule(job, "feed-scroll", 0, {
+        status: "scrolling",
+        statusText: "继续浏览 Feed",
+      });
+    } catch (error) {
+      await this.#failJob(job, error);
+    }
+  }
+
+  #schedule(job, operation, delayMs, { status = "waiting", statusText = "等待继续" } = {}) {
+    if (job.cancelled) return;
+    if (job.timer) clearTimeout(job.timer);
+    const safeDelayMs = Math.max(0, Math.round(finiteNumber(delayMs)));
+    job.nextOperation = operation;
+    job.scheduledDeadlineMs = Date.now() + safeDelayMs;
+    job.scheduledStatus = status;
+    job.scheduledStatusText = statusText;
+    job.nextActionAt = new Date(job.scheduledDeadlineMs).toISOString();
+    this.#setStatus(job, status, statusText);
+    job.timer = setTimeout(() => {
+      job.timer = null;
+      job.nextActionAt = null;
+      job.scheduledDeadlineMs = null;
+      void this.#dispatch(job);
+    }, safeDelayMs);
+  }
+
+  #enterPaused(job) {
+    job.nextActionAt = null;
+    job.scheduledDeadlineMs = null;
+    this.#setStatus(job, "paused", "已暂停");
+    this.#log(job, "任务已暂停，浏览器连接保持不变", "info", "lifecycle", {
+      nextOperation: job.nextOperation,
+      workflowPhase: job.workflowPhase,
+      remainingDelayMs: job.pausedRemainingMs,
+    });
+  }
+
+  #isAlignmentPending(job, result) {
+    if (result.alignmentPending === true) return true;
+    if (["alignment-pending", "target-lost"].includes(result.scrollKind)) return true;
+    if (result.noPostAvailable) return false;
+    if (result.alignmentVerified === true) return false;
+    if (result.alignmentVerified === false) return true;
+
+    const post = result.currentPost;
+    if (!post) return true;
+    if (post.fitPossible) return !post.fullyVisible;
+    if (post.oversized) {
+      if (result.newPost) return false;
+      return !(
+        job.countedPostIds.has(post.postId) &&
+        result.scrollKind === "continue-post" &&
+        Number(result.actualDistance) > 0
+      );
+    }
+    return false;
+  }
+
+  #isPromoted(post) {
+    return Boolean(
+      post?.isPromoted === true ||
+      post?.promoted === true ||
+      post?.ineligibleReason === "promoted",
+    );
+  }
+
+  #maximumPostsReached(job) {
+    return Boolean(
+      job.options.maxPosts > 0 &&
+      job.postCount >= job.options.maxPosts &&
+      job.currentPostComplete,
+    );
+  }
+
+  #drawFeedTarget(options) {
+    return this.randomInteger(options.detailAfterMinPosts, options.detailAfterMaxPosts);
+  }
+
+  #randomMs(options, prefix, fallbackMinMs, fallbackMaxMs) {
+    const minMsKey = `${prefix}MinMs`;
+    const maxMsKey = `${prefix}MaxMs`;
+    const minSecKey = `${prefix}MinSec`;
+    const maxSecKey = `${prefix}MaxSec`;
+    const minMs = Number.isInteger(options[minMsKey])
+      ? options[minMsKey]
+      : Number.isInteger(options[minSecKey])
+        ? options[minSecKey] * 1000
+        : fallbackMinMs;
+    const maxMs = Number.isInteger(options[maxMsKey])
+      ? options[maxMsKey]
+      : Number.isInteger(options[maxSecKey])
+        ? options[maxSecKey] * 1000
+        : fallbackMaxMs;
+    return this.randomInteger(minMs, maxMs);
+  }
+
+  #waitingStatusText(job) {
+    switch (job.workflowPhase) {
+      case "detail_wait":
+        return "正在阅读帖子详情";
+      case "comment_scrolling":
+        return "正在阅读评论";
+      case "return_wait":
+        return "正在阅读当前评论位置";
+      case "feed_wait":
+      default:
+        return "正在阅读当前帖子";
+    }
+  }
+
+  async #complete(job, message) {
+    job.nextActionAt = null;
+    job.scheduledDeadlineMs = null;
+    job.stoppedAt = nowIso();
+    this.#log(job, message, "info", "lifecycle");
+    await job.session?.close().catch(() => {});
+    job.session = null;
+    this.#setStatus(job, "completed", "已完成");
+  }
+
+  async #failJob(job, error) {
+    if (job.cancelled) return;
+    if (job.timer) clearTimeout(job.timer);
+    job.timer = null;
+    job.nextActionAt = null;
+    job.scheduledDeadlineMs = null;
+    job.error = error instanceof Error ? error.message : String(error);
+    job.stoppedAt = nowIso();
+    this.#log(job, `任务出错：${job.error}`, "error", "error", {
+      workflowPhase: job.workflowPhase,
+      nextOperation: job.nextOperation,
+    });
+    await job.session?.close().catch(() => {});
+    job.session = null;
+    this.#setStatus(job, "error", "运行出错");
+  }
+
+  #setStatus(job, status, statusText) {
+    job.status = status;
+    job.statusText = statusText;
+    job.updatedAt = nowIso();
+    this.#persistRun(job);
+    this.#emitChange();
+  }
+
+  #log(job, message, level = "info", eventType = "activity", data = null) {
+    const time = nowIso();
+    job.logs.push({ time, level, eventType, message });
+    if (job.logs.length > MAX_LOG_ENTRIES) job.logs.shift();
+    job.updatedAt = time;
+    try {
+      this.persistence?.addEvent({
+        runId: job.runId,
+        profileId: job.profileId,
+        message,
+        level,
+        eventType,
+        data,
+      });
+    } catch (error) {
+      job.persistenceError = error instanceof Error ? error.message : String(error);
+    }
+    this.#persistRun(job);
+    this.#emitChange();
+  }
+
+  #persistRun(job) {
+    try {
+      this.persistence?.updateRun(job);
+    } catch (error) {
+      job.persistenceError = error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  #emitChange() {
+    this.emit("change", this.list());
+  }
+
+  #publicJob(job) {
+    const manualUpvoteAvailable = Boolean(
+      job.status === "waiting" &&
+      job.workflowPhase === "feed_wait" &&
+      Number.isFinite(job.scheduledDeadlineMs) &&
+      job.currentPost?.postId &&
+      !this.#isPromoted(job.currentPost) &&
+      job.currentPost.clickEligible !== false &&
+      job.manualUpvoteState === "unknown" &&
+      !job.manualActionPending &&
+      !job.manualCommentActionPending,
+    );
+    const manualCommentUpvoteAvailable = Boolean(
+      MANUAL_COMMENT_PHASES.has(job.workflowPhase) &&
+      (job.status === "paused" ||
+        (job.status === "waiting" && Number.isFinite(job.scheduledDeadlineMs))) &&
+      job.currentComment?.commentId &&
+      job.currentComment.hasVisibleUpvote !== false &&
+      job.currentComment.anchorInSafeViewport !== false &&
+      job.currentComment.readable !== false &&
+      job.manualCommentUpvoteState === "unknown" &&
+      !job.manualActionPending &&
+      !job.manualCommentActionPending,
+    );
+    return {
+      runId: job.runId,
+      profileId: job.profileId,
+      seq: job.seq,
+      name: job.name,
+      status: job.status,
+      statusText: job.statusText,
+      options: publicOptions(job.options),
+      startedAt: job.startedAt,
+      updatedAt: job.updatedAt,
+      stoppedAt: job.stoppedAt,
+      nextActionAt: job.nextActionAt,
+      nextOperation: job.nextOperation,
+      postCount: job.postCount,
+      fullPostCount: job.fullPostCount,
+      scrollCount: job.postCount,
+      totalPixels: job.totalPixels,
+      lastScrollPixels: job.lastScrollPixels,
+      currentY: job.currentY,
+      maxY: job.maxY,
+      currentPost: job.currentPost,
+      currentPostComplete: job.currentPostComplete,
+      alignmentPending: job.alignmentPending,
+      alignmentRetryCount: job.alignmentRetryCount,
+      alignmentReason: job.alignmentReason,
+      alignmentResidualPx: job.alignmentResidualPx,
+      alignmentAttempts: job.alignmentAttempts,
+      workflowMode: job.workflowMode,
+      workflowPhase: job.workflowPhase,
+      feedPostsSinceDetail: job.feedPostsSinceDetail,
+      feedPostsTarget: job.feedPostsTarget,
+      detailVisitCount: job.detailVisitCount,
+      commentScrollCount: job.commentScrollCount,
+      commentScrollProgress: job.commentScrollProgress,
+      commentScrollTarget: job.commentScrollTarget,
+      skippedPromotedCount: job.skippedPromotedCount,
+      autoUpvoteCount: job.autoUpvoteCount,
+      autoCommentUpvoteCount: job.autoCommentUpvoteCount,
+      upvotedPostCount: job.upvotedPostIds.size,
+      upvotedCommentCount: job.upvotedCommentIds.size,
+      currentDetailPost: job.currentDetailPost,
+      currentComment: job.currentComment,
+      manualActionPending: job.manualActionPending,
+      manualUpvoteAvailable,
+      currentPostUpvoted: job.currentPostUpvoted,
+      manualUpvoteState: job.manualUpvoteState,
+      manualUpvoteBlockedReason: job.manualUpvoteBlockedReason,
+      lastManualUpvote: job.lastManualUpvote,
+      manualCommentActionPending: job.manualCommentActionPending,
+      manualCommentUpvoteAvailable,
+      manualCommentUpvoteState: job.manualCommentUpvoteState,
+      manualCommentUpvoteBlockedReason: job.manualCommentUpvoteBlockedReason,
+      lastManualCommentUpvote: job.lastManualCommentUpvote,
+      pageTitle: job.pageTitle,
+      pageUrl: job.pageUrl,
+      error: job.error,
+      persistenceError: job.persistenceError,
+      logs: [...job.logs],
+    };
+  }
+}
