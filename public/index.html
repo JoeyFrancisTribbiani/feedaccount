@@ -1,0 +1,825 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light" />
+    <meta
+      name="description"
+      content="BitBrowser Multi-Instance Reddit & TikTok Automation Control Center & Live Monitoring Platform"
+    />
+    <title>Reddit & TikTok Automation Hub · BitBrowser 控制台</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="stylesheet" href="/styles.css?v=light_v4" />
+  </head>
+  <body>
+    <!-- Ambient Dynamic Light Background Orbs -->
+    <div class="ambient ambient-one"></div>
+    <div class="ambient ambient-two"></div>
+
+    <!-- Sticky Top Navigation Bar -->
+    <header class="topbar">
+      <a class="brand" href="#top" aria-label="返回顶部">
+        <span class="brand-mark" aria-hidden="true">
+          <span></span>
+        </span>
+        <span>
+          <strong>Automation Hub</strong>
+          <small>BitBrowser 本地监控</small>
+        </span>
+      </a>
+      <div class="connection-cluster">
+        <span id="db-status" class="database-pill">DB 已连接</span>
+        <span id="stream-status" class="soft-label">实时 SSE 通道连接中</span>
+        <span id="api-status" class="status-pill status-loading">
+          <span class="status-dot"></span>
+          检查 BitBrowser API
+        </span>
+      </div>
+    </header>
+
+    <!-- Main Shell Layout Container -->
+    <main id="top" class="shell">
+      <!-- Hero Header Section -->
+      <section class="hero">
+        <div>
+          <p class="eyebrow">多实例并发 · 自动化矩阵 · 实时监控</p>
+          <h1>多平台养号与自动发布<br /><span>现代极简操控面板</span></h1>
+          <p class="hero-copy">
+            指定 BitBrowser 独占浏览器实例与云代理，配置高拟人化阅读节奏与自动互动概率。独立执行智能脚本防风控，自动跳过广告并保持全域日志记录。
+          </p>
+        </div>
+        <div class="target-card">
+          <div class="target-icon" aria-hidden="true">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10"></circle>
+              <line x1="2" y1="12" x2="22" y2="12"></line>
+              <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path>
+            </svg>
+          </div>
+          <div>
+            <span>固定目标页面</span>
+            <strong id="target-url">https://www.reddit.com/?feed=home</strong>
+          </div>
+          <span class="target-lock">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="margin-right: 3px; vertical-align: -1px;">
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+              <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+            </svg>
+            已锁定
+          </span>
+        </div>
+      </section>
+
+      <!-- Key Metrics Overview Grid -->
+      <section class="metric-grid" aria-label="运行概览">
+        <article class="metric-card">
+          <span class="metric-label">发现实例</span>
+          <strong id="metric-profiles">—</strong>
+          <small>BitBrowser 档案配置</small>
+        </article>
+        <article class="metric-card metric-accent">
+          <span class="metric-label">正在运行</span>
+          <strong id="metric-active">0</strong>
+          <small>独立并发自动化任务</small>
+        </article>
+        <article class="metric-card">
+          <span class="metric-label">已展示帖子</span>
+          <strong id="metric-posts">0</strong>
+          <small>服务启动后累计浏览</small>
+        </article>
+        <article class="metric-card">
+          <span class="metric-label">查看详情</span>
+          <strong id="metric-detail-visits">0</strong>
+          <small>只读深入帖子评论区</small>
+        </article>
+      </section>
+
+      <!-- Scheduler / Automation Rotation Panel -->
+      <section class="scheduler-panel">
+        <div class="panel-heading">
+          <div>
+            <p class="section-kicker">轮换调度控制台</p>
+            <h2>多实例串行智能养号流程</h2>
+          </div>
+          <div class="scheduler-actions">
+            <button id="sched-start" class="button button-primary" type="button">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                <polygon points="5 3 19 12 5 21 5 3"></polygon>
+              </svg>
+              启动轮换
+            </button>
+            <button id="sched-stop" class="button button-secondary" type="button" disabled>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                <rect x="6" y="6" width="12" height="12"></rect>
+              </svg>
+              停止
+            </button>
+          </div>
+        </div>
+        <label class="wide-input sched-proxy-row">
+          <span>代理刷新 API 地址 (gridpanel reboot，留空则自动提取 API IP)</span>
+          <input id="sched-proxy-url" type="text" placeholder="https://gridpanel.net/api/reboot?token=..." />
+        </label>
+        <div class="sched-platform-toggles">
+          <label class="switch-row">
+            <input id="sched-enable-reddit" type="checkbox" checked />
+            <span class="switch" aria-hidden="true"></span>
+            <strong>Reddit</strong>
+          </label>
+          <label class="switch-row">
+            <input id="sched-enable-tiktok" type="checkbox" checked />
+            <span class="switch" aria-hidden="true"></span>
+            <strong>TikTok</strong>
+          </label>
+        </div>
+        <div id="sched-status" class="sched-status">
+          <div class="empty-state compact">
+            未启动轮换调度。点击「启动轮换」将按序号 1→10 依次轮换养号，每个实例随机停留 23-35 分钟，Reddit 与 TikTok 任务并发调度。
+          </div>
+        </div>
+      </section>
+
+      <!-- Platform Switching Navigation Tabs -->
+      <nav class="platform-tabs" role="tablist">
+        <button class="platform-tab active" data-platform="reddit" role="tab" aria-selected="true" type="button">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="margin-right: 6px; vertical-align: -2px;">
+            <path d="M12 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0zm5.01 4.744c.688 0 1.25.561 1.25 1.249a1.25 1.25 0 0 1-2.498.056l-2.597-.547-.8 3.747c1.824.07 3.48.632 4.674 1.488.308-.309.73-.491 1.207-.491.968 0 1.754.786 1.754 1.754 0 .716-.435 1.333-1.01 1.614a3.111 3.111 0 0 1 .042.52c0 2.694-3.13 4.87-7.004 4.87-3.874 0-7.004-2.176-7.004-4.87 0-.183.015-.366.043-.534A1.748 1.748 0 0 1 4.028 12c0-.968.786-1.754 1.754-1.754.463 0 .898.196 1.207.49 1.207-.883 2.878-1.43 4.744-1.487l.885-4.182a.342.342 0 0 1 .14-.197.35.35 0 0 1 .238-.042l2.906.617a1.214 1.214 0 0 1 1.108-.701zM9.25 12c-.552 0-1 .448-1 1s.448 1 1 1 1-.448 1-1-.448-1-1-1zm5.5 0c-.552 0-1 .448-1 1s.448 1 1 1 1-.448 1-1-.448-1-1-1zm-4.72 4.452a.34.34 0 0 0-.01.48c.562.563 1.486.85 2.48.85s1.918-.287 2.48-.85a.34.34 0 1 0-.48-.48c-.428.428-1.18.65-2 .65s-1.572-.222-2-.65a.34.34 0 0 0-.47.005z"/>
+          </svg>
+          Reddit 流量中心
+        </button>
+        <button class="platform-tab" data-platform="tiktok" role="tab" aria-selected="false" type="button">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="margin-right: 6px; vertical-align: -2px;">
+            <path d="M19.59 6.69a4.83 4.83 0 0 1-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 0 1-5.2 1.74 2.89 2.89 0 0 1 2.31-4.64 2.93 2.93 0 0 1 .88.13V9.4a6.84 6.84 0 0 0-1-.05A6.33 6.33 0 0 0 3 15.68 6.34 6.34 0 0 0 9.34 22a6.34 6.34 0 0 0 6.34-6.34V9.05a8.16 8.16 0 0 0 4.91 1.62V7.22a4.85 4.85 0 0 1-1-.53z"/>
+          </svg>
+          TikTok 养号与自动化发布
+        </button>
+      </nav>
+
+      <!-- Main Content Grid (Reddit Active Tab) -->
+      <section class="workspace-grid reddit-tab">
+        <div class="primary-column">
+          <!-- Control Settings Form Panel -->
+          <article class="panel control-panel">
+            <div class="panel-heading">
+              <div>
+                <p class="section-kicker">任务参数管理</p>
+                <h2>配置每次运行的拟人化节奏</h2>
+              </div>
+              <button id="reset-options" class="text-button" type="button">恢复默认值</button>
+            </div>
+
+            <form id="options-form" class="options-form">
+              <fieldset>
+                <legend>Feed 每帖停留时间</legend>
+                <label>
+                  <span>最短</span>
+                  <span class="input-with-unit">
+                    <input id="wait-min" type="number" min="1" max="3600" required />
+                    <small>秒</small>
+                  </span>
+                </label>
+                <span class="range-divider">至</span>
+                <label>
+                  <span>最长</span>
+                  <span class="input-with-unit">
+                    <input id="wait-max" type="number" min="1" max="3600" required />
+                    <small>秒</small>
+                  </span>
+                </label>
+              </fieldset>
+
+              <label class="post-mode-card detail-mode-card">
+                <input id="detail-loop-enabled" type="checkbox" />
+                <span class="detail-mode-check" aria-hidden="true">✓</span>
+                <span>
+                  <strong>自动只读详情循环</strong>
+                  <small>默认只读浏览评论，不随机点赞；开启下方“自动点赞”配置后可按设定概率自动投赞。</small>
+                </span>
+              </label>
+
+              <fieldset>
+                <legend>进入详情前浏览帖子</legend>
+                <label>
+                  <span>最少</span>
+                  <span class="input-with-unit">
+                    <input id="detail-after-min-posts" type="number" min="1" max="1000" required />
+                    <small>篇</small>
+                  </span>
+                </label>
+                <span class="range-divider">至</span>
+                <label>
+                  <span>最多</span>
+                  <span class="input-with-unit">
+                    <input id="detail-after-max-posts" type="number" min="1" max="1000" required />
+                    <small>篇</small>
+                  </span>
+                </label>
+              </fieldset>
+
+              <fieldset>
+                <legend>打开详情后等待</legend>
+                <label>
+                  <span>最短</span>
+                  <span class="input-with-unit">
+                    <input id="detail-wait-min" type="number" min="1" max="3600" required />
+                    <small>秒</small>
+                  </span>
+                </label>
+                <span class="range-divider">至</span>
+                <label>
+                  <span>最长</span>
+                  <span class="input-with-unit">
+                    <input id="detail-wait-max" type="number" min="1" max="3600" required />
+                    <small>秒</small>
+                  </span>
+                </label>
+              </fieldset>
+
+              <fieldset>
+                <legend>评论区向下移动</legend>
+                <label>
+                  <span>最少</span>
+                  <span class="input-with-unit">
+                    <input id="comment-scroll-min" type="number" min="1" max="1000" required />
+                    <small>次</small>
+                  </span>
+                </label>
+                <span class="range-divider">至</span>
+                <label>
+                  <span>最多</span>
+                  <span class="input-with-unit">
+                    <input id="comment-scroll-max" type="number" min="1" max="1000" required />
+                    <small>次</small>
+                  </span>
+                </label>
+              </fieldset>
+
+              <fieldset>
+                <legend>返回 Feed 前停留</legend>
+                <label>
+                  <span>最短</span>
+                  <span class="input-with-unit">
+                    <input id="return-wait-min" type="number" min="1" max="3600" required />
+                    <small>秒</small>
+                  </span>
+                </label>
+                <span class="range-divider">至</span>
+                <label>
+                  <span>最长</span>
+                  <span class="input-with-unit">
+                    <input id="return-wait-max" type="number" min="1" max="3600" required />
+                    <small>秒</small>
+                  </span>
+                </label>
+              </fieldset>
+
+              <fieldset class="auto-upvote-fieldset">
+                <legend>智能自动点赞策略</legend>
+                <label class="switch-row">
+                  <input id="auto-upvote-enabled" type="checkbox" />
+                  <span class="switch" aria-hidden="true"></span>
+                  <span>
+                    <strong>帖子自动点赞</strong>
+                    <small>浏览等待时按概率点赞 Feed 帖子，避免对重复贴二次点赞</small>
+                  </span>
+                </label>
+                <label class="wide-input">
+                  <span>帖子点赞概率</span>
+                  <span class="input-with-unit">
+                    <input id="auto-upvote-probability" type="number" min="0" max="100" required />
+                    <small>%（0 = 完全关闭）</small>
+                  </span>
+                </label>
+                <label class="switch-row">
+                  <input id="auto-comment-upvote-enabled" type="checkbox" />
+                  <span class="switch" aria-hidden="true"></span>
+                  <span>
+                    <strong>评论自动点赞</strong>
+                    <small>深入评论区时按设定概率点赞高质量评论</small>
+                  </span>
+                </label>
+                <label class="wide-input">
+                  <span>评论点赞概率</span>
+                  <span class="input-with-unit">
+                    <input id="auto-comment-upvote-probability" type="number" min="0" max="100" required />
+                    <small>%（0 = 完全关闭）</small>
+                  </span>
+                </label>
+              </fieldset>
+
+              <div class="option-row">
+                <label class="wide-input">
+                  <span>最大展示帖子数</span>
+                  <span class="input-with-unit">
+                    <input id="max-posts" type="number" min="0" max="100000" required />
+                    <small>0 = 无限次轮流浏览</small>
+                  </span>
+                </label>
+                <label class="switch-row">
+                  <input id="stop-at-bottom" type="checkbox" />
+                  <span class="switch" aria-hidden="true"></span>
+                  <span>
+                    <strong>无新内容时自动停止</strong>
+                    <small>关闭后会无限等待页面动态加载新帖</small>
+                  </span>
+                </label>
+              </div>
+            </form>
+          </article>
+
+          <!-- Profile Selection Grid Panel -->
+          <article class="panel profiles-panel">
+            <div class="panel-heading profiles-heading">
+              <div>
+                <p class="section-kicker">BitBrowser 实例矩阵</p>
+                <h2>选择目标浏览器实例</h2>
+              </div>
+              <div class="heading-actions">
+                <button id="select-all" class="text-button" type="button">全选实例</button>
+                <button id="refresh-profiles" class="icon-button" type="button" aria-label="刷新实例列表" title="刷新实例列表">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="23 4 23 10 17 10"></polyline>
+                    <polyline points="1 20 1 14 7 14"></polyline>
+                    <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            <div id="profiles-loading" class="empty-state compact">
+              <span class="loading-ring"></span>
+              正在连接并读取 BitBrowser 本地 API 实例...
+            </div>
+            <div id="profiles-grid" class="profiles-grid" aria-live="polite"></div>
+
+            <div class="action-bar">
+              <div>
+                <strong id="selection-count">尚未选择实例</strong>
+                <small>每个实例都拥有独立隔离的 Cookie & 算法节奏</small>
+              </div>
+              <div class="action-buttons">
+                <button id="stop-selected" class="button button-secondary" type="button" disabled>
+                  停止所选
+                </button>
+                <button id="start-selected" class="button button-primary" type="button" disabled>
+                  启动选中任务
+                </button>
+              </div>
+            </div>
+          </article>
+        </div>
+
+        <!-- Sidebar Active Jobs & Activity Panel -->
+        <aside class="secondary-column">
+          <!-- Active Jobs Live Dashboard -->
+          <article class="panel live-panel">
+            <div class="panel-heading">
+              <div>
+                <p class="section-kicker">并发任务流</p>
+                <h2>实时实例状态指示器</h2>
+              </div>
+              <button id="stop-all" class="danger-button" type="button" disabled>紧急全停</button>
+            </div>
+            <div id="jobs-empty" class="empty-state">
+              <strong>暂无运行中的任务</strong>
+              <p>在左侧选中目标 BitBrowser 实例并启动后，此处将实时广播各实例运行细节与计时器。</p>
+            </div>
+            <div id="jobs-list" class="jobs-list" aria-live="polite"></div>
+          </article>
+
+          <!-- Operations Real-Time Activity Feed -->
+          <article class="panel activity-panel">
+            <div class="panel-heading">
+              <div>
+                <p class="section-kicker">系统广播</p>
+                <h2>实时操作与抓取日志</h2>
+              </div>
+              <span class="live-indicator"><i></i>LIVE</span>
+            </div>
+            <ol id="activity-list" class="activity-list">
+              <li class="muted-activity">自动化任务启动后将持续输出实时日志。</li>
+            </ol>
+          </article>
+        </aside>
+      </section>
+
+      <!-- Database & History Data Center Section -->
+      <section class="panel data-center reddit-tab" id="data-center">
+        <div class="panel-heading data-heading">
+          <div>
+            <p class="section-kicker">本地持久化数据库</p>
+            <h2>任务历史与系统事件审计 log</h2>
+            <p class="heading-copy">SQLite 本地安全存储，防丢包且重启服务仍可追踪导出。</p>
+          </div>
+          <div class="data-actions">
+            <button id="refresh-data" class="button button-secondary" type="button">刷新数据</button>
+            <a id="export-history" class="button button-secondary link-button" href="/api/export/history.csv">导出历史 CSV</a>
+            <a id="export-logs" class="button button-secondary link-button" href="/api/export/logs.csv">导出日志 CSV</a>
+            <button id="clear-logs" class="danger-button data-danger" type="button">清空全部日志</button>
+          </div>
+        </div>
+
+        <div class="database-metrics">
+          <div><span>历史任务总数</span><strong id="db-runs">0</strong></div>
+          <div><span>顺利完成</span><strong id="db-completed">0</strong></div>
+          <div><span>展示帖子数</span><strong id="db-posts">0</strong></div>
+          <div><span>查看详情数</span><strong id="db-detail-visits">0</strong></div>
+          <div><span>持久化事件</span><strong id="db-events">0</strong></div>
+        </div>
+
+        <div class="data-toolbar">
+          <div class="data-tabs" role="tablist" aria-label="数据库视图切换">
+            <button class="data-tab active" type="button" role="tab" aria-selected="true" data-data-tab="history">
+              任务历史记录
+            </button>
+            <button class="data-tab" type="button" role="tab" aria-selected="false" data-data-tab="logs">
+              系统操作日志
+            </button>
+          </div>
+          <div class="data-filters">
+            <label>
+              <span>实例筛选:</span>
+              <select id="data-profile-filter">
+                <option value="">全部实例</option>
+              </select>
+            </label>
+            <label id="status-filter-wrap">
+              <span>状态:</span>
+              <select id="history-status-filter">
+                <option value="">全部状态</option>
+                <option value="completed">已完成</option>
+                <option value="stopped">已停止</option>
+                <option value="interrupted">意外中断</option>
+                <option value="error">运行出错</option>
+              </select>
+            </label>
+            <label id="level-filter-wrap" class="hidden">
+              <span>日志级别:</span>
+              <select id="log-level-filter">
+                <option value="">全部级别</option>
+                <option value="info">信息 (INFO)</option>
+                <option value="warning">警告 (WARN)</option>
+                <option value="error">错误 (ERR)</option>
+              </select>
+            </label>
+          </div>
+        </div>
+
+        <div id="history-view" class="data-view">
+          <div class="table-scroll">
+            <table class="history-table">
+              <thead>
+                <tr>
+                  <th>任务 ID</th>
+                  <th>BitBrowser 实例</th>
+                  <th>状态</th>
+                  <th>启动时间</th>
+                  <th>已展示帖子</th>
+                  <th>查看详情</th>
+                  <th>评论区滚动</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody id="history-body"></tbody>
+            </table>
+          </div>
+          <div id="history-empty" class="empty-state compact hidden">目前暂无已保存的任务历史数据。</div>
+        </div>
+
+        <div id="logs-view" class="data-view hidden">
+          <ol id="database-log-list" class="database-log-list"></ol>
+          <div id="logs-empty" class="empty-state compact hidden">没有符合筛选条件的日志项。</div>
+        </div>
+      </section>
+
+      <!-- TikTok Automation Tab Container -->
+      <section class="tiktok-panel tiktok-tab hidden">
+        <!-- 核心功能区 1: 账号与实例映射管理 -->
+        <article class="panel account-mapping-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="section-kicker">账号架构与绑定</p>
+              <h2>TK 矩阵账号与 BitBrowser 实例映射控制</h2>
+            </div>
+            <button id="tk-refresh-accounts" class="button button-secondary" type="button">刷新账号映射</button>
+          </div>
+          
+          <div class="account-bind-form form-sub-card">
+            <label>
+              <span>BitBrowser 目标实例</span>
+              <select id="bind-profile-select"></select>
+            </label>
+            <label>
+              <span>TK 账号句柄 (@username)</span>
+              <input id="bind-account-name" type="text" placeholder="@my_tiktok_acc" />
+            </label>
+            <label>
+              <span>归属地区 (Region)</span>
+              <select id="bind-region">
+                <option value="US">US - 美国</option>
+                <option value="UK">UK - 英国</option>
+                <option value="JP">JP - 日本</option>
+                <option value="SEA">SEA - 东南亚</option>
+              </select>
+            </label>
+            <label>
+              <span>养号阶段</span>
+              <select id="bind-stage">
+                <option value="warmup_day1_3">冷启动 (Day 1-3)</option>
+                <option value="interest_building">兴趣打标 (Day 4-7)</option>
+                <option value="high_weight">权重提升 (Day 8-14)</option>
+                <option value="mature">成熟期账号</option>
+              </select>
+            </label>
+            <div style="display: flex; align-items: flex-end;">
+              <button id="btn-save-account-bind" class="button button-primary" style="width: 100%; height: 38px;" type="button">保存绑定关系</button>
+            </div>
+          </div>
+
+          <div class="table-scroll" style="padding: 0 24px 24px;">
+            <table class="history-table" style="width: 100%;">
+              <thead>
+                <tr>
+                  <th>TK 账号</th>
+                  <th>绑定 BitBrowser 实例</th>
+                  <th>地区</th>
+                  <th>养号阶段</th>
+                  <th>健康度得分</th>
+                  <th>映射状态</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody id="tk-accounts-table-body">
+                <tr><td colspan="7" style="text-align: center; color: var(--text-muted); padding: 24px;">暂无绑定的 TikTok 映射账号</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </article>
+
+        <!-- 核心功能区 2: 视频素材库 & 自动化发布中心 -->
+        <div class="workspace-grid">
+          <!-- 素材库管理 Panel -->
+          <article class="panel">
+            <div class="panel-heading">
+              <div>
+                <p class="section-kicker">素材中心</p>
+                <h2>视频素材库 (Material Bank)</h2>
+              </div>
+              <button id="btn-refresh-materials" class="text-button" type="button">刷新</button>
+            </div>
+            
+            <form id="material-form" class="form-sub-card column-form">
+              <div id="material-drop-zone" class="drop-zone">
+                <input id="mat-file-input" type="file" accept="video/*" multiple style="display:none;" />
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                  <polyline points="17 8 12 3 7 8"></polyline>
+                  <line x1="12" y1="3" x2="12" y2="15"></line>
+                </svg>
+                <p>拖拽视频文件到此处，或 <strong>点击选择视频文件</strong></p>
+                <small>系统将自动解析文件名提取标题和 #标签</small>
+              </div>
+              <label>
+                <span>视频 Caption 标题</span>
+                <input id="mat-title" type="text" placeholder="惊叹的美食制作过程..." required />
+              </label>
+              <label>
+                <span>本地 MP4 绝对路径</span>
+                <input id="mat-file-path" type="text" placeholder="D:\videos\batch1\video01.mp4" required />
+              </label>
+              <div class="form-grid-2">
+                <label>
+                  <span>话题标签</span>
+                  <input id="mat-hashtags" type="text" placeholder="#fyp #viral" />
+                </label>
+                <label>
+                  <span>所属分类</span>
+                  <input id="mat-category" type="text" placeholder="Food / Tech" />
+                </label>
+              </div>
+              <button id="btn-add-material" class="button button-primary" type="button">保存素材录入</button>
+            </form>
+
+            <div id="materials-list" class="scroll-list">
+              <div class="empty-state compact">素材库尚无内容</div>
+            </div>
+          </article>
+
+          <!-- 发布任务队列 Panel -->
+          <article class="panel">
+            <div class="panel-heading">
+              <div>
+                <p class="section-kicker">无人值守发布</p>
+                <h2>自动上传与发布任务队列</h2>
+              </div>
+              <button id="btn-refresh-publish-jobs" class="text-button" type="button">刷新队列</button>
+            </div>
+
+            <form id="create-publish-job-form" class="form-sub-card column-form">
+              <label>
+                <span>选择发布账号 / 实例</span>
+                <select id="pub-profile-select"></select>
+              </label>
+              <label>
+                <span>选择发布素材视频</span>
+                <select id="pub-material-select"></select>
+              </label>
+              <button id="btn-create-publish-job" class="button button-primary" type="button">入列无人值守发布</button>
+            </form>
+
+            <div id="publish-jobs-list" class="scroll-list">
+              <div class="empty-state compact">无待执行的发布任务</div>
+            </div>
+          </article>
+        </div>
+
+        <div class="workspace-grid">
+          <div class="primary-column">
+            <article class="panel control-panel">
+              <div class="panel-heading">
+                <div>
+                  <p class="section-kicker">TikTok 算法模拟</p>
+                  <h2>设置 For You 推荐页阅读与互动节奏</h2>
+                </div>
+                <button id="tk-reset" class="text-button" type="button">恢复默认</button>
+              </div>
+              <form id="tk-options-form" class="options-form">
+                <label class="wide-input option-row">
+                  <span>选择 BitBrowser 目标实例</span>
+                  <select id="tk-profile"></select>
+                </label>
+                <fieldset>
+                  <legend>视频观赏时长</legend>
+                  <label>
+                    <span>最短</span>
+                    <span class="input-with-unit"><input id="tk-watch-min" type="number" min="1" max="3600" value="8" required /><small>秒</small></span>
+                  </label>
+                  <span class="range-divider">至</span>
+                  <label>
+                    <span>最长</span>
+                    <span class="input-with-unit"><input id="tk-watch-max" type="number" min="1" max="3600" value="25" required /><small>秒</small></span>
+                  </label>
+                </fieldset>
+                <fieldset>
+                  <legend>浏览数量上限</legend>
+                  <label class="wide-input">
+                    <span>最大观赏视频数</span>
+                    <span class="input-with-unit"><input id="tk-max-videos" type="number" min="0" max="100000" value="0" required /><small>个（0=无上限）</small></span>
+                  </label>
+                </fieldset>
+                <fieldset class="auto-upvote-fieldset">
+                  <legend>智能自动点赞</legend>
+                  <label class="switch-row">
+                    <input id="tk-like-enabled" type="checkbox" />
+                    <span class="switch" aria-hidden="true"></span>
+                    <span><strong>视频自动点赞</strong><small>在 For You 推荐页按概率触发点赞手势</small></span>
+                  </label>
+                  <label class="wide-input">
+                    <span>点赞触发概率</span>
+                    <span class="input-with-unit"><input id="tk-like-prob" type="number" min="0" max="100" value="0" required /><small>%</small></span>
+                  </label>
+                </fieldset>
+                <fieldset class="auto-upvote-fieldset">
+                  <legend>评论互动仿真</legend>
+                  <label class="switch-row">
+                    <input id="tk-comment-watch-enabled" type="checkbox" />
+                    <span class="switch" aria-hidden="true"></span>
+                    <span><strong>展开浏览评论</strong><small>按概率展开评论区滑动浏览数秒</small></span>
+                  </label>
+                  <label class="wide-input">
+                    <span>展开评论概率</span>
+                    <span class="input-with-unit"><input id="tk-comment-watch-prob" type="number" min="0" max="100" value="0" required /><small>%</small></span>
+                  </label>
+                  <label class="switch-row">
+                    <input id="tk-comment-enabled" type="checkbox" />
+                    <span class="switch" aria-hidden="true"></span>
+                    <span><strong>发表评论文案</strong><small>随机使用预设文案进行评论互动</small></span>
+                  </label>
+                  <label class="wide-input">
+                    <span>发表评论概率</span>
+                    <span class="input-with-unit"><input id="tk-comment-prob" type="number" min="0" max="100" value="0" required /><small>%</small></span>
+                  </label>
+                  <label class="wide-input">
+                    <span>评论文案语料库（每行一条，随机抽取）</span>
+                    <textarea id="tk-comment-texts" rows="3" placeholder="好看！&#10;学到了&#10;Amazing content!"></textarea>
+                  </label>
+                </fieldset>
+                <div class="option-row tk-actions">
+                  <button id="tk-start" class="button button-primary" type="button">启动 TikTok 自动化养号</button>
+                  <button id="tk-stop" class="button button-secondary" type="button">停止任务</button>
+                </div>
+              </form>
+            </article>
+          </div>
+          <aside class="secondary-column">
+            <article class="panel">
+              <div class="panel-heading">
+                <div><p class="section-kicker">并发任务广播</p><h2>TikTok 运行实时状态</h2></div>
+              </div>
+              <div id="tk-jobs" class="tk-job-list" aria-live="polite" style="padding: 0 24px 24px;"></div>
+            </article>
+          </aside>
+        </div>
+
+        <section class="panel data-center">
+          <div class="panel-heading data-heading">
+            <div><p class="section-kicker">TikTok 审计数据</p><h2>历史任务与持久化事件</h2></div>
+            <button id="tk-refresh-data" class="text-button" type="button">刷新</button>
+          </div>
+          <div class="data-tabs" style="padding: 0 26px 16px;">
+            <button class="data-tab active" data-tk-tab="history" type="button">历史任务</button>
+            <button class="data-tab" data-tk-tab="logs" type="button">运行日志</button>
+          </div>
+          <div id="tk-history-view" class="data-view">
+            <div id="tk-history-body" class="history-body"></div>
+            <div id="tk-history-empty" class="empty-state compact hidden">暂无 TikTok 历史任务数据。</div>
+          </div>
+          <div id="tk-logs-view" class="data-view hidden">
+            <ol id="tk-log-list" class="database-log-list"></ol>
+            <div id="tk-logs-empty" class="empty-state compact hidden">暂无符合条件的日志。</div>
+          </div>
+        </section>
+      </section>
+
+      <!-- System Footer -->
+      <footer>
+        <p>独立隔离控制环境 · 仅在本机直接操纵 CDP 协议 · 停止任务不影响 BitBrowser 窗口及本地账号数据安全</p>
+        <span>数据库: <span id="database-file">reddit-flow.db</span> · 服务节点: <span id="api-endpoint">127.0.0.1:54345</span></span>
+      </footer>
+    </main>
+
+    <!-- Quick Publish Dialog - 多账号快速发布 -->
+    <dialog id="quick-publish-dialog" class="run-dialog">
+      <form method="dialog" class="dialog-head">
+        <div>
+          <p class="section-kicker">一键发布</p>
+          <h2 id="quick-publish-title">选择发布账号</h2>
+        </div>
+        <button class="dialog-close" value="close" aria-label="关闭">×</button>
+      </form>
+      <div class="dialog-content">
+        <div id="quick-pub-material-preview" style="
+          display: flex; gap: 12px; align-items: flex-start;
+          padding: 12px 16px; margin-bottom: 14px;
+          background: var(--bg-subtle); border-radius: var(--radius-md);
+          border: 1px solid var(--line);
+        ">
+          <div style="flex: 1; min-width: 0;">
+            <div style="font-size: 12px; color: var(--text-muted); font-weight: 600; margin-bottom: 4px;">将要发布的素材</div>
+            <div id="quick-pub-mat-title" style="font-size: 14px; font-weight: 700; color: var(--text-primary);"></div>
+            <div id="quick-pub-mat-path" style="font-size: 11px; color: var(--text-muted); margin-top: 2px; font-family: var(--font-mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"></div>
+            <div id="quick-pub-mat-tags" style="display: flex; gap: 4px; flex-wrap: wrap; margin-top: 6px;"></div>
+          </div>
+        </div>
+        <div style="margin-bottom: 10px; display: flex; align-items: center; justify-content: space-between;">
+          <p style="margin: 0; font-size: 13px; font-weight: 700; color: var(--text-primary);">选择发布目标账号（可多选）</p>
+          <div style="display: flex; gap: 8px;">
+            <button type="button" id="pub-select-all" class="text-button">全选</button>
+            <button type="button" id="pub-deselect-all" class="text-button">全不选</button>
+          </div>
+        </div>
+        <div id="pub-account-list" style="display: flex; flex-direction: column; gap: 8px; max-height: 280px; overflow-y: auto;"></div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--line);">
+          <label style="display: flex; flex-direction: column; gap: 4px;">
+            <span style="font-size: 12px; color: var(--text-muted); font-weight: 600;">隐私设置</span>
+            <select id="pub-privacy">
+              <option value="public">公开</option>
+              <option value="friends">好友可见</option>
+              <option value="private">仅自己</option>
+            </select>
+          </label>
+          <label style="display: flex; flex-direction: column; gap: 4px;">
+            <span style="font-size: 12px; color: var(--text-muted); font-weight: 600;">计划时间（留空=立即）</span>
+            <input type="datetime-local" id="pub-scheduled-at" style="
+              padding: 8px 12px; border: 1px solid var(--line-strong);
+              border-radius: var(--radius-sm); font-size: 12px;
+              background: #fff; color: var(--text-primary);
+            " />
+          </label>
+        </div>
+        <button type="button" id="btn-confirm-publish" class="button button-primary" style="width: 100%; margin-top: 14px; min-height: 42px; font-size: 14px;">
+          🚀 确认发布到选中账号
+        </button>
+      </div>
+    </dialog>
+
+    <!-- Run Dialog Modal -->
+    <dialog id="run-dialog" class="run-dialog">
+      <form method="dialog" class="dialog-head">
+        <div>
+          <p class="section-kicker">详细信息审计</p>
+          <h2 id="dialog-title">历史任务详情</h2>
+        </div>
+        <button class="dialog-close" value="close" aria-label="关闭">×</button>
+      </form>
+      <div id="dialog-content" class="dialog-content"></div>
+    </dialog>
+
+    <!-- Floating Global Toast Notification -->
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
