@@ -85,10 +85,21 @@ export class RotationScheduler extends EventTarget {
 
   async #run(opts) {
     const profiles = await this.bitBrowserApi.listProfiles({ includeAlive: false });
-    const queue = profiles
+    let queue = profiles
       .filter((p) => p.seq != null)
       .sort((a, b) => a.seq - b.seq);
+    if (Array.isArray(opts.profileIds) && opts.profileIds.length > 0) {
+      const idSet = new Set(opts.profileIds);
+      queue = queue.filter((p) => idSet.has(p.id));
+    }
     this.state.totalProfiles = queue.length;
+    if (queue.length === 0) {
+      this.#log("没有符合条件的实例可轮换", "warning");
+      this.state.running = false;
+      this.state.phase = "error";
+      this.#emit();
+      return;
+    }
     this.#log(`轮换调度开始，共 ${queue.length} 个实例，每实例 ${opts.minMinutes}-${opts.maxMinutes} 分钟`, "info", { count: queue.length });
 
     const savedRedditOptions = this.persistence?.getSavedOptions?.() || {};
@@ -188,7 +199,7 @@ export class RotationScheduler extends EventTarget {
     } catch (e) {
       this.#log(`代理刷新请求失败：${e.message}`, "warning");
     }
-    await new Promise((r) => setTimeout(r, 8000));
+    await new Promise((r) => setTimeout(r, 10000));
   }
 
   async #fetchCurrentIp(wsUrl) {
@@ -217,27 +228,39 @@ export class RotationScheduler extends EventTarget {
 
   async #openAndCheckIp(profile, opts) {
     const wantRotate = Boolean(opts.proxyRotateUrl);
-    for (let attempt = 0; attempt < 4; attempt++) {
-      if (wantRotate) {
-        await this.#rotateProxy(opts.proxyRotateUrl);
-      }
-      const conn = await this.bitBrowserApi.openProfile(profile.id, { extractIp: !wantRotate && opts.extractIp });
-      if (!wantRotate) return;
+    if (wantRotate) {
+      await this.#rotateProxy(opts.proxyRotateUrl);
+    }
+    const conn = await this.bitBrowserApi.openProfile(profile.id, { extractIp: !wantRotate && opts.extractIp });
+    if (!wantRotate) return;
+
+    const oldIp = this.state.lastIp;
+    const maxAttempts = 6;
+    const pollIntervalMs = 5000;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      if (this.state.cancelled) return;
       const ip = await this.#fetchCurrentIp(conn.wsUrl);
-      const oldIp = this.state.lastIp;
-      const suffix = attempt > 0 ? `（第${attempt}次重试）` : "";
       this.state.ipChange = { old: oldIp, new: ip };
-      this.#log(`实例 #${profile.seq} 出口IP：${oldIp || "—"} → ${ip || "未知"}${suffix}`, "info", { ip, oldIp });
       this.#emit();
-      if (!oldIp || !ip || ip !== oldIp) {
+
+      if (ip && (!oldIp || ip !== oldIp)) {
+        const suffix = attempt > 0 ? `（第${attempt + 1}次确认）` : "";
         this.state.lastIp = ip;
+        this.#log(`实例 #${profile.seq} 出口IP：${oldIp || "—"} → ${ip}${suffix}`, "info", { ip, oldIp });
+        this.#emit();
         return;
       }
-      this.#log(`IP未变化（仍为 ${ip}），关闭后重试刷新`, "warning");
-      await this.bitBrowserApi.closeProfile(profile.id).catch(() => {});
+
+      if (attempt < maxAttempts - 1) {
+        this.#log(`IP尚未生效（当前 ${ip || "获取失败"}），${pollIntervalMs / 1000}秒后重试`, "warning");
+        this.#emit();
+        await new Promise((r) => setTimeout(r, pollIntervalMs));
+      }
     }
-    this.#log(`IP 重试3次仍未变化，继续运行（代理商可能未换IP）`, "warning");
-    await this.bitBrowserApi.openProfile(profile.id, { extractIp: false });
+
+    this.#log(`等待 ${maxAttempts} 次后IP仍未变化，继续运行（代理商可能未换IP）`, "warning");
+    this.#emit();
   }
 
   #fail(error) {

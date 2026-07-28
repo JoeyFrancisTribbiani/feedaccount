@@ -134,6 +134,15 @@
             <strong>TikTok</strong>
           </label>
         </div>
+        <div class="sched-profile-select">
+          <div class="sched-profile-select-header">
+            <span>参与轮换的实例</span>
+            <button id="sched-select-all" type="button" class="link-btn">全选</button>
+          </div>
+          <div id="sched-profile-list" class="sched-profile-list">
+            <div class="empty-state compact">正在加载实例列表...</div>
+          </div>
+        </div>
         <div id="sched-status" class="sched-status">
           <div class="empty-state compact">
             未启动轮换调度。点击「启动轮换」将按序号 1→10 依次轮换养号，每个实例随机停留 23-35 分钟，Reddit 与 TikTok 任务并发调度。
