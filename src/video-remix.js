@@ -100,7 +100,7 @@ function genId() {
   return crypto.randomBytes(6).toString("hex");
 }
 
-async function processSingleVideo(inputPath, outputPath, meta, ratio) {
+async function processSingleVideo(inputPath, outputPath, meta) {
   const { duration, width, height, fps, sampleRate, hasAudio } = meta;
 
   const trimStart = duration > 3 ? 1 : 0;
@@ -131,13 +131,7 @@ async function processSingleVideo(inputPath, outputPath, meta, ratio) {
     "colorbalance=rm=-0.02:gm=-0.02:bm=0.02",
     "eq=brightness=0.01",
     "unsharp=5:5:0.7:5:5:0",
-    "unsharp=13:13:0.1:13:13:0",
   );
-
-  if (ratio) {
-    const [tw, th] = ratio === "16:9" ? [1920, 1080] : ratio === "1:1" ? [1080, 1080] : [1080, 1920];
-    videoFilters.push(`scale=${tw}:${th}:force_original_aspect_ratio=increase`, `crop=${tw}:${th}`);
-  }
 
   const filterParts = [
     `[0:v]${videoFilters.join(",")}[v_base]`,
@@ -173,7 +167,7 @@ async function processSingleVideo(inputPath, outputPath, meta, ratio) {
   args.push(
     "-c:v", "libx264",
     "-crf", "23",
-    "-preset", "medium",
+    "-preset", "fast",
     "-pix_fmt", "yuv420p",
     "-movflags", "+faststart",
   );
@@ -223,7 +217,7 @@ export async function dedupVideo(inputPath, ratio = null) {
   if (!meta) throw new Error("无法读取视频信息");
 
   const outputPath = path.join(OUTPUT_DIR, `dedup_${id}.mp4`);
-  await processSingleVideo(inputPath, outputPath, meta, ratio);
+  await processSingleVideo(inputPath, outputPath, meta);
   return outputPath;
 }
 
@@ -238,7 +232,7 @@ export async function stitchVideos(inputPaths, ratio = null) {
       if (!meta) throw new Error(`无法读取视频 ${i + 1} 的信息`);
 
       const processedPath = path.join(TEMP_DIR, `segment_${id}_${i}.mp4`);
-      await processSingleVideo(inputPaths[i], processedPath, meta, ratio);
+      await processSingleVideo(inputPaths[i], processedPath, meta);
       processedPaths.push(processedPath);
       tempPaths.push(processedPath);
     }
