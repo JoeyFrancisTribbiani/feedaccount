@@ -29,6 +29,27 @@ echo 请升级到当前 Node.js LTS 版本后重试：https://nodejs.org/
 goto launch_failed
 
 :node_ready
+
+where ffmpeg >nul 2>nul
+if errorlevel 1 (
+  echo [检测到未安装 FFmpeg] 正在通过 winget 自动安装...
+  winget install Gyan.FFmpeg --accept-package-agreements --accept-source-agreements -h
+  if errorlevel 1 (
+    echo [警告] FFmpeg 自动安装失败，请手动安装：https://ffmpeg.org/download.html
+    echo 将尝试继续启动...
+  ) else (
+    echo [成功] FFmpeg 已安装，正在刷新环境变量...
+    for /f "usebackq tokens=2,*" %%A in (`reg query "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment" /v Path 2^>nul`) do set "SYS_PATH=%%B"
+    for /f "usebackq tokens=2,*" %%A in (`reg query "HKCU\Environment" /v Path 2^>nul`) do set "USR_PATH=%%B"
+    set "PATH=%SYS_PATH%;%USR_PATH%"
+  )
+) else (
+  where ffprobe >nul 2>nul
+  if errorlevel 1 (
+    echo [提示] FFprobe 未在 PATH 中，视频去重将使用降级模式
+  )
+)
+
 "%NODE_EXE%" --no-warnings src\server.js --open
 set "APP_EXIT=%ERRORLEVEL%"
 if "%APP_EXIT%"=="0" goto finished

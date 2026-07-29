@@ -1,4 +1,4 @@
-import { spawn, execFile } from "node:child_process";
+import { spawn, execFile, execSync } from "node:child_process";
 import { mkdirSync, existsSync, unlinkSync, writeFileSync, rmSync } from "node:fs";
 import { readFile, writeFile, unlink } from "node:fs/promises";
 import path from "node:path";
@@ -8,6 +8,17 @@ const OUTPUT_DIR = path.resolve(process.cwd(), "data", "remix-output");
 const TEMP_DIR = path.resolve(process.cwd(), "data", "remix-tmp");
 mkdirSync(OUTPUT_DIR, { recursive: true });
 mkdirSync(TEMP_DIR, { recursive: true });
+
+let ffprobePath = null;
+try {
+  const ffmpegPath = execSync('where ffmpeg', { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).trim().split(/\r?\n/)[0];
+  const ffmpegDir = path.dirname(ffmpegPath);
+  const candidate = path.join(ffmpegDir, process.platform === 'win32' ? 'ffprobe.exe' : 'ffprobe');
+  if (existsSync(candidate)) ffprobePath = candidate;
+  else ffprobePath = 'ffprobe';
+} catch {
+  ffprobePath = 'ffprobe';
+}
 
 function runFfmpeg(args) {
   return new Promise((resolve, reject) => {
@@ -21,9 +32,9 @@ function runFfmpeg(args) {
   });
 }
 
-function probeVideo(filePath) {
+function probeVideoViaFfprobe(filePath) {
   return new Promise((resolve) => {
-    const proc = spawn("ffprobe", [
+    const proc = spawn(ffprobePath, [
       "-v", "error",
       "-show_entries", "format=duration:stream=codec_type,width,height,r_frame_rate,sample_rate",
       "-of", "json",
@@ -51,6 +62,38 @@ function probeVideo(filePath) {
       } catch { resolve(null); }
     });
   });
+}
+
+function probeVideoViaFfmpeg(filePath) {
+  return new Promise((resolve) => {
+    const proc = execFile("ffmpeg", ["-i", filePath, "-hide_banner"], { maxBuffer: 5 * 1024 * 1024 }, (error, stdout, stderr) => {
+      const text = stderr || "";
+      const result = { duration: 0, width: 1080, height: 1920, fps: 30, sampleRate: 44100, hasAudio: false };
+      const durMatch = text.match(/Duration:\s*([\d:.]+)/);
+      if (durMatch) {
+        const parts = durMatch[1].split(":").map(Number);
+        result.duration = parts[0] * 3600 + parts[1] * 60 + parts[2];
+      }
+      const vMatch = text.match(/Video:\s*\S+.*?(\d{2,5})x(\d{2,5})/);
+      if (vMatch) { result.width = Number(vMatch[1]); result.height = Number(vMatch[2]); }
+      const fpsMatch = text.match(/(\d+(?:\.\d+)?)\s*fps/);
+      if (fpsMatch) result.fps = Number(fpsMatch[1]);
+      const aMatch = text.match(/Audio:\s*\S+/);
+      if (aMatch) {
+        result.hasAudio = true;
+        const srMatch = text.match(/Audio:\s*\S+.*?(\d+)\s*Hz/);
+        if (srMatch) result.sampleRate = Number(srMatch[1]);
+      }
+      resolve(text.includes("Video:") ? result : null);
+    });
+    proc.on("error", () => resolve(null));
+  });
+}
+
+async function probeVideo(filePath) {
+  const meta = await probeVideoViaFfprobe(filePath);
+  if (meta) return meta;
+  return probeVideoViaFfmpeg(filePath);
 }
 
 function genId() {
