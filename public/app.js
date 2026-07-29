@@ -1157,10 +1157,12 @@ function connectEventStream() {
     renderJobs();
     renderProfiles();
     scheduleDataRefresh();
+    if (state.scheduler?.running) renderScheduler();
   });
   stream.addEventListener("tiktok-jobs", (event) => {
     state.tiktokJobs = JSON.parse(event.data);
     renderTiktokJobs();
+    if (state.scheduler?.running) renderScheduler();
   });
   stream.addEventListener("scheduler", (event) => {
     state.scheduler = JSON.parse(event.data);
@@ -1670,6 +1672,17 @@ async function initTiktok() {
   }
 }
 
+tk.profileSelect.addEventListener("change", async () => {
+  const profileId = tk.profileSelect.value;
+  if (!profileId) return;
+  try {
+    const cfg = await request(`/api/tiktok/config?profileId=${encodeURIComponent(profileId)}`);
+    applyTiktokOptions(cfg.saved || cfg.defaults || {});
+  } catch (e) {
+    showToast("加载实例配置失败：" + e.message, true);
+  }
+});
+
 tk.resetBtn.addEventListener("click", () => {
   applyTiktokOptions(TK_FALLBACK);
   scheduleTiktokSave();
@@ -1681,7 +1694,8 @@ function scheduleTiktokSave() {
   clearTimeout(tkSaveTimer);
   tkSaveTimer = setTimeout(async () => {
     try {
-      await request("/api/tiktok/settings", { method: "PUT", body: JSON.stringify({ options: collectTiktokOptions() }) });
+      const profileId = tk.profileSelect.value || null;
+      await request("/api/tiktok/settings", { method: "PUT", body: JSON.stringify({ profileId, options: collectTiktokOptions() }) });
     } catch {}
   }, 800);
 }
@@ -1738,6 +1752,7 @@ for (const btn of document.querySelectorAll(".platform-tab")) {
     const platform = btn.dataset.platform;
     document.querySelectorAll(".reddit-tab").forEach((el) => el.classList.toggle("hidden", platform !== "reddit"));
     document.querySelectorAll(".tiktok-tab").forEach((el) => el.classList.toggle("hidden", platform !== "tiktok"));
+    document.querySelectorAll(".remix-tab").forEach((el) => el.classList.toggle("hidden", platform !== "remix"));
   });
 }
 
@@ -1813,6 +1828,15 @@ function renderSchedProfiles() {
     });
   });
   updateSchedSelectAllBtn();
+
+  const checkSelect = document.querySelector("#sched-check-profile");
+  if (checkSelect) {
+    const prev = checkSelect.value;
+    checkSelect.innerHTML = profiles
+      .map((p) => `<option value="${escapeHtml(p.id)}">#${escapeHtml(p.seq)} ${escapeHtml(p.name)}</option>`)
+      .join("");
+    if (prev && profiles.some((p) => p.id === prev)) checkSelect.value = prev;
+  }
 }
 
 function updateSchedSelectAllBtn() {
@@ -1843,10 +1867,37 @@ function renderScheduler() {
   const progress = s.totalProfiles > 0 ? `${s.profileIndex + 1} / ${s.totalProfiles}` : "-";
   const current = s.currentSeq ? `#${s.currentSeq} ${escapeHtml(s.currentName || "")}` : "-";
   const remaining = s.running && s.remainingMs > 0 ? formatRemaining(s.remainingMs) : "—";
-  const logs = (s.log || []).slice(-6).map((l) => `<li class="log-item log-${escapeHtml(l.level)}"><span class="log-time">${formatDateTime(l.at)}</span><span class="log-level">${escapeHtml(l.level)}</span><span class="log-msg">${escapeHtml(l.message)}</span></li>`).join("");
+  const logs = (s.log || []).slice(-15).map((l) => `<li class="log-item log-${escapeHtml(l.level)}"><span class="log-time">${formatDateTime(l.at)}</span><span class="log-level">${escapeHtml(l.level)}</span><span class="log-msg">${escapeHtml(l.message)}</span></li>`).join("");
   const ipChange = s.ipChange
     ? `<div class="sched-ip-change"><span>代理IP</span><strong><span class="ip-old">${escapeHtml(s.ipChange.old || "—")}</span><span class="ip-arrow">→</span><span class="ip-new">${escapeHtml(s.ipChange.new || "未知")}</span></strong></div>`
     : "";
+
+  const pid = s.currentProfileId;
+  const redditJob = pid ? state.jobs.find((j) => j.profileId === pid) : null;
+  const tiktokJob = pid ? (state.tiktokJobs || []).find((j) => j.profileId === pid) : null;
+  let jobDetails = "";
+  if (redditJob || tiktokJob) {
+    const sections = [];
+    if (redditJob) {
+      const rLogs = (redditJob.logs || []).slice(-8).map((l) =>
+        `<li class="log-item log-${escapeHtml(l.level || "info")}"><span class="log-time">${formatDateTime(l.time)}</span><span class="log-msg">${escapeHtml(l.message)}</span></li>`,
+      ).join("");
+      sections.push(`<div class="sched-job-section">
+        <div class="sched-job-head"><span class="sched-job-tag tag-reddit">Reddit</span>${escapeHtml(workflowPhaseLabel(redditJob))} · 帖子 ${formatNumber(redditJob.postCount)} · 详情 ${formatNumber(redditJob.detailVisitCount)}${Number(redditJob.autoUpvoteCount) > 0 ? ` · 自动赞 ${formatNumber(redditJob.autoUpvoteCount)}` : ""}</div>
+        ${rLogs ? `<ol class="database-log-list sched-job-log">${rLogs}</ol>` : ""}
+      </div>`);
+    }
+    if (tiktokJob) {
+      const tkInfo = `${escapeHtml(tiktokJob.statusText || tiktokJob.status)} · 视频 ${tiktokJob.videoCount} · 点赞 ${tiktokJob.likeCount} · 评论 ${tiktokJob.commentCount}`;
+      sections.push(`<div class="sched-job-section">
+        <div class="sched-job-head"><span class="sched-job-tag tag-tiktok">TikTok</span>${tkInfo}</div>
+        ${tiktokJob.currentVideo ? `<div class="sched-job-sub">当前：${escapeHtml(tiktokJob.currentVideo.author || "")}${tiktokJob.currentVideo.likeCount ? ` · ${escapeHtml(tiktokJob.currentVideo.likeCount)}` : ""}</div>` : ""}
+        ${tiktokJob.error ? `<div class="sched-job-error">${escapeHtml(tiktokJob.error)}</div>` : ""}
+      </div>`);
+    }
+    jobDetails = `<div class="sched-job-details">${sections.join("")}</div>`;
+  }
+
   sched.status.innerHTML = `
     <div class="sched-grid">
       <div class="sched-stat"><span>进度</span><strong>${progress}</strong></div>
@@ -1855,7 +1906,8 @@ function renderScheduler() {
       <div class="sched-stat"><span>剩余</span><strong>${remaining}</strong></div>
     </div>
     ${ipChange}
-    ${logs ? `<ol class="database-log-list sched-log">${logs}</ol>` : ""}`;
+    ${logs ? `<ol class="database-log-list sched-log">${logs}</ol>` : ""}
+    ${jobDetails}`;
 }
 
 async function initScheduler() {
@@ -1864,7 +1916,10 @@ async function initScheduler() {
     const res = await request("/api/scheduler/status");
     state.scheduler = res.status;
     const proxyInput = document.querySelector("#sched-proxy-url");
-    if (proxyInput && res.proxyRotateUrl) proxyInput.value = res.proxyRotateUrl;
+    if (proxyInput) {
+      const saved = localStorage.getItem("sched-proxy-url");
+      proxyInput.value = saved ?? res.proxyRotateUrl ?? "";
+    }
     renderScheduler();
   } catch (e) {
     showToast("调度器初始化失败：" + e.message, true);
@@ -1873,6 +1928,46 @@ async function initScheduler() {
 
 document.querySelector("#sched-enable-reddit")?.addEventListener("change", () => { saveSchedToggles(); renderScheduler(); });
 document.querySelector("#sched-enable-tiktok")?.addEventListener("change", () => { saveSchedToggles(); renderScheduler(); });
+document.querySelector("#sched-proxy-url")?.addEventListener("input", () => {
+  localStorage.setItem("sched-proxy-url", document.querySelector("#sched-proxy-url").value);
+});
+
+document.querySelector("#sched-check-ip")?.addEventListener("click", async () => {
+  const resultEl = document.querySelector("#sched-check-ip-result");
+  const btn = document.querySelector("#sched-check-ip");
+  const profileSelect = document.querySelector("#sched-check-profile");
+  const profileId = profileSelect?.value;
+  if (!profileId) {
+    resultEl.textContent = "请先选择实例";
+    resultEl.className = "sched-check-result sched-check-error";
+    return;
+  }
+  btn.disabled = true;
+  resultEl.textContent = "正在检测…";
+  resultEl.className = "sched-check-result muted-activity";
+  try {
+    const res = await request("/api/scheduler/check-ip", {
+      method: "POST",
+      body: JSON.stringify({ profileId }),
+    });
+    if (res.error && !res.host) {
+      resultEl.textContent = res.error;
+      resultEl.className = "sched-check-result sched-check-error";
+    } else if (res.ip) {
+      const changed = res.lastIp && res.ip !== res.lastIp;
+      resultEl.innerHTML = `IP：<strong>${escapeHtml(res.ip)}</strong>（${res.durationMs}ms）${res.lastIp ? ` | 上次：${escapeHtml(res.lastIp)} ${changed ? "→ 已变化" : "→ 未变化"}` : ""} | ${escapeHtml(res.proxyType)} ${escapeHtml(res.host)}:${res.port}`;
+      resultEl.className = `sched-check-result sched-check-${changed ? "ok" : "warn"}`;
+    } else {
+      resultEl.innerHTML = `检测失败：${escapeHtml(res.error || "未知错误")}（${res.durationMs}ms）| ${escapeHtml(res.proxyType || "?")} ${escapeHtml(res.host || "?")}:${res.port || "?"}`;
+      resultEl.className = "sched-check-result sched-check-error";
+    }
+  } catch (e) {
+    resultEl.textContent = `请求失败：${e.message}`;
+    resultEl.className = "sched-check-result sched-check-error";
+  } finally {
+    btn.disabled = false;
+  }
+});
 
 document.querySelector("#sched-select-all")?.addEventListener("click", () => {
   const container = document.querySelector("#sched-profile-list");
@@ -2207,3 +2302,443 @@ async function loadTkAccountsForPub() {
 
 loadMaterials();
 loadTkAccountsForPub();
+
+// ==========================================================================
+// 视频去重与混剪模块
+// ==========================================================================
+
+const remix = {
+  creators: [],
+  videos: [],
+  tasks: [],
+  selectedCreatorId: null,
+  selectedVideos: [],
+  pollTimer: null,
+};
+
+const remixEl = {
+  creatorsList: document.querySelector("#remix-creators-list"),
+  addCreatorBtn: document.querySelector("#remix-add-creator-btn"),
+  addCreatorForm: document.querySelector("#remix-add-creator-form"),
+  creatorName: document.querySelector("#remix-creator-name"),
+  creatorPlatform: document.querySelector("#remix-creator-platform"),
+  confirmCreator: document.querySelector("#remix-confirm-creator"),
+  cancelCreator: document.querySelector("#remix-cancel-creator"),
+  currentCreator: document.querySelector("#remix-current-creator"),
+  videoCount: document.querySelector("#remix-video-count"),
+  videoGrid: document.querySelector("#remix-video-grid"),
+  addVideoBtn: document.querySelector("#remix-add-video-btn"),
+  addVideoForm: document.querySelector("#remix-add-video-form"),
+  videoFile: document.querySelector("#remix-video-file"),
+  videoUrl: document.querySelector("#remix-video-url"),
+  videoTitle: document.querySelector("#remix-video-title"),
+  uploadBtn: document.querySelector("#remix-upload-btn"),
+  confirmVideo: document.querySelector("#remix-confirm-video"),
+  cancelVideo: document.querySelector("#remix-cancel-video"),
+  selectedList: document.querySelector("#remix-selected-list"),
+  ratio: document.querySelector("#remix-ratio"),
+  dedupBtn: document.querySelector("#remix-dedup-btn"),
+  stitchBtn: document.querySelector("#remix-stitch-btn"),
+  tasksList: document.querySelector("#remix-tasks-list"),
+  refreshTasks: document.querySelector("#remix-refresh-tasks"),
+};
+
+async function fetchRemixCreators() {
+  try {
+    const data = await request("/api/remix/creators");
+    remix.creators = Array.isArray(data) ? data : [];
+    renderRemixCreators();
+  } catch { }
+}
+
+async function fetchRemixVideos(creatorId) {
+  try {
+    const data = await request(`/api/remix/creators/${encodeURIComponent(creatorId)}/videos`);
+    remix.videos = Array.isArray(data) ? data : [];
+    renderRemixVideos();
+  } catch { remix.videos = []; renderRemixVideos(); }
+}
+
+async function fetchRemixTasks() {
+  try {
+    const data = await request("/api/remix/tasks");
+    remix.tasks = Array.isArray(data) ? data : [];
+    renderRemixTasks();
+    updateRemixPolling();
+  } catch { }
+}
+
+function updateRemixPolling() {
+  const hasActive = remix.tasks.some((t) => t.status === "PENDING" || t.status === "PROCESSING");
+  if (hasActive && !remix.pollTimer) {
+    remix.pollTimer = setInterval(fetchRemixTasks, 3000);
+  } else if (!hasActive && remix.pollTimer) {
+    clearInterval(remix.pollTimer);
+    remix.pollTimer = null;
+  }
+}
+
+function renderRemixCreators() {
+  if (!remix.creators.length) {
+    remixEl.creatorsList.innerHTML = '<div class="empty-state compact" style="padding: 16px;">点击 + 添加达人</div>';
+    return;
+  }
+  remixEl.creatorsList.innerHTML = remix.creators.map((c) => `
+    <div class="remix-creator-item ${remix.selectedCreatorId === c.id ? "active" : ""}" data-id="${escapeHtml(c.id)}">
+      <div class="remix-creator-info">
+        <strong>${escapeHtml(c.name)}</strong>
+        <span>${escapeHtml(c.platform || "")} ${c._count?.videos || 0}视频</span>
+      </div>
+      <button class="remix-del-btn" data-del-creator="${escapeHtml(c.id)}" title="删除">×</button>
+    </div>
+  `).join("");
+  remixEl.creatorsList.querySelectorAll("[data-id]").forEach((el) => {
+    el.addEventListener("click", (e) => {
+      if (e.target.dataset.delCreator) return;
+      remix.selectedCreatorId = el.dataset.id;
+      remix.selectedVideos = [];
+      fetchRemixVideos(remix.selectedCreatorId);
+      renderRemixCreators();
+      remixEl.addVideoBtn.disabled = false;
+      const c = remix.creators.find((x) => x.id === remix.selectedCreatorId);
+      remixEl.currentCreator.textContent = c ? `${c.name} 的视频` : "";
+    });
+  });
+  remixEl.creatorsList.querySelectorAll("[data-del-creator]").forEach((btn) => {
+    btn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      if (!confirm("删除达人将同时删除其所有视频，确认？")) return;
+      await request(`/api/remix/creators/${encodeURIComponent(btn.dataset.delCreator)}`, { method: "DELETE" });
+      if (remix.selectedCreatorId === btn.dataset.delCreator) {
+        remix.selectedCreatorId = null;
+        remix.videos = [];
+        remixEl.addVideoBtn.disabled = true;
+        remixEl.currentCreator.textContent = "视频去重与混剪工作台";
+        remixEl.videoCount.textContent = "在左侧选择达人查看视频";
+        renderRemixVideos();
+      }
+      await fetchRemixCreators();
+    });
+  });
+}
+
+function remixBadgeHtml(info) {
+  if (!info) return "";
+  const downloaded = info.status === "DONE" && info.downloaded;
+  const dlMark = downloaded ? '<span class="remix-dl-mark" title="已下载"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg></span>' : "";
+  const dl = info.status === "DONE" && info.outputUrl
+    ? `<a href="${escapeHtml(info.outputUrl)}" download class="remix-video-dl ${downloaded ? "downloaded" : ""}" title="${downloaded ? "再次下载" : "下载"}" data-task-id="${escapeHtml(info.taskId)}" data-out-url="${escapeHtml(info.outputUrl)}" onclick="event.stopPropagation()"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></a>`
+    : "";
+  return `<div class="remix-video-badge badge-${escapeHtml(info.status)}">${escapeHtml(info.label)}${dlMark}${dl}</div>`;
+}
+
+function bindRemixDownloadLinks(container) {
+  container.querySelectorAll("a[data-task-id]").forEach((a) => {
+    if (a._bound) return;
+    a._bound = true;
+    a.addEventListener("click", async () => {
+      const taskId = a.dataset.taskId;
+      if (!taskId) return;
+      try {
+        await request(`/api/remix/tasks/${encodeURIComponent(taskId)}/downloaded`, { method: "POST", body: "{}" });
+        const task = remix.tasks.find((t) => t.id === taskId);
+        if (task) task.downloaded = true;
+        const entry = Object.values(remixTaskMap).find((e) => e.taskId === taskId);
+        if (entry) entry.downloaded = true;
+        updateRemixVideoBadges();
+        renderRemixTasks();
+      } catch {}
+    });
+  });
+}
+
+function renderRemixVideos() {
+  remixEl.videoCount.textContent = remix.videos.length ? `${remix.videos.length} 个视频` : "";
+  if (!remix.videos.length) {
+    remixEl.videoGrid.innerHTML = '<div class="empty-state compact">暂无视频，点击"添加视频"上传或粘贴链接</div>';
+    return;
+  }
+  remixEl.videoGrid.innerHTML = remix.videos.map((v) => {
+    const selected = remix.selectedVideos.some((sv) => sv.url === v.url);
+    const taskInfo = remixTaskMap[v.url];
+    return `
+      <div class="remix-video-card ${selected ? "selected" : ""}" data-url="${escapeHtml(v.url)}" data-title="${escapeHtml(v.title || "未命名")}">
+        <div class="remix-video-thumb">
+          <video src="${escapeHtml(v.url)}" muted preload="metadata" playsinline></video>
+          <button class="remix-play-btn" type="button" aria-label="播放">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+          </button>
+          <div class="remix-video-check ${selected ? "checked" : ""}">${selected ? "✓" : ""}</div>
+          <button class="remix-video-del" data-del-video="${escapeHtml(v.id)}">×</button>
+          ${remixBadgeHtml(taskInfo)}
+        </div>
+        <p class="remix-video-title">${escapeHtml(v.title || "未命名")}</p>
+      </div>
+    `;
+  }).join("");
+  remixEl.videoGrid.querySelectorAll("[data-url]").forEach((el) => {
+    el.addEventListener("click", (e) => {
+      if (e.target.dataset.delVideo) return;
+      if (e.target.closest(".remix-play-btn")) return;
+      const url = el.dataset.url;
+      const title = el.dataset.title;
+      const exists = remix.selectedVideos.find((sv) => sv.url === url);
+      if (exists) remix.selectedVideos = remix.selectedVideos.filter((sv) => sv.url !== url);
+      else remix.selectedVideos.push({ url, title, creatorName: remix.creators.find((c) => c.id === remix.selectedCreatorId)?.name || "" });
+      el.classList.toggle("selected", !exists);
+      const check = el.querySelector(".remix-video-check");
+      if (check) {
+        check.classList.toggle("checked", !exists);
+        check.textContent = !exists ? "✓" : "";
+      }
+      renderRemixSelected();
+    });
+  });
+  remixEl.videoGrid.querySelectorAll("[data-del-video]").forEach((btn) => {
+    btn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      await request(`/api/remix/creators/${encodeURIComponent(remix.selectedCreatorId)}/videos/${encodeURIComponent(btn.dataset.delVideo)}`, { method: "DELETE" });
+      await fetchRemixVideos(remix.selectedCreatorId);
+      await fetchRemixCreators();
+    });
+  });
+  remixEl.videoGrid.querySelectorAll(".remix-play-btn").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const video = btn.previousElementSibling;
+      if (video.tagName !== "VIDEO") return;
+      if (video.paused) {
+        video.play();
+        btn.classList.add("playing");
+      } else {
+        video.pause();
+        btn.classList.remove("playing");
+      }
+    });
+    const video = btn.previousElementSibling;
+    if (video.tagName === "VIDEO") {
+      video.addEventListener("play", () => btn.classList.add("playing"));
+      video.addEventListener("pause", () => btn.classList.remove("playing"));
+      video.addEventListener("ended", () => btn.classList.remove("playing"));
+    }
+  });
+  bindRemixDownloadLinks(remixEl.videoGrid);
+}
+
+function updateRemixVideoBadges() {
+  remixEl.videoGrid.querySelectorAll(".remix-video-card").forEach((card) => {
+    const url = card.dataset.url;
+    const thumb = card.querySelector(".remix-video-thumb");
+    if (!thumb) return;
+    const oldBadge = thumb.querySelector(".remix-video-badge");
+    const info = remixTaskMap[url];
+    if (info) {
+      const html = remixBadgeHtml(info);
+      if (oldBadge) {
+        oldBadge.outerHTML = html;
+      } else {
+        thumb.insertAdjacentHTML("beforeend", html);
+      }
+    } else if (oldBadge) {
+      oldBadge.remove();
+    }
+  });
+  bindRemixDownloadLinks(remixEl.videoGrid);
+}
+
+function renderRemixSelected() {
+  remixEl.selectedList.innerHTML = remix.selectedVideos.length
+    ? remix.selectedVideos.map((v) => `<span class="remix-chip" data-url="${escapeHtml(v.url)}">${escapeHtml(v.title)} ×</span>`).join("")
+    : '<span class="muted-activity" style="font-size: 12px;">勾选视频加入去重或混剪</span>';
+  remixEl.dedupBtn.disabled = remix.selectedVideos.length < 1;
+  remixEl.stitchBtn.disabled = remix.selectedVideos.length < 2;
+  remixEl.selectedList.querySelectorAll("[data-url]").forEach((chip) => {
+    chip.addEventListener("click", () => {
+      remix.selectedVideos = remix.selectedVideos.filter((sv) => sv.url !== chip.dataset.url);
+      renderRemixVideos();
+      renderRemixSelected();
+    });
+  });
+}
+
+let remixTaskMap = {};
+function renderRemixTasks() {
+  remixTaskMap = {};
+  for (const t of remix.tasks) {
+    for (const url of t.videoUrls) {
+      const existing = remixTaskMap[url];
+      if (!existing || new Date(t.createdAt) > new Date(existing.createdAt)) {
+        const label = t.status === "DONE" ? (t.mode === "dedup" ? "已去重" : "已混剪") : t.status === "PROCESSING" ? "处理中" : t.status === "FAILED" ? "失败" : "等待中";
+        remixTaskMap[url] = { status: t.status, label, outputUrl: t.outputUrl, downloaded: Boolean(t.downloaded), taskId: t.id, createdAt: t.createdAt };
+      }
+    }
+  }
+
+  updateRemixVideoBadges();
+
+  if (!remix.tasks.length) {
+    remixEl.tasksList.innerHTML = '<div class="empty-state compact">暂无记录</div>';
+    return;
+  }
+  remixEl.tasksList.innerHTML = remix.tasks.map((t) => {
+    const isDedup = t.mode === "dedup";
+    const statusBadge = {
+      DONE: '<span class="badge-done">完成</span>',
+      PROCESSING: '<span class="badge-processing"><span class="badge-spinner"></span>处理中</span>',
+      PENDING: '<span class="badge-pending"><span class="badge-spinner"></span>等待中</span>',
+      FAILED: '<span class="badge-failed">失败</span>',
+    }[t.status] || "";
+    return `
+      <div class="remix-task-item">
+        <div class="remix-task-info">
+          <span class="remix-task-mode ${isDedup ? "mode-dedup" : "mode-stitch"}">${isDedup ? "去重" : "混剪"}</span>
+          <strong>${escapeHtml(t.title)}</strong>
+          ${statusBadge}
+          <span class="muted-activity" style="font-size: 11px;">${t.videoCount}视频 · ${escapeHtml(t.ratio)} · ${formatDateTime(t.createdAt)}</span>
+          ${t.errorMessage ? `<span style="color: #dc2626; font-size: 11px;">${escapeHtml(t.errorMessage)}</span>` : ""}
+        </div>
+        <div class="remix-task-actions">
+          ${t.status === "DONE" && t.outputUrl ? `<a href="${escapeHtml(t.outputUrl)}" target="_blank" class="button button-secondary" style="font-size: 11px;">预览</a>` : ""}
+          ${t.status === "DONE" && t.outputUrl ? `<a href="${escapeHtml(t.outputUrl)}" download data-task-id="${escapeHtml(t.id)}" data-out-url="${escapeHtml(t.outputUrl)}" class="button button-primary" style="font-size: 11px;">${t.downloaded ? "已下载 ✓" : "下载"}</a>` : ""}
+          <button class="remix-del-task" data-del-task="${escapeHtml(t.id)}" style="color: #dc2626; background: none; border: none; cursor: pointer; font-size: 16px;">×</button>
+        </div>
+      </div>
+    `;
+  }).join("");
+  remixEl.tasksList.querySelectorAll("[data-del-task]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      await request(`/api/remix/tasks/${encodeURIComponent(btn.dataset.delTask)}`, { method: "DELETE" });
+      await fetchRemixTasks();
+    });
+  });
+  bindRemixDownloadLinks(remixEl.tasksList);
+}
+
+// 达人添加
+remixEl.addCreatorBtn.addEventListener("click", () => remixEl.addCreatorForm.classList.toggle("hidden"));
+remixEl.cancelCreator.addEventListener("click", () => { remixEl.addCreatorForm.classList.add("hidden"); remixEl.creatorName.value = ""; remixEl.creatorPlatform.value = ""; });
+remixEl.confirmCreator.addEventListener("click", async () => {
+  const name = remixEl.creatorName.value.trim();
+  if (!name) return;
+  try {
+    const data = await request("/api/remix/creators", { method: "POST", body: JSON.stringify({ name, platform: remixEl.creatorPlatform.value.trim() || null }) });
+    remixEl.addCreatorForm.classList.add("hidden");
+    remixEl.creatorName.value = ""; remixEl.creatorPlatform.value = "";
+    await fetchRemixCreators();
+    remix.selectedCreatorId = data.id;
+    await fetchRemixVideos(data.id);
+    renderRemixCreators();
+    remixEl.addVideoBtn.disabled = false;
+    remixEl.currentCreator.textContent = `${data.name} 的视频`;
+  } catch (e) { showToast(e.message, true); }
+});
+
+// 视频添加
+remixEl.addVideoBtn.addEventListener("click", () => remixEl.addVideoForm.classList.toggle("hidden"));
+remixEl.cancelVideo.addEventListener("click", () => { remixEl.addVideoForm.classList.add("hidden"); remixEl.videoUrl.value = ""; remixEl.videoTitle.value = ""; });
+remixEl.uploadBtn.addEventListener("click", () => remixEl.videoFile.click());
+remixEl.videoFile.addEventListener("change", async () => {
+  const files = [...remixEl.videoFile.files];
+  if (!files.length) return;
+  remixEl.videoFile.value = "";
+
+  if (files.length === 1) {
+    const file = files[0];
+    const formData = new FormData();
+    formData.append("file", file);
+    try {
+      const res = await fetch("/api/remix/upload", { method: "POST", body: formData });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "上传失败");
+      remixEl.videoUrl.value = data.url;
+      if (!remixEl.videoTitle.value) remixEl.videoTitle.value = file.name.replace(/\.[^.]+$/, "");
+    } catch (e) { showToast(e.message, true); }
+    return;
+  }
+
+  const creatorId = remix.selectedCreatorId;
+  if (!creatorId) { showToast("请先选择达人", true); return; }
+  remixEl.uploadBtn.disabled = true;
+  remixEl.uploadBtn.textContent = `上传中 (0/${files.length})...`;
+  let ok = 0;
+  let fail = 0;
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    remixEl.uploadBtn.textContent = `上传中 (${i + 1}/${files.length})...`;
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const res = await fetch("/api/remix/upload", { method: "POST", body: formData });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "上传失败");
+      await request(`/api/remix/creators/${encodeURIComponent(creatorId)}/videos`, {
+        method: "POST",
+        body: JSON.stringify({ url: data.url, title: file.name.replace(/\.[^.]+$/, "") }),
+      });
+      ok++;
+    } catch { fail++; }
+  }
+  remixEl.uploadBtn.disabled = false;
+  remixEl.uploadBtn.textContent = "批量上传";
+  await fetchRemixVideos(creatorId);
+  await fetchRemixCreators();
+  showToast(`批量上传完成：成功 ${ok} 个${fail ? `，失败 ${fail} 个` : ""}`, fail > 0);
+});
+remixEl.confirmVideo.addEventListener("click", async () => {
+  const url = remixEl.videoUrl.value.trim();
+  if (!url || !remix.selectedCreatorId) return;
+  try {
+    await request(`/api/remix/creators/${encodeURIComponent(remix.selectedCreatorId)}/videos`, {
+      method: "POST",
+      body: JSON.stringify({ url, title: remixEl.videoTitle.value.trim() || null }),
+    });
+    remixEl.addVideoForm.classList.add("hidden");
+    remixEl.videoUrl.value = ""; remixEl.videoTitle.value = "";
+    await fetchRemixVideos(remix.selectedCreatorId);
+    await fetchRemixCreators();
+  } catch (e) { showToast(e.message, true); }
+});
+
+// 去重
+remixEl.dedupBtn.addEventListener("click", async () => {
+  if (!remix.selectedVideos.length) return;
+  const ratio = remixEl.ratio.value;
+  for (const v of remix.selectedVideos) {
+    try {
+      await request("/api/remix/tasks", {
+        method: "POST",
+        body: JSON.stringify({ videoUrls: [v.url], sourceVideos: [{ url: v.url, title: v.title, creatorName: v.creatorName }], title: `去重 · ${v.creatorName} - ${v.title}`, ratio, mode: "dedup" }),
+      });
+    } catch (e) { showToast(`${v.title} 创建失败：${e.message}`, true); }
+  }
+  remix.selectedVideos = [];
+  renderRemixVideos();
+  renderRemixSelected();
+  await fetchRemixTasks();
+  showToast("去重任务已创建");
+});
+
+// 混剪
+remixEl.stitchBtn.addEventListener("click", async () => {
+  if (remix.selectedVideos.length < 2) return;
+  const ratio = remixEl.ratio.value;
+  const names = Array.from(new Set(remix.selectedVideos.map((v) => v.creatorName)));
+  const title = `混剪 · ${names.join("、")} (${remix.selectedVideos.length}个视频)`;
+  try {
+    await request("/api/remix/tasks", {
+      method: "POST",
+      body: JSON.stringify({ videoUrls: remix.selectedVideos.map((v) => v.url), sourceVideos: remix.selectedVideos.map((v) => ({ url: v.url, title: v.title, creatorName: v.creatorName })), title, ratio, mode: "stitch" }),
+    });
+    remix.selectedVideos = [];
+    renderRemixVideos();
+    renderRemixSelected();
+    await fetchRemixTasks();
+    showToast("混剪任务已创建");
+  } catch (e) { showToast(e.message, true); }
+});
+
+remixEl.refreshTasks.addEventListener("click", fetchRemixTasks);
+
+// 初始化
+fetchRemixCreators();
+fetchRemixTasks();

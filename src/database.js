@@ -214,6 +214,43 @@ export class LocalDatabase {
 
       CREATE INDEX IF NOT EXISTS idx_tk_accounts_profile ON tk_accounts(profile_id);
       CREATE INDEX IF NOT EXISTS idx_tk_publish_jobs_status ON tk_publish_jobs(status, scheduled_at ASC);
+
+      CREATE TABLE IF NOT EXISTS remix_creators (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        platform TEXT,
+        avatar TEXT,
+        created_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS remix_videos (
+        id TEXT PRIMARY KEY,
+        creator_id TEXT NOT NULL,
+        url TEXT NOT NULL,
+        title TEXT,
+        duration REAL,
+        thumbnail TEXT,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (creator_id) REFERENCES remix_creators(id) ON DELETE CASCADE
+      );
+
+      CREATE TABLE IF NOT EXISTS remix_tasks (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        status TEXT DEFAULT 'PENDING',
+        mode TEXT NOT NULL,
+        video_urls_json TEXT NOT NULL,
+        source_videos_json TEXT,
+        video_count INTEGER NOT NULL,
+        ratio TEXT,
+        output_url TEXT,
+        error_message TEXT,
+        created_at TEXT NOT NULL,
+        completed_at TEXT
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_remix_videos_creator ON remix_videos(creator_id);
+      CREATE INDEX IF NOT EXISTS idx_remix_tasks_status ON remix_tasks(status);
     `);
 
     this.#ensureColumn("task_runs", "task_mode", "TEXT NOT NULL DEFAULT 'pixel'");
@@ -243,6 +280,7 @@ export class LocalDatabase {
     this.#ensureColumn("task_runs", "upvoted_comment_ids_json", "TEXT NOT NULL DEFAULT '[]'");
     this.#ensureColumn("task_runs", "auto_upvote_count", "INTEGER NOT NULL DEFAULT 0");
     this.#ensureColumn("task_runs", "auto_comment_upvote_count", "INTEGER NOT NULL DEFAULT 0");
+    this.#ensureColumn("remix_tasks", "downloaded", "INTEGER NOT NULL DEFAULT 0");
   }
 
   #ensureColumn(table, column, definition) {
@@ -500,18 +538,20 @@ export class LocalDatabase {
     };
   }
 
-  saveTiktokOptions(options) {
+  saveTiktokOptions(profileId, options) {
+    const key = profileId ? `tiktok_options:${profileId}` : "tiktok_options";
     this.db
       .prepare(
-        `INSERT INTO app_settings (key, value_json, updated_at) VALUES ('tiktok_options', ?, ?)
+        `INSERT INTO app_settings (key, value_json, updated_at) VALUES (?, ?, ?)
          ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at`,
       )
-      .run(JSON.stringify(options || {}), nowIso());
-    return this.getTiktokOptions();
+      .run(key, JSON.stringify(options || {}), nowIso());
+    return this.getTiktokOptions(profileId);
   }
 
-  getTiktokOptions() {
-    const row = this.db.prepare("SELECT value_json FROM app_settings WHERE key = 'tiktok_options'").get();
+  getTiktokOptions(profileId) {
+    const key = profileId ? `tiktok_options:${profileId}` : "tiktok_options";
+    const row = this.db.prepare("SELECT value_json FROM app_settings WHERE key = ?").get(key);
     return parseJson(row?.value_json, null);
   }
 
@@ -1012,6 +1052,121 @@ export class LocalDatabase {
 
   deleteTkPublishJob(id) {
     return this.db.prepare(`DELETE FROM tk_publish_jobs WHERE id = ?`).run(id).changes;
+  }
+
+  // --- Remix 达人管理 ---
+  createRemixCreator({ name, platform = null }) {
+    const id = `rc_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const ts = nowIso();
+    this.db.prepare(`INSERT INTO remix_creators (id, name, platform, created_at) VALUES (?, ?, ?, ?)`).run(id, name, platform, ts);
+    return this.getRemixCreator(id);
+  }
+
+  listRemixCreators() {
+    const rows = this.db.prepare(`
+      SELECT c.*, (SELECT COUNT(*) FROM remix_videos v WHERE v.creator_id = c.id) AS video_count
+      FROM remix_creators c ORDER BY c.created_at DESC
+    `).all();
+    return rows.map((r) => ({
+      id: r.id, name: r.name, platform: r.platform, avatar: r.avatar,
+      createdAt: r.created_at, _count: { videos: Number(r.video_count || 0) },
+    }));
+  }
+
+  getRemixCreator(id) {
+    const row = this.db.prepare(`SELECT * FROM remix_creators WHERE id = ?`).get(id);
+    return row ? { id: row.id, name: row.name, platform: row.platform, avatar: row.avatar, createdAt: row.created_at } : null;
+  }
+
+  deleteRemixCreator(id) {
+    this.db.prepare(`DELETE FROM remix_videos WHERE creator_id = ?`).run(id);
+    return this.db.prepare(`DELETE FROM remix_creators WHERE id = ?`).run(id).changes;
+  }
+
+  // --- Remix 视频管理 ---
+  createRemixVideo({ creatorId, url, title = null }) {
+    const id = `rv_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const ts = nowIso();
+    this.db.prepare(`INSERT INTO remix_videos (id, creator_id, url, title, created_at) VALUES (?, ?, ?, ?, ?)`).run(id, creatorId, url, title, ts);
+    return this.getRemixVideo(id);
+  }
+
+  listRemixVideos(creatorId) {
+    const rows = this.db.prepare(`SELECT * FROM remix_videos WHERE creator_id = ? ORDER BY created_at DESC`).all(creatorId);
+    return rows.map((r) => ({
+      id: r.id, creatorId: r.creator_id, url: r.url, title: r.title,
+      duration: r.duration, thumbnail: r.thumbnail, createdAt: r.created_at,
+    }));
+  }
+
+  getRemixVideo(id) {
+    const row = this.db.prepare(`SELECT * FROM remix_videos WHERE id = ?`).get(id);
+    return row ? {
+      id: row.id, creatorId: row.creator_id, url: row.url, title: row.title,
+      duration: row.duration, thumbnail: row.thumbnail, createdAt: row.created_at,
+    } : null;
+  }
+
+  deleteRemixVideo(id) {
+    return this.db.prepare(`DELETE FROM remix_videos WHERE id = ?`).run(id).changes;
+  }
+
+  // --- Remix 任务管理 ---
+  createRemixTask({ title, mode, videoUrls, sourceVideos = null, ratio = "9:16" }) {
+    const id = `rt_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const ts = nowIso();
+    this.db.prepare(`
+      INSERT INTO remix_tasks (id, title, status, mode, video_urls_json, source_videos_json, video_count, ratio, created_at)
+      VALUES (?, ?, 'PENDING', ?, ?, ?, ?, ?, ?)
+    `).run(id, title, mode, JSON.stringify(videoUrls), sourceVideos ? JSON.stringify(sourceVideos) : null, videoUrls.length, ratio, ts);
+    return this.getRemixTask(id);
+  }
+
+  listRemixTasks() {
+    const rows = this.db.prepare(`SELECT * FROM remix_tasks ORDER BY created_at DESC`).all();
+    return rows.map((r) => ({
+      id: r.id, title: r.title, status: r.status, mode: r.mode,
+      videoUrls: parseJson(r.video_urls_json, []),
+      sourceVideos: parseJson(r.source_videos_json, null),
+      videoCount: Number(r.video_count), ratio: r.ratio,
+      outputUrl: r.output_url, errorMessage: r.error_message,
+      downloaded: Boolean(r.downloaded),
+      createdAt: r.created_at, completedAt: r.completed_at,
+    }));
+  }
+
+  getRemixTask(id) {
+    const row = this.db.prepare(`SELECT * FROM remix_tasks WHERE id = ?`).get(id);
+    return row ? {
+      id: row.id, title: row.title, status: row.status, mode: row.mode,
+      videoUrls: parseJson(row.video_urls_json, []),
+      sourceVideos: parseJson(row.source_videos_json, null),
+      videoCount: Number(row.video_count), ratio: row.ratio,
+      outputUrl: row.output_url, errorMessage: row.error_message,
+      downloaded: Boolean(row.downloaded),
+      createdAt: row.created_at, completedAt: row.completed_at,
+    } : null;
+  }
+
+  markRemixTaskDownloaded(id) {
+    this.db.prepare(`UPDATE remix_tasks SET downloaded = 1 WHERE id = ?`).run(id);
+    return this.getRemixTask(id);
+  }
+
+  updateRemixTask(id, { status = null, outputUrl = null, errorMessage = null, completedAt = null }) {
+    this.db.prepare(`
+      UPDATE remix_tasks
+      SET status = COALESCE(?, status),
+          output_url = COALESCE(?, output_url),
+          error_message = COALESCE(?, error_message),
+          completed_at = COALESCE(?, completed_at)
+      WHERE id = ?
+    `).run(status, outputUrl, errorMessage, completedAt, id);
+    return this.getRemixTask(id);
+  }
+
+  deleteRemixTask(id) {
+    return this.db.prepare(`DELETE FROM remix_tasks WHERE id = ?`).run(id).changes;
   }
 
   close() {
