@@ -2314,6 +2314,9 @@ const remix = {
   selectedCreatorId: null,
   selectedVideos: [],
   pollTimer: null,
+  page: 1,
+  pageSize: 12,
+  viewMode: localStorage.getItem("remix-view-mode") || "grid",
 };
 
 const remixEl = {
@@ -2341,6 +2344,9 @@ const remixEl = {
   stitchBtn: document.querySelector("#remix-stitch-btn"),
   tasksList: document.querySelector("#remix-tasks-list"),
   refreshTasks: document.querySelector("#remix-refresh-tasks"),
+  pagination: document.querySelector("#remix-pagination"),
+  viewGridBtn: document.querySelector("#remix-view-grid"),
+  viewListBtn: document.querySelector("#remix-view-list"),
 };
 
 async function fetchRemixCreators() {
@@ -2397,6 +2403,7 @@ function renderRemixCreators() {
       if (e.target.dataset.delCreator) return;
       remix.selectedCreatorId = el.dataset.id;
       remix.selectedVideos = [];
+      remix.page = 1;
       fetchRemixVideos(remix.selectedCreatorId);
       renderRemixCreators();
       remixEl.addVideoBtn.disabled = false;
@@ -2456,11 +2463,38 @@ function renderRemixVideos() {
   remixEl.videoCount.textContent = remix.videos.length ? `${remix.videos.length} 个视频` : "";
   if (!remix.videos.length) {
     remixEl.videoGrid.innerHTML = '<div class="empty-state compact">暂无视频，点击"添加视频"上传或粘贴链接</div>';
+    remixEl.pagination.innerHTML = "";
+    remixEl.videoGrid.className = "remix-video-grid";
     return;
   }
-  remixEl.videoGrid.innerHTML = remix.videos.map((v) => {
+
+  const totalPages = Math.ceil(remix.videos.length / remix.pageSize);
+  if (remix.page > totalPages) remix.page = 1;
+  const start = (remix.page - 1) * remix.pageSize;
+  const pageVideos = remix.videos.slice(start, start + remix.pageSize);
+
+  const isList = remix.viewMode === "list";
+  remixEl.videoGrid.className = isList ? "remix-video-list" : "remix-video-grid";
+
+  remixEl.videoGrid.innerHTML = pageVideos.map((v) => {
     const selected = remix.selectedVideos.some((sv) => sv.url === v.url);
     const taskInfo = remixTaskMap[v.url];
+    if (isList) {
+      return `
+        <div class="remix-video-row ${selected ? "selected" : ""}" data-url="${escapeHtml(v.url)}" data-title="${escapeHtml(v.title || "未命名")}">
+          <div class="remix-video-row-thumb">
+            <video src="${escapeHtml(v.url)}" muted preload="metadata" playsinline></video>
+            <button class="remix-play-btn remix-play-sm" type="button"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></button>
+            <div class="remix-video-check ${selected ? "checked" : ""}">${selected ? "✓" : ""}</div>
+          </div>
+          <div class="remix-video-row-info">
+            <p class="remix-video-title">${escapeHtml(v.title || "未命名")}</p>
+            ${taskInfo ? remixBadgeHtml(taskInfo) : ""}
+          </div>
+          <button class="remix-video-del" data-del-video="${escapeHtml(v.id)}">×</button>
+        </div>
+      `;
+    }
     return `
       <div class="remix-video-card ${selected ? "selected" : ""}" data-url="${escapeHtml(v.url)}" data-title="${escapeHtml(v.title || "未命名")}">
         <div class="remix-video-thumb">
@@ -2476,6 +2510,9 @@ function renderRemixVideos() {
       </div>
     `;
   }).join("");
+
+  renderRemixPagination(totalPages);
+
   remixEl.videoGrid.querySelectorAll("[data-url]").forEach((el) => {
     el.addEventListener("click", (e) => {
       if (e.target.dataset.delVideo) return;
@@ -2524,6 +2561,61 @@ function renderRemixVideos() {
   });
   bindRemixDownloadLinks(remixEl.videoGrid);
 }
+
+function renderRemixPagination(totalPages) {
+  if (totalPages <= 1) {
+    remixEl.pagination.innerHTML = remix.videos.length > remix.pageSize
+      ? `<span class="muted-activity" style="font-size:11px;">共 ${remix.videos.length} 个</span>`
+      : "";
+    return;
+  }
+  const p = remix.page;
+  let pages = [];
+  if (totalPages <= 7) {
+    for (let i = 1; i <= totalPages; i++) pages.push(i);
+  } else {
+    pages = [1];
+    if (p > 3) pages.push("...");
+    for (let i = Math.max(2, p - 1); i <= Math.min(totalPages - 1, p + 1); i++) pages.push(i);
+    if (p < totalPages - 2) pages.push("...");
+    pages.push(totalPages);
+  }
+  const buttons = pages.map((pg) =>
+    pg === "..."
+      ? '<span class="remix-page-dots">…</span>'
+      : `<button class="remix-page-btn ${pg === p ? "active" : ""}" data-page="${pg}" type="button">${pg}</button>`,
+  ).join("");
+  remixEl.pagination.innerHTML = `
+    <button class="remix-page-btn" data-page="${p - 1}" type="button" ${p === 1 ? "disabled" : ""}>‹</button>
+    ${buttons}
+    <button class="remix-page-btn" data-page="${p + 1}" type="button" ${p === totalPages ? "disabled" : ""}>›</button>
+    <span class="muted-activity" style="font-size:11px; margin-left:6px;">${(p - 1) * remix.pageSize + 1}-${Math.min(p * remix.pageSize, remix.videos.length)} / ${remix.videos.length}</span>
+  `;
+  remixEl.pagination.querySelectorAll("[data-page]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const pg = Number(btn.dataset.page);
+      if (pg >= 1 && pg <= totalPages && pg !== remix.page) {
+        remix.page = pg;
+        renderRemixVideos();
+      }
+    });
+  });
+}
+
+remixEl.viewGridBtn?.addEventListener("click", () => {
+  remix.viewMode = "grid";
+  localStorage.setItem("remix-view-mode", "grid");
+  remixEl.viewGridBtn.classList.add("active");
+  remixEl.viewListBtn.classList.remove("active");
+  renderRemixVideos();
+});
+remixEl.viewListBtn?.addEventListener("click", () => {
+  remix.viewMode = "list";
+  localStorage.setItem("remix-view-mode", "list");
+  remixEl.viewListBtn.classList.add("active");
+  remixEl.viewGridBtn.classList.remove("active");
+  renderRemixVideos();
+});
 
 function updateRemixVideoBadges() {
   remixEl.videoGrid.querySelectorAll(".remix-video-card").forEach((card) => {
@@ -2740,5 +2832,9 @@ remixEl.stitchBtn.addEventListener("click", async () => {
 remixEl.refreshTasks.addEventListener("click", fetchRemixTasks);
 
 // 初始化
+if (remix.viewMode === "list") {
+  remixEl.viewListBtn?.classList.add("active");
+  remixEl.viewGridBtn?.classList.remove("active");
+}
 fetchRemixCreators();
 fetchRemixTasks();

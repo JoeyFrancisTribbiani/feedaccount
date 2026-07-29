@@ -649,15 +649,28 @@ export function createMonitorServer({
               username: detail.proxyUserName,
               password: detail.proxyPassword,
             });
-            sendJson(response, 200, {
-              ip,
-              durationMs: Date.now() - startMs,
-              proxyType: detail.proxyType,
-              host: detail.host,
-              port: detail.port,
-              lastIp: detail.lastIp,
-              hasAuth: Boolean(detail.proxyUserName),
-            });
+            if (ip) {
+              sendJson(response, 200, {
+                ip,
+                durationMs: Date.now() - startMs,
+                proxyType: detail.proxyType,
+                host: detail.host,
+                port: detail.port,
+                lastIp: detail.lastIp,
+                hasAuth: Boolean(detail.proxyUserName),
+              });
+            } else {
+              console.error("[check-ip] SOCKS5 检测返回 null，请查看上方 [socks5-check] 日志");
+              sendJson(response, 200, {
+                ip: null,
+                error: "代理检测返回空结果（详见终端日志）",
+                durationMs: Date.now() - startMs,
+                proxyType: detail.proxyType,
+                host: detail.host,
+                port: detail.port,
+                hasAuth: Boolean(detail.proxyUserName),
+              });
+            }
           } catch (e) {
             sendJson(response, 200, {
               ip: null,
