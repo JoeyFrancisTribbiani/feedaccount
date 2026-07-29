@@ -139,7 +139,7 @@ export function checkIpViaSocks5({
           { socket, servername: targetHost, rejectUnauthorized: true },
           () => {
             log("TLS 握手成功，发送 HTTPS 请求");
-            const req = `GET /format=json HTTP/1.1\r\nHost: ${targetHost}\r\nConnection: close\r\n\r\n`;
+            const req = `GET /?format=json HTTP/1.1\r\nHost: ${targetHost}\r\nConnection: close\r\n\r\n`;
             tlsSocket.write(req);
           },
         );

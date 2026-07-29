@@ -621,6 +621,13 @@ export class JobManager extends EventEmitter {
 
   async #run(job) {
     try {
+      await this.#connectAndStart(job);
+    } catch (error) {
+      await this.#retryOrReconnect(job, error);
+    }
+  }
+
+  async #connectAndStart(job) {
       const connection = await this.bitBrowserApi.openProfile(job.profileId);
       if (job.cancelled) return;
 
@@ -651,8 +658,46 @@ export class JobManager extends EventEmitter {
         return;
       }
       await this.#dispatch(job);
-    } catch (error) {
-      await this.#failJob(job, error);
+  }
+
+  async #retryOrReconnect(job, error) {
+    if (job.cancelled) return;
+    const msg = error instanceof Error ? error.message : String(error);
+    this.#log(job, `操作异常：${msg}，10秒后重试`, "warning", "error", {
+      workflowPhase: job.workflowPhase,
+      nextOperation: job.nextOperation,
+    });
+    this.#setStatus(job, "waiting", `重试中（${msg}）`);
+    this.#emitChange();
+
+    await new Promise((r) => setTimeout(r, 10000));
+    if (job.cancelled) return;
+
+    if (job.session) {
+      try {
+        await job.session.scroll();
+        this.#log(job, "会话仍可用，继续操作", "info", "lifecycle");
+        job.nextOperation = "feed-scroll";
+        job.workflowPhase = "feed_align";
+        await this.#dispatch(job);
+        return;
+      } catch {}
+    }
+
+    this.#log(job, "会话已断开，正在重新连接", "warning", "lifecycle");
+    if (job.session) { await job.session.close().catch(() => {}); job.session = null; }
+    this.#emitChange();
+
+    while (!job.cancelled) {
+      try {
+        await this.#connectAndStart(job);
+        return;
+      } catch (e) {
+        this.#log(job, `重新连接失败：${e instanceof Error ? e.message : String(e)}，10秒后重试`, "warning", "lifecycle");
+        this.#setStatus(job, "waiting", `重新连接中（${e instanceof Error ? e.message : String(e)}）`);
+        this.#emitChange();
+        await new Promise((r) => setTimeout(r, 10000));
+      }
     }
   }
 
@@ -1547,15 +1592,18 @@ export class JobManager extends EventEmitter {
     job.timer = null;
     job.nextActionAt = null;
     job.scheduledDeadlineMs = null;
-    job.error = error instanceof Error ? error.message : String(error);
-    job.stoppedAt = nowIso();
-    this.#log(job, `任务出错：${job.error}`, "error", "error", {
+    const msg = error instanceof Error ? error.message : String(error);
+    this.#log(job, `操作出错：${msg}，10秒后重试`, "warning", "error", {
       workflowPhase: job.workflowPhase,
       nextOperation: job.nextOperation,
     });
-    await job.session?.close().catch(() => {});
-    job.session = null;
-    this.#setStatus(job, "error", "运行出错");
+    this.#setStatus(job, "waiting", `重试中（${msg}）`);
+    this.#emitChange();
+
+    job.timer = setTimeout(() => {
+      job.timer = null;
+      void this.#retryOrReconnect(job, error);
+    }, 10000);
   }
 
   #setStatus(job, status, statusText) {

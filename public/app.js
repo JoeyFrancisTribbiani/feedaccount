@@ -1867,7 +1867,7 @@ function renderScheduler() {
   const progress = s.totalProfiles > 0 ? `${s.profileIndex + 1} / ${s.totalProfiles}` : "-";
   const current = s.currentSeq ? `#${s.currentSeq} ${escapeHtml(s.currentName || "")}` : "-";
   const remaining = s.running && s.remainingMs > 0 ? formatRemaining(s.remainingMs) : "—";
-  const logs = (s.log || []).slice(-15).map((l) => `<li class="log-item log-${escapeHtml(l.level)}"><span class="log-time">${formatDateTime(l.at)}</span><span class="log-level">${escapeHtml(l.level)}</span><span class="log-msg">${escapeHtml(l.message)}</span></li>`).join("");
+  const logs = (s.log || []).slice(-15).reverse().map((l) => `<li class="log-item log-${escapeHtml(l.level)}"><span class="log-time">${formatDateTime(l.at)}</span><span class="log-level">${escapeHtml(l.level)}</span><span class="log-msg">${escapeHtml(l.message)}</span></li>`).join("");
   const ipChange = s.ipChange
     ? `<div class="sched-ip-change"><span>代理IP</span><strong><span class="ip-old">${escapeHtml(s.ipChange.old || "—")}</span><span class="ip-arrow">→</span><span class="ip-new">${escapeHtml(s.ipChange.new || "未知")}</span></strong></div>`
     : "";

@@ -100,30 +100,52 @@ export class TiktokJobManager extends EventTarget {
     return this.#publicJob(job);
   }
 
+  async #connectWithRetry(job) {
+    while (!job.cancelled) {
+      try {
+        const conn = await this.bitBrowserApi.openProfile(job.profileId);
+        if (job.cancelled) return null;
+        job.session = new TiktokSession();
+        const feed = await job.session.connect(conn.wsUrl);
+        if (job.cancelled) { await job.session.close().catch(() => {}); job.session = null; return null; }
+        return feed;
+      } catch (e) {
+        this.#log(job, `连接失败：${e.message}，10秒后重试`, "warning", "lifecycle");
+        if (job.session) { await job.session.close().catch(() => {}); job.session = null; }
+        this.#setStatus(job, "running", `连接重试中（${e.message}）`);
+        this.#emit();
+        await this.#sleep(job, 10000);
+      }
+    }
+    return null;
+  }
+
   async #run(job) {
-    try {
-      const conn = await this.bitBrowserApi.openProfile(job.profileId);
-      if (job.cancelled) return;
-      job.session = new TiktokSession();
-      const feed = await job.session.connect(conn.wsUrl);
-      if (job.cancelled) { await job.session.close(); return; }
-      job.currentVideo = this.#videoSummary(feed);
-      this.#setStatus(job, "running", "正在浏览 TikTok");
-      this.#log(job, `已连接 TikTok，当前视频：${job.currentVideo.author}`, "info", "lifecycle");
+    let feed = await this.#connectWithRetry(job);
+    if (job.cancelled) {
+      this.#setStatus(job, "stopped", "已停止");
+      this.persistence?.finishTiktokRun(job.runId, "stopped", "已停止");
       this.#emit();
+      return;
+    }
+    job.currentVideo = this.#videoSummary(feed);
+    this.#setStatus(job, "running", "正在浏览 TikTok");
+    this.#log(job, `已连接 TikTok，当前视频：${job.currentVideo.author}`, "info", "lifecycle");
+    this.#emit();
 
-      while (!job.cancelled) {
-        if (job.pauseRequested) {
-          this.#setStatus(job, "paused", "已暂停");
-          this.#emit();
-          while (job.pauseRequested && !job.cancelled) {
-            await new Promise((r) => setTimeout(r, 400));
-          }
-          if (job.cancelled) break;
-          this.#setStatus(job, "running", "正在浏览 TikTok");
-          this.#emit();
+    while (!job.cancelled) {
+      if (job.pauseRequested) {
+        this.#setStatus(job, "paused", "已暂停");
+        this.#emit();
+        while (job.pauseRequested && !job.cancelled) {
+          await new Promise((r) => setTimeout(r, 400));
         }
+        if (job.cancelled) break;
+        this.#setStatus(job, "running", "正在浏览 TikTok");
+        this.#emit();
+      }
 
+      try {
         const watchMs = randomInteger(job.options.watchMinSec, job.options.watchMaxSec) * 1000;
         this.#log(job, `停留 ${(watchMs / 1000).toFixed(1)} 秒`, "info", "watch", { watchMs });
         await this.#sleep(job, watchMs);
@@ -149,33 +171,54 @@ export class TiktokJobManager extends EventTarget {
           break;
         }
 
-        const adv = await job.session.advanceVideo();
+        try {
+          const adv = await job.session.advanceVideo();
+          if (job.cancelled) break;
+          if (adv.switched) {
+            job.videoCount += 1;
+            job.currentVideo = this.#videoSummary(adv.feed);
+            this.#log(job, `切换到下一个视频：${job.currentVideo.author}（第 ${job.videoCount + 1} 个）`, "info", "advance", { identity: adv.after });
+            this.#emit();
+          } else {
+            this.#log(job, "未能切换到下一个视频，稍后重试", "warning", "advance");
+            await this.#sleep(job, 1500);
+          }
+        } catch (e) {
+          this.#log(job, `切换视频失败：${e.message}，5秒后重试`, "warning", "advance_error");
+          await this.#sleep(job, 5000);
+        }
+      } catch (e) {
+        this.#log(job, `操作异常：${e.message}，10秒后重试`, "warning", "lifecycle");
+        this.#emit();
+        await this.#sleep(job, 10000);
         if (job.cancelled) break;
-        if (adv.switched) {
-          job.videoCount += 1;
-          job.currentVideo = this.#videoSummary(adv.feed);
-          this.#log(job, `切换到下一个视频：${job.currentVideo.author}（第 ${job.videoCount + 1} 个）`, "info", "advance", { identity: adv.after });
-          this.#emit();
-        } else {
-          this.#log(job, "未能切换到下一个视频，稍后重试", "warning", "advance");
-          await this.#sleep(job, 1500);
+
+        try {
+          if (job.session) await job.session.readFeed();
+        } catch {
+          this.#log(job, "会话可能已断开，尝试重新连接", "warning", "lifecycle");
+          if (job.session) { await job.session.close().catch(() => {}); job.session = null; }
+          const reFeed = await this.#connectWithRetry(job);
+          if (job.cancelled) break;
+          if (reFeed) {
+            job.currentVideo = this.#videoSummary(reFeed);
+            this.#setStatus(job, "running", "正在浏览 TikTok");
+            this.#log(job, `重新连接成功，当前视频：${job.currentVideo.author}`, "info", "lifecycle");
+            this.#emit();
+          }
         }
       }
-
-      if (job.cancelled) {
-        this.#setStatus(job, "stopped", "已停止");
-        this.persistence?.finishTiktokRun(job.runId, "stopped", "已停止");
-      } else {
-        this.#setStatus(job, "completed", "任务已完成");
-        this.persistence?.finishTiktokRun(job.runId, "completed", "任务已完成");
-      }
-    } catch (e) {
-      await this.#fail(job, e);
-      return;
-    } finally {
-      if (job.session) { await job.session.close().catch(() => {}); job.session = null; }
-      this.#emit();
     }
+
+    if (job.cancelled) {
+      this.#setStatus(job, "stopped", "已停止");
+      this.persistence?.finishTiktokRun(job.runId, "stopped", "已停止");
+    } else {
+      this.#setStatus(job, "completed", "任务已完成");
+      this.persistence?.finishTiktokRun(job.runId, "completed", "任务已完成");
+    }
+    if (job.session) { await job.session.close().catch(() => {}); job.session = null; }
+    this.#emit();
   }
 
   async #tryLike(job) {
