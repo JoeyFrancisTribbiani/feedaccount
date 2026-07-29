@@ -1,5 +1,5 @@
-import { createReadStream } from "node:fs";
-import { stat } from "node:fs/promises";
+import { createReadStream, mkdirSync, writeFileSync, existsSync } from "node:fs";
+import { stat, readFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -18,6 +18,8 @@ import { LocalDatabase } from "./database.js";
 import { TiktokJobManager, TIKTOK_DEFAULT_OPTIONS } from "./tiktok/tiktok-job-manager.js";
 import { TiktokPublishManager } from "./tiktok/tiktok-publish-manager.js";
 import { RotationScheduler, SCHEDULER_DEFAULTS } from "./scheduler.js";
+import { checkIpViaSocks5 } from "./socks5-check.js";
+import { dedupVideo, stitchVideos, probeVideo, OUTPUT_DIR as REMIX_OUTPUT_DIR } from "./video-remix.js";
 
 const THIS_DIR = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_PUBLIC_DIR = path.resolve(THIS_DIR, "../public");
@@ -107,6 +109,31 @@ function collectAllRows(loader, pageSize) {
     rows.push(...page);
     if (page.length < pageSize) return rows;
   }
+}
+
+function nowIso() {
+  return new Date().toISOString();
+}
+
+function normalizeRemixUrl(url) {
+  if (!url) return url;
+  const base = path.resolve(THIS_DIR, "..", "data");
+  const norm = url.replace(/\\/g, "/");
+  if (norm.includes("/data/remix-videos/")) {
+    const idx = norm.indexOf("/data/remix-videos/");
+    return norm.substring(idx);
+  }
+  if (norm.includes("/data/remix-output/")) {
+    const idx = norm.indexOf("/data/remix-output/");
+    return norm.substring(idx);
+  }
+  if (existsSync(url)) {
+    const abs = path.resolve(url).replace(/\\/g, "/");
+    const marker = "/data/remix-videos/";
+    const idx = abs.indexOf(marker);
+    if (idx !== -1) return abs.substring(idx);
+  }
+  return url;
 }
 
 async function readJson(request) {
@@ -435,13 +462,16 @@ export function createMonitorServer({
       }
 
       if (request.method === "GET" && pathname === "/api/tiktok/config") {
-        sendJson(response, 200, { defaults: TIKTOK_DEFAULT_OPTIONS, saved: store.getTiktokOptions(), jobs: tiktokJobs.list() });
+        const profileId = url.searchParams.get("profileId") || null;
+        const saved = store.getTiktokOptions(profileId);
+        sendJson(response, 200, { defaults: TIKTOK_DEFAULT_OPTIONS, saved, jobs: tiktokJobs.list() });
         return;
       }
 
       if (request.method === "PUT" && pathname === "/api/tiktok/settings") {
         const body = await readJson(request);
-        const saved = store.saveTiktokOptions(body.options || {});
+        const profileId = body.profileId || null;
+        const saved = store.saveTiktokOptions(profileId, body.options || {});
         sendJson(response, 200, { options: saved });
         return;
       }
@@ -598,8 +628,252 @@ export function createMonitorServer({
         return;
       }
 
+      if (request.method === "POST" && pathname === "/api/scheduler/check-ip") {
+        const body = await readJson(request);
+        const profileId = body.profileId;
+        if (!profileId) {
+          sendJson(response, 400, { error: "缺少 profileId" });
+          return;
+        }
+        try {
+          const detail = await api.getProfileDetail(profileId);
+          if (!detail.host || !detail.port) {
+            sendJson(response, 200, { error: "该实例未配置代理", detail });
+            return;
+          }
+          const startMs = Date.now();
+          try {
+            const ip = await checkIpViaSocks5({
+              host: detail.host,
+              port: detail.port,
+              username: detail.proxyUserName,
+              password: detail.proxyPassword,
+            });
+            sendJson(response, 200, {
+              ip,
+              durationMs: Date.now() - startMs,
+              proxyType: detail.proxyType,
+              host: detail.host,
+              port: detail.port,
+              lastIp: detail.lastIp,
+              hasAuth: Boolean(detail.proxyUserName),
+            });
+          } catch (e) {
+            sendJson(response, 200, {
+              ip: null,
+              error: e.message,
+              durationMs: Date.now() - startMs,
+              proxyType: detail.proxyType,
+              host: detail.host,
+              port: detail.port,
+              hasAuth: Boolean(detail.proxyUserName),
+            });
+          }
+        } catch (e) {
+          sendJson(response, 200, { error: `获取实例配置失败：${e.message}` });
+        }
+        return;
+      }
+
       if (pathname.startsWith("/api/")) {
+        // ---- Remix: 达人管理 ----
+        if (request.method === "GET" && pathname === "/api/remix/creators") {
+          sendJson(response, 200, store.listRemixCreators());
+          return;
+        }
+        if (request.method === "POST" && pathname === "/api/remix/creators") {
+          const body = await readJson(request);
+          if (!body.name) { sendJson(response, 400, { error: "缺少达人名称" }); return; }
+          sendJson(response, 200, store.createRemixCreator({ name: body.name, platform: body.platform || null }));
+          return;
+        }
+        const remixCreatorMatch = pathname.match(/^\/api\/remix\/creators\/([^/]+)$/);
+        if (request.method === "DELETE" && remixCreatorMatch) {
+          const id = decodeURIComponent(remixCreatorMatch[1]);
+          store.deleteRemixCreator(id);
+          sendJson(response, 200, { ok: true });
+          return;
+        }
+
+        // ---- Remix: 视频管理 ----
+        const remixVideosMatch = pathname.match(/^\/api\/remix\/creators\/([^/]+)\/videos$/);
+        if (remixVideosMatch) {
+          const creatorId = decodeURIComponent(remixVideosMatch[1]);
+          if (request.method === "GET") {
+            const videos = store.listRemixVideos(creatorId).map((v) => ({
+              ...v,
+              url: normalizeRemixUrl(v.url),
+            }));
+            sendJson(response, 200, videos);
+            return;
+          }
+          if (request.method === "POST") {
+            const body = await readJson(request);
+            if (!body.url) { sendJson(response, 400, { error: "缺少视频URL" }); return; }
+            const video = store.createRemixVideo({ creatorId, url: body.url, title: body.title || null });
+            const meta = await probeVideo(body.url).catch(() => null);
+            const dur = meta?.duration ?? null;
+            if (dur) {
+              store.db.prepare("UPDATE remix_videos SET duration = ? WHERE id = ?").run(dur, video.id);
+              video.duration = dur;
+            }
+            sendJson(response, 200, video);
+            return;
+          }
+        }
+        const remixVideoDeleteMatch = pathname.match(/^\/api\/remix\/creators\/([^/]+)\/videos\/([^/]+)$/);
+        if (request.method === "DELETE" && remixVideoDeleteMatch) {
+          store.deleteRemixVideo(decodeURIComponent(remixVideoDeleteMatch[2]));
+          sendJson(response, 200, { ok: true });
+          return;
+        }
+
+        // ---- Remix: 现有素材库 ----
+        if (request.method === "GET" && pathname === "/api/remix/materials") {
+          sendJson(response, 200, store.listTkMaterials());
+          return;
+        }
+
+        // ---- Remix: 上传 ----
+        if (request.method === "POST" && pathname === "/api/remix/upload") {
+          const contentType = request.headers["content-type"] || "";
+          const boundaryMatch = contentType.match(/boundary=([^;\s]+)/);
+          if (!boundaryMatch) { sendJson(response, 400, { error: "无效的上传请求" }); return; }
+          const boundaryBuf = Buffer.from("--" + boundaryMatch[1]);
+          const chunks = [];
+          for await (const chunk of request) chunks.push(chunk);
+          const buf = Buffer.concat(chunks);
+
+          let filename = null;
+          let fileContent = null;
+          let searchStart = 0;
+          while (true) {
+            const pos = buf.indexOf(boundaryBuf, searchStart);
+            if (pos === -1) break;
+            const afterBoundary = pos + boundaryBuf.length;
+            if (buf[afterBoundary] === 0x2d && buf[afterBoundary + 1] === 0x2d) break;
+            const partStart = afterBoundary + 2;
+            const nextPos = buf.indexOf(boundaryBuf, partStart);
+            if (nextPos === -1) break;
+            const part = buf.subarray(partStart, nextPos - 2);
+            const headerEnd = part.indexOf(Buffer.from("\r\n\r\n"));
+            if (headerEnd !== -1) {
+              const headerStr = part.subarray(0, headerEnd).toString("latin1");
+              const fnMatch = headerStr.match(/filename="([^"]*)"/);
+              const nameMatch = headerStr.match(/name="([^"]*)"/);
+              if (fnMatch && nameMatch) {
+                filename = fnMatch[1];
+                fileContent = part.subarray(headerEnd + 4);
+                break;
+              }
+            }
+            searchStart = nextPos;
+          }
+          if (!filename || !fileContent) { sendJson(response, 400, { error: "未找到文件" }); return; }
+          const uploadDir = path.resolve(THIS_DIR, "..", "data", "remix-videos");
+          mkdirSync(uploadDir, { recursive: true });
+          const safeName = `${Date.now()}_${filename.replace(/[^\w.-]/g, "_")}`;
+          const filePath = path.join(uploadDir, safeName);
+          writeFileSync(filePath, fileContent);
+          sendJson(response, 200, { url: `/data/remix-videos/${safeName}`, filename: safeName });
+          return;
+        }
+
+        // ---- Remix: 任务管理 ----
+        if (request.method === "GET" && pathname === "/api/remix/tasks") {
+          sendJson(response, 200, store.listRemixTasks());
+          return;
+        }
+        if (request.method === "POST" && pathname === "/api/remix/tasks") {
+          const body = await readJson(request);
+          const { videoUrls, sourceVideos, title, ratio, mode } = body;
+          if (!videoUrls || !videoUrls.length) { sendJson(response, 400, { error: "缺少视频" }); return; }
+
+          const resolveLocal = (url) => {
+            if (url.startsWith("/data/remix-videos/")) {
+              return path.resolve(THIS_DIR, "..", "data", "remix-videos", path.basename(url));
+            }
+            if (url.startsWith("/data/remix-output/")) {
+              return path.resolve(THIS_DIR, "..", "data", "remix-output", path.basename(url));
+            }
+            return url;
+          };
+          const localPaths = videoUrls.map(resolveLocal);
+
+          const task = store.createRemixTask({ title: title || "未命名任务", mode: mode || "dedup", videoUrls, sourceVideos, ratio: ratio || "9:16" });
+          sendJson(response, 200, task);
+
+          // 异步执行 ffmpeg
+          (async () => {
+            store.updateRemixTask(task.id, { status: "PROCESSING" });
+            try {
+              if (mode === "stitch") {
+                const out = await stitchVideos(localPaths, ratio || "9:16");
+                store.updateRemixTask(task.id, { status: "DONE", outputUrl: `/data/remix-output/${path.basename(out)}`, completedAt: nowIso() });
+              } else {
+                let lastOut = null;
+                for (let i = 0; i < localPaths.length; i++) {
+                  const out = await dedupVideo(localPaths[i], ratio || "9:16");
+                  lastOut = out;
+                }
+                store.updateRemixTask(task.id, { status: "DONE", outputUrl: `/data/remix-output/${path.basename(lastOut)}`, completedAt: nowIso() });
+              }
+            } catch (e) {
+              store.updateRemixTask(task.id, { status: "FAILED", errorMessage: e.message, completedAt: nowIso() });
+            }
+          })();
+          return;
+        }
+        const remixTaskMatch = pathname.match(/^\/api\/remix\/tasks\/([^/]+)$/);
+        if (remixTaskMatch) {
+          const taskId = decodeURIComponent(remixTaskMatch[1]);
+          if (request.method === "PATCH") {
+            const body = await readJson(request);
+            const updated = store.updateRemixTask(taskId, {
+              status: body.status || null,
+              outputUrl: body.outputUrl || null,
+              errorMessage: body.errorMessage || null,
+              completedAt: body.status === "DONE" ? nowIso() : null,
+            });
+            sendJson(response, 200, updated);
+            return;
+          }
+          if (request.method === "DELETE") {
+            store.deleteRemixTask(taskId);
+            sendJson(response, 200, { ok: true });
+            return;
+          }
+        }
+
+        const remixDownloadedMatch = pathname.match(/^\/api\/remix\/tasks\/([^/]+)\/downloaded$/);
+        if (request.method === "POST" && remixDownloadedMatch) {
+          const task = store.markRemixTaskDownloaded(decodeURIComponent(remixDownloadedMatch[1]));
+          sendJson(response, 200, task);
+          return;
+        }
+
         sendJson(response, 404, { error: "接口不存在" });
+        return;
+      }
+
+      // ---- 静态文件: remix 输出 ----
+      if (pathname.startsWith("/data/remix-output/")) {
+        const filename = path.basename(pathname);
+        const filePath = path.join(REMIX_OUTPUT_DIR, filename);
+        if (!existsSync(filePath)) { sendJson(response, 404, { error: "文件不存在" }); return; }
+        const data = await readFile(filePath);
+        response.writeHead(200, { "Content-Type": "video/mp4", "Content-Length": data.length, "Cache-Control": "public, max-age=3600" });
+        response.end(data);
+        return;
+      }
+
+      if (pathname.startsWith("/data/remix-videos/")) {
+        const filename = path.basename(pathname);
+        const filePath = path.resolve(THIS_DIR, "..", "data", "remix-videos", filename);
+        if (!existsSync(filePath)) { sendJson(response, 404, { error: "文件不存在" }); return; }
+        const statResult = await stat(filePath);
+        response.writeHead(200, { "Content-Type": "video/mp4", "Content-Length": statResult.size, "Cache-Control": "public, max-age=3600" });
+        createReadStream(filePath).pipe(response);
         return;
       }
 

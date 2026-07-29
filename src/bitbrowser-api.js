@@ -97,4 +97,21 @@ export class BitBrowserApi {
   async closeProfile(profileId) {
     return this.request("/browser/close", { id: profileId }, 15000);
   }
+
+  async getProfileDetail(profileId) {
+    const data = await this.request("/browser/detail", { id: profileId });
+    return {
+      id: String(data?.id || profileId),
+      seq: data?.seq ?? null,
+      name: data?.name || "未命名实例",
+      proxyMethod: data?.proxyMethod ?? null,
+      proxyType: data?.proxyType ?? null,
+      host: data?.host ?? "",
+      port: data?.port ?? null,
+      proxyUserName: data?.proxyUserName ?? "",
+      proxyPassword: data?.proxyPassword ?? "",
+      lastIp: data?.lastIp ?? null,
+      lastCountry: data?.lastCountry ?? null,
+    };
+  }
 }

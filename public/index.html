@@ -122,6 +122,11 @@
           <span>代理刷新 API 地址 (gridpanel reboot，留空则自动提取 API IP)</span>
           <input id="sched-proxy-url" type="text" placeholder="https://gridpanel.net/api/reboot?token=..." />
         </label>
+        <div class="sched-proxy-check">
+          <select id="sched-check-profile" class="sched-check-select"></select>
+          <button id="sched-check-ip" class="button button-secondary" type="button">检测代理IP</button>
+          <span id="sched-check-ip-result" class="sched-check-result muted-activity">选择实例后点击检测</span>
+        </div>
         <div class="sched-platform-toggles">
           <label class="switch-row">
             <input id="sched-enable-reddit" type="checkbox" checked />
@@ -163,6 +168,12 @@
             <path d="M19.59 6.69a4.83 4.83 0 0 1-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 0 1-5.2 1.74 2.89 2.89 0 0 1 2.31-4.64 2.93 2.93 0 0 1 .88.13V9.4a6.84 6.84 0 0 0-1-.05A6.33 6.33 0 0 0 3 15.68 6.34 6.34 0 0 0 9.34 22a6.34 6.34 0 0 0 6.34-6.34V9.05a8.16 8.16 0 0 0 4.91 1.62V7.22a4.85 4.85 0 0 1-1-.53z"/>
           </svg>
           TikTok 养号与自动化发布
+        </button>
+        <button class="platform-tab" data-platform="remix" role="tab" aria-selected="false" type="button">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 6px; vertical-align: -2px;">
+            <path d="M5 3v18l7-5 7 5V3z"/>
+          </svg>
+          视频去重与混剪
         </button>
       </nav>
 
@@ -750,6 +761,74 @@
             <div id="tk-logs-empty" class="empty-state compact hidden">暂无符合条件的日志。</div>
           </div>
         </section>
+      </section>
+
+      <!-- ====== Remix: 视频去重与混剪面板 ====== -->
+      <section class="remix-panel remix-tab hidden">
+        <div class="remix-layout">
+          <!-- 左栏：达人列表 -->
+          <aside class="remix-sidebar">
+            <div class="remix-sidebar-head">
+              <h3>原创达人</h3>
+              <button id="remix-add-creator-btn" class="link-btn" type="button">+ 添加</button>
+            </div>
+            <div id="remix-add-creator-form" class="remix-add-form hidden">
+              <input type="text" id="remix-creator-name" placeholder="达人名称" />
+              <input type="text" id="remix-creator-platform" placeholder="平台 (如 TikTok)" />
+              <button id="remix-confirm-creator" class="button button-primary" type="button">确认</button>
+              <button id="remix-cancel-creator" class="button button-secondary" type="button">取消</button>
+            </div>
+            <div id="remix-creators-list" class="remix-creators-list"></div>
+          </aside>
+
+          <!-- 右栏：视频网格 + 操作栏 + 历史 -->
+          <div class="remix-main">
+            <div class="remix-video-area">
+              <div class="remix-video-head">
+                <div>
+                  <h3 id="remix-current-creator">视频去重与混剪工作台</h3>
+                  <p id="remix-video-count" class="muted-activity" style="font-size: 12px;">在左侧选择达人查看视频</p>
+                </div>
+                <button id="remix-add-video-btn" class="button button-secondary" type="button" disabled>添加视频</button>
+              </div>
+              <div id="remix-add-video-form" class="remix-add-form hidden">
+                <input type="file" id="remix-video-file" accept="video/*" multiple class="hidden" />
+                <div class="remix-video-input-row">
+                  <input type="text" id="remix-video-url" placeholder="视频文件路径（单条添加）" />
+                  <button id="remix-upload-btn" class="button button-secondary" type="button">批量上传</button>
+                </div>
+                <input type="text" id="remix-video-title" placeholder="视频标题（可选，仅单条添加时使用）" />
+                <button id="remix-confirm-video" class="button button-primary" type="button">确认添加</button>
+                <button id="remix-cancel-video" class="button button-secondary" type="button">取消</button>
+              </div>
+              <div id="remix-video-grid" class="remix-video-grid">
+                <div class="empty-state compact">选择达人后显示视频</div>
+              </div>
+            </div>
+
+            <!-- 操作栏 -->
+            <div class="remix-basket-bar">
+              <span class="muted-activity" style="font-size: 12px; flex-shrink: 0;">已选：</span>
+              <div id="remix-selected-list" class="remix-selected-list"></div>
+              <select id="remix-ratio" class="sched-check-select">
+                <option value="9:16">9:16 竖屏</option>
+                <option value="16:9">16:9 横屏</option>
+                <option value="1:1">1:1 方形</option>
+              </select>
+              <button id="remix-dedup-btn" class="button button-secondary" type="button" disabled>去重处理</button>
+              <button id="remix-stitch-btn" class="button button-primary" type="button" disabled>开始混剪</button>
+            </div>
+
+            <!-- 任务历史 -->
+            <div class="remix-history-area">
+              <div class="remix-history-head">
+                <h3>去重/混剪历史</h3>
+                <button id="remix-refresh-tasks" class="link-btn" type="button">刷新</button>
+              </div>
+              <div id="remix-tasks-list" class="remix-tasks-list"></div>
+            </div>
+          </div>
+        </div>
       </section>
 
       <!-- System Footer -->

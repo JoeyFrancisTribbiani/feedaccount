@@ -610,6 +610,42 @@ textarea:focus-visible {
   margin-top: 14px;
 }
 
+.sched-proxy-check {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+
+.sched-check-select {
+  padding: 7px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: #ffffff;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.sched-check-result {
+  font-size: 13px;
+  font-family: var(--font-mono);
+}
+
+.sched-check-ok {
+  color: #16a34a;
+}
+
+.sched-check-warn {
+  color: #d97706;
+}
+
+.sched-check-error {
+  color: #dc2626;
+}
+
 .sched-profile-select {
   margin-top: 14px;
 }
@@ -766,6 +802,70 @@ textarea:focus-visible {
   color: var(--indigo);
 }
 
+.sched-job-details {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sched-job-section {
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--bg-subtle);
+}
+
+.sched-job-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.sched-job-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 99px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #ffffff;
+  flex: none;
+}
+
+.tag-reddit {
+  background: var(--accent-reddit);
+}
+
+.tag-tiktok {
+  background: linear-gradient(135deg, var(--accent-tiktok-cyan) 0%, var(--accent-tiktok-pink) 100%);
+}
+
+.sched-job-sub {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.sched-job-error {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #dc2626;
+}
+
+.sched-job-log {
+  margin-top: 8px;
+  margin-bottom: 0;
+}
+
+.sched-log {
+  max-height: 360px;
+  overflow-y: auto;
+}
+
 /* Platform Navigation Tabs (.platform-tabs) */
 .platform-tabs {
   display: flex;
@@ -805,6 +905,12 @@ textarea:focus-visible {
   background: linear-gradient(135deg, var(--accent-tiktok-cyan) 0%, var(--accent-tiktok-pink) 100%);
   color: #ffffff;
   box-shadow: 0 3px 12px rgba(0, 180, 216, 0.3);
+}
+
+.platform-tab.active[data-platform="remix"] {
+  background: var(--indigo);
+  color: #ffffff;
+  box-shadow: 0 3px 12px rgba(79, 70, 229, 0.3);
 }
 
 /* ==========================================================================
@@ -2081,5 +2187,476 @@ footer span {
   accent-color: var(--indigo);
   width: 16px;
   height: 16px;
+}
+
+/* ====== Remix: 视频去重与混剪 ====== */
+
+.remix-panel {
+  margin-bottom: 24px;
+}
+
+.remix-layout {
+  display: flex;
+  gap: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: #ffffff;
+  overflow: hidden;
+  min-height: 600px;
+}
+
+.remix-sidebar {
+  width: 260px;
+  flex: none;
+  border-right: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+.remix-sidebar-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.remix-sidebar-head h3 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-muted);
+}
+
+.remix-add-form {
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.remix-add-form input {
+  padding: 8px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+}
+
+.remix-add-form input:focus {
+  border-color: var(--indigo);
+  box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.12);
+  outline: none;
+}
+
+.remix-creators-list {
+  flex: 1;
+  padding: 8px;
+  overflow-y: auto;
+}
+
+.remix-creator-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.remix-creator-item:hover {
+  background: var(--bg-subtle);
+}
+
+.remix-creator-item.active {
+  background: rgba(79, 70, 229, 0.08);
+}
+
+.remix-creator-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.remix-creator-info strong {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.remix-creator-info span {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.remix-del-btn {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  font-size: 18px;
+  cursor: pointer;
+  border-radius: 4px;
+  opacity: 0;
+  transition: all 0.15s ease;
+}
+
+.remix-creator-item:hover .remix-del-btn {
+  opacity: 1;
+}
+
+.remix-del-btn:hover {
+  background: rgba(220, 38, 38, 0.1);
+  color: #dc2626;
+}
+
+.remix-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.remix-video-area {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px 24px;
+}
+
+.remix-video-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.remix-video-head h3 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.remix-video-input-row {
+  display: flex;
+  gap: 8px;
+}
+
+.remix-video-input-row input {
+  flex: 1;
+}
+
+.remix-video-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 14px;
+}
+
+.remix-video-card {
+  cursor: pointer;
+}
+
+.remix-video-thumb {
+  position: relative;
+  aspect-ratio: 3/4;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  border: 2px solid var(--line);
+  background: var(--bg-subtle);
+  transition: border-color 0.15s ease;
+}
+
+.remix-video-card.selected .remix-video-thumb {
+  border-color: var(--indigo);
+  box-shadow: 0 4px 12px rgba(79, 70, 229, 0.2);
+}
+
+.remix-video-thumb video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  pointer-events: none;
+}
+
+.remix-play-btn {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 44px;
+  height: 44px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.65);
+  color: #fff;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+  z-index: 5;
+}
+
+.remix-play-btn:hover {
+  background: rgba(0, 0, 0, 0.85);
+  transform: translate(-50%, -50%) scale(1.1);
+}
+
+.remix-play-btn.playing {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.remix-video-thumb:hover .remix-play-btn.playing {
+  opacity: 0.5;
+  pointer-events: auto;
+}
+
+.remix-video-check {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.remix-video-check.checked {
+  background: var(--indigo);
+}
+
+.remix-video-del {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  font-size: 16px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+.remix-video-card:hover .remix-video-del {
+  opacity: 1;
+}
+
+.remix-video-del:hover {
+  background: #dc2626;
+}
+
+.remix-video-badge {
+  position: absolute;
+  bottom: 6px;
+  left: 6px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  color: #fff;
+}
+
+.badge-DONE { background: rgba(22, 163, 74, 0.85); }
+.badge-PROCESSING { background: rgba(79, 70, 229, 0.85); }
+.badge-PENDING { background: rgba(100, 116, 139, 0.85); }
+.badge-FAILED { background: rgba(220, 38, 38, 0.85); }
+
+.remix-video-badge .remix-video-dl {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  margin-left: 4px;
+  color: #fff;
+  opacity: 0.8;
+  border-radius: 3px;
+  vertical-align: middle;
+}
+
+.remix-video-badge .remix-video-dl:hover {
+  opacity: 1;
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.remix-video-badge .remix-video-dl.downloaded {
+  opacity: 0.6;
+}
+
+.remix-dl-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 12px;
+  margin-left: 3px;
+  color: #fff;
+  opacity: 0.9;
+}
+
+.remix-video-title {
+  margin: 6px 2px 0;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.remix-basket-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 24px;
+  border-top: 1px solid var(--line);
+  background: var(--bg-subtle);
+  flex-wrap: wrap;
+}
+
+.remix-selected-list {
+  flex: 1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-height: 28px;
+  align-items: center;
+}
+
+.remix-chip {
+  padding: 3px 10px;
+  background: var(--bg-subtle);
+  border: 1px solid var(--line-strong);
+  border-radius: 99px;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.remix-chip:hover {
+  border-color: #dc2626;
+  color: #dc2626;
+}
+
+.remix-history-area {
+  border-top: 1px solid var(--line);
+  padding: 16px 24px;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.remix-history-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.remix-history-head h3 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-muted);
+}
+
+.remix-tasks-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.remix-task-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: #ffffff;
+}
+
+.remix-task-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.remix-task-info strong {
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.remix-task-mode {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 99px;
+  color: #fff;
+}
+
+.mode-dedup { background: var(--indigo); }
+.mode-stitch { background: #8b5cf6; }
+
+.badge-done { color: #16a34a; font-size: 11px; font-weight: 600; }
+.badge-processing { color: var(--indigo); font-size: 11px; font-weight: 600; display: inline-flex; align-items: center; gap: 5px; }
+.badge-pending { color: var(--text-muted); font-size: 11px; font-weight: 600; display: inline-flex; align-items: center; gap: 5px; }
+.badge-failed { color: #dc2626; font-size: 11px; font-weight: 600; }
+
+.badge-spinner {
+  width: 11px;
+  height: 11px;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: badge-spin 0.7s linear infinite;
+  flex: none;
+}
+
+@keyframes badge-spin {
+  to { transform: rotate(360deg); }
+}
+
+.remix-task-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+}
+
+.remix-add-form .button {
+  font-size: 12px;
+  padding: 7px 14px;
 }
 
