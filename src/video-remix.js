@@ -212,11 +212,12 @@ async function concatVideos(inputPaths, outputPath) {
 }
 
 export async function dedupVideo(inputPath, ratio = null) {
-  const id = genId();
   const meta = await probeVideo(inputPath);
   if (!meta) throw new Error("无法读取视频信息");
 
-  const outputPath = path.join(OUTPUT_DIR, `dedup_${id}.mp4`);
+  const baseName = path.basename(inputPath, path.extname(inputPath));
+  const cleanName = baseName.startsWith("dedup_") ? baseName.slice(6) : baseName;
+  const outputPath = path.join(OUTPUT_DIR, `dedup_${cleanName}.mp4`);
   await processSingleVideo(inputPath, outputPath, meta);
   return outputPath;
 }
