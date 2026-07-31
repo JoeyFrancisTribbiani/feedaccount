@@ -191,6 +191,33 @@ export function createMonitorServer({
   tiktokPublisherManager.startScheduler();
   const sseClients = new Map();
 
+  const remixQueue = [];
+  let remixProcessing = false;
+  async function processRemixQueue() {
+    if (remixProcessing) return;
+    remixProcessing = true;
+    while (remixQueue.length > 0) {
+      const { taskId, localPaths, mode, ratio } = remixQueue.shift();
+      store.updateRemixTask(taskId, { status: "PROCESSING" });
+      try {
+        if (mode === "stitch") {
+          const out = await stitchVideos(localPaths, ratio);
+          store.updateRemixTask(taskId, { status: "DONE", outputUrl: `/data/remix-output/${path.basename(out)}`, completedAt: nowIso() });
+        } else {
+          let lastOut = null;
+          for (let i = 0; i < localPaths.length; i++) {
+            const out = await dedupVideo(localPaths[i], ratio);
+            lastOut = out;
+          }
+          store.updateRemixTask(taskId, { status: "DONE", outputUrl: `/data/remix-output/${path.basename(lastOut)}`, completedAt: nowIso() });
+        }
+      } catch (e) {
+        store.updateRemixTask(taskId, { status: "FAILED", errorMessage: e.message, completedAt: nowIso() });
+      }
+    }
+    remixProcessing = false;
+  }
+
   const broadcast = (jobList) => {
     const frame = `event: jobs\ndata: ${JSON.stringify(jobList)}\n\n`;
     for (const client of sseClients.keys()) client.write(frame);
@@ -815,26 +842,8 @@ export function createMonitorServer({
 
           const task = store.createRemixTask({ title: title || "未命名任务", mode: mode || "dedup", videoUrls, sourceVideos, ratio: ratio || "9:16" });
           sendJson(response, 200, task);
-
-          // 异步执行 ffmpeg
-          (async () => {
-            store.updateRemixTask(task.id, { status: "PROCESSING" });
-            try {
-              if (mode === "stitch") {
-                const out = await stitchVideos(localPaths, ratio || "9:16");
-                store.updateRemixTask(task.id, { status: "DONE", outputUrl: `/data/remix-output/${path.basename(out)}`, completedAt: nowIso() });
-              } else {
-                let lastOut = null;
-                for (let i = 0; i < localPaths.length; i++) {
-                  const out = await dedupVideo(localPaths[i], ratio || "9:16");
-                  lastOut = out;
-                }
-                store.updateRemixTask(task.id, { status: "DONE", outputUrl: `/data/remix-output/${path.basename(lastOut)}`, completedAt: nowIso() });
-              }
-            } catch (e) {
-              store.updateRemixTask(task.id, { status: "FAILED", errorMessage: e.message, completedAt: nowIso() });
-            }
-          })();
+          remixQueue.push({ taskId: task.id, localPaths, mode: mode || "dedup", ratio: ratio || "9:16" });
+          processRemixQueue();
           return;
         }
         const remixTaskMatch = pathname.match(/^\/api\/remix\/tasks\/([^/]+)$/);
