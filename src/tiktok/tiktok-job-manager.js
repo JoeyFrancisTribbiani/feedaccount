@@ -54,6 +54,7 @@ export class TiktokJobManager extends EventTarget {
       options: { ...job.options },
       startedAt: job.startedAt,
       error: job.error,
+      logs: [...job.events].slice(-50),
     };
   }
 

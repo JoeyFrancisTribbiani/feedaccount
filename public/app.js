@@ -1867,7 +1867,7 @@ function renderScheduler() {
   const progress = s.totalProfiles > 0 ? `${s.profileIndex + 1} / ${s.totalProfiles}` : "-";
   const current = s.currentSeq ? `#${s.currentSeq} ${escapeHtml(s.currentName || "")}` : "-";
   const remaining = s.running && s.remainingMs > 0 ? formatRemaining(s.remainingMs) : "—";
-  const logs = (s.log || []).slice(-15).reverse().map((l) => `<li class="log-item log-${escapeHtml(l.level)}"><span class="log-time">${formatDateTime(l.at)}</span><span class="log-level">${escapeHtml(l.level)}</span><span class="log-msg">${escapeHtml(l.message)}</span></li>`).join("");
+  const logs = (s.log || []).slice(-50).reverse().map((l) => `<li class="log-item log-${escapeHtml(l.level)}"><span class="log-time">${formatDateTime(l.at)}</span><span class="log-level">${escapeHtml(l.level)}</span><span class="log-msg">${escapeHtml(l.message)}</span></li>`).join("");
   const ipChange = s.ipChange
     ? `<div class="sched-ip-change"><span>代理IP</span><strong><span class="ip-old">${escapeHtml(s.ipChange.old || "—")}</span><span class="ip-arrow">→</span><span class="ip-new">${escapeHtml(s.ipChange.new || "未知")}</span></strong></div>`
     : "";
@@ -1879,7 +1879,7 @@ function renderScheduler() {
   if (redditJob || tiktokJob) {
     const sections = [];
     if (redditJob) {
-      const rLogs = (redditJob.logs || []).slice(-8).map((l) =>
+      const rLogs = (redditJob.logs || []).slice(-15).map((l) =>
         `<li class="log-item log-${escapeHtml(l.level || "info")}"><span class="log-time">${formatDateTime(l.time)}</span><span class="log-msg">${escapeHtml(l.message)}</span></li>`,
       ).join("");
       sections.push(`<div class="sched-job-section">
@@ -1889,10 +1889,14 @@ function renderScheduler() {
     }
     if (tiktokJob) {
       const tkInfo = `${escapeHtml(tiktokJob.statusText || tiktokJob.status)} · 视频 ${tiktokJob.videoCount} · 点赞 ${tiktokJob.likeCount} · 评论 ${tiktokJob.commentCount}`;
+      const tkLogs = (tiktokJob.logs || []).slice(-15).map((l) =>
+        `<li class="log-item log-${escapeHtml(l.level || "info")}"><span class="log-time">${formatDateTime(l.at)}</span><span class="log-msg">${escapeHtml(l.message)}</span></li>`,
+      ).join("");
       sections.push(`<div class="sched-job-section">
         <div class="sched-job-head"><span class="sched-job-tag tag-tiktok">TikTok</span>${tkInfo}</div>
         ${tiktokJob.currentVideo ? `<div class="sched-job-sub">当前：${escapeHtml(tiktokJob.currentVideo.author || "")}${tiktokJob.currentVideo.likeCount ? ` · ${escapeHtml(tiktokJob.currentVideo.likeCount)}` : ""}</div>` : ""}
         ${tiktokJob.error ? `<div class="sched-job-error">${escapeHtml(tiktokJob.error)}</div>` : ""}
+        ${tkLogs ? `<ol class="database-log-list sched-job-log">${tkLogs}</ol>` : ""}
       </div>`);
     }
     jobDetails = `<div class="sched-job-details">${sections.join("")}</div>`;
