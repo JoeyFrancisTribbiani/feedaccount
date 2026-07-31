@@ -238,7 +238,13 @@ export async function stitchVideos(inputPaths, ratio = null) {
       tempPaths.push(processedPath);
     }
 
-    const outputPath = path.join(OUTPUT_DIR, `stitch_${id}.mp4`);
+    const baseNames = inputPaths.map((p) => {
+      const name = path.basename(p, path.extname(p));
+      return name.startsWith("stitch_") ? name.slice(7) : name;
+    });
+    const cleanName = baseNames.join("_");
+    const safeName = cleanName.length > 120 ? cleanName.slice(0, 120) : cleanName;
+    const outputPath = path.join(OUTPUT_DIR, `stitch_${safeName}.mp4`);
     await concatVideos(processedPaths, outputPath);
     return outputPath;
   } finally {
