@@ -104,6 +104,10 @@ test("LocalDatabase persists per-post settings, runs, events and aggregate stats
     autoUpvoteProbability: 0,
     autoCommentUpvoteEnabled: false,
     autoCommentUpvoteProbability: 0,
+    autoJoinEnabled: false,
+    autoJoinIntervalMinSec: 60,
+    autoJoinIntervalMaxSec: 180,
+    autoJoinMaxPerRun: 3,
   });
   assert.deepEqual(database.getSavedOptions(), {
     waitMinSec: 2,
@@ -123,6 +127,10 @@ test("LocalDatabase persists per-post settings, runs, events and aggregate stats
     autoUpvoteProbability: 0,
     autoCommentUpvoteEnabled: false,
     autoCommentUpvoteProbability: 0,
+    autoJoinEnabled: false,
+    autoJoinIntervalMinSec: 60,
+    autoJoinIntervalMaxSec: 180,
+    autoJoinMaxPerRun: 3,
   });
 
   const runId = database.createRun(
@@ -322,6 +330,10 @@ test("LocalDatabase migrates legacy pixel runs without relabeling their history"
         autoUpvoteProbability: 0,
         autoCommentUpvoteEnabled: false,
         autoCommentUpvoteProbability: 0,
+        autoJoinEnabled: false,
+        autoJoinIntervalMinSec: 60,
+        autoJoinIntervalMaxSec: 180,
+        autoJoinMaxPerRun: 3,
       });
       assert.equal(migrated.getStats().scrollCount, 3);
       assert.equal(migrated.getStats().postCount, 0);

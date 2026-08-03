@@ -157,6 +157,12 @@ export class JobManager extends EventEmitter {
       upvotedCommentIds: new Set(),
       autoUpvoteCount: 0,
       autoCommentUpvoteCount: 0,
+      joinedSubredditIds: new Set(),
+      autoJoinCount: 0,
+      lastJoinAt: 0,
+      nextJoinDelay: 0,
+      joinTargets: [],
+      joinTargetIndex: 0,
     };
 
     this.jobs.set(profile.id, job);
@@ -184,6 +190,28 @@ export class JobManager extends EventEmitter {
         }
       } catch (restoreError) {
         this.#log(job, `恢复历史点赞记录失败：${restoreError.message}`, "warning", "upvote_restore");
+      }
+    }
+
+    if (job.options.autoJoinEnabled) {
+      try {
+        job.joinTargets = this.persistence?.getJoinTargets?.() || [];
+        if (job.joinTargets.length > 0) {
+          this.#log(job, `已加载 ${job.joinTargets.length} 个预配置群组`, "info", "join_targets_loaded", { count: job.joinTargets.length });
+        }
+      } catch (e) {
+        this.#log(job, `加载群组列表失败：${e.message}`, "warning", "join_targets_load_error");
+      }
+      if (this.persistence?.getJoinedSubredditsForProfile) {
+        try {
+          const previouslyJoined = this.persistence.getJoinedSubredditsForProfile(profile.id);
+          if (previouslyJoined.size > 0) {
+            for (const name of previouslyJoined) job.joinedSubredditIds.add(name);
+            this.#log(job, `从历史记录恢复了 ${job.joinedSubredditIds.size} 个已关注群组的幂等记录`, "info", "join_restore");
+          }
+        } catch (e) {
+          this.#log(job, `恢复历史关注记录失败：${e.message}`, "warning", "join_restore");
+        }
       }
     }
 
@@ -797,6 +825,11 @@ export class JobManager extends EventEmitter {
         if (job.cancelled) return;
       }
 
+      if (job.options.autoJoinEnabled && job.joinTargets.length > 0) {
+        await this.#tryAutoJoinSubreddit(job);
+        if (job.cancelled) return;
+      }
+
       this.#log(
         job,
         shouldOpen
@@ -1097,6 +1130,69 @@ export class JobManager extends EventEmitter {
         "warning",
         "auto_upvote_error",
         { postId, error: error.message },
+      );
+    }
+  }
+
+  async #tryAutoJoinSubreddit(job) {
+    if (!job.options.autoJoinEnabled) return;
+    if (job.autoJoinCount >= job.options.autoJoinMaxPerRun) return;
+    if (!job.session || typeof job.session.joinSubreddit !== "function") return;
+
+    const now = Date.now();
+    if (job.lastJoinAt > 0 && now - job.lastJoinAt < job.nextJoinDelay) return;
+
+    let target = null;
+    while (job.joinTargetIndex < job.joinTargets.length) {
+      const candidate = job.joinTargets[job.joinTargetIndex];
+      job.joinTargetIndex += 1;
+      const name = String(candidate?.name || "").trim();
+      if (!name) continue;
+      if (job.joinedSubredditIds.has(name.toLowerCase())) continue;
+      target = name;
+      break;
+    }
+    if (!target) return;
+
+    this.#setStatus(job, "scrolling", `正在关注 r/${target}`);
+    this.#log(job, `正在前往 r/${target} 执行关注`, "info", "auto_join_attempt", { subreddit: target });
+
+    try {
+      const result = await job.session.joinSubreddit(target);
+      if (job.cancelled) return;
+
+      job.joinedSubredditIds.add(target.toLowerCase());
+      job.lastJoinAt = Date.now();
+      job.nextJoinDelay = this.randomInteger(
+        job.options.autoJoinIntervalMinMs,
+        job.options.autoJoinIntervalMaxMs,
+      );
+
+      if (result.ok) {
+        job.autoJoinCount += 1;
+        this.#log(
+          job,
+          result.alreadyJoined ? `r/${target} 已是关注状态` : `已关注 r/${target}`,
+          "info",
+          "auto_join",
+          { subreddit: target, alreadyJoined: result.alreadyJoined },
+        );
+      } else {
+        this.#log(job, `关注 r/${target} 未成功`, "warning", "auto_join_failed", { subreddit: target });
+      }
+      this.persistence?.updateRun(job);
+    } catch (error) {
+      this.#log(
+        job,
+        `关注 r/${target} 出错：${error.message}`,
+        "warning",
+        "auto_join_error",
+        { subreddit: target, error: error.message },
+      );
+      job.lastJoinAt = Date.now();
+      job.nextJoinDelay = this.randomInteger(
+        job.options.autoJoinIntervalMinMs,
+        job.options.autoJoinIntervalMaxMs,
       );
     }
   }
@@ -1707,8 +1803,10 @@ export class JobManager extends EventEmitter {
       commentScrollProgress: job.commentScrollProgress,
       commentScrollTarget: job.commentScrollTarget,
       skippedPromotedCount: job.skippedPromotedCount,
-      autoUpvoteCount: job.autoUpvoteCount,
-      autoCommentUpvoteCount: job.autoCommentUpvoteCount,
+    autoUpvoteCount: job.autoUpvoteCount,
+    autoCommentUpvoteCount: job.autoCommentUpvoteCount,
+    autoJoinCount: job.autoJoinCount,
+    joinedSubredditCount: job.joinedSubredditIds.size,
       upvotedPostCount: job.upvotedPostIds.size,
       upvotedCommentCount: job.upvotedCommentIds.size,
       currentDetailPost: job.currentDetailPost,

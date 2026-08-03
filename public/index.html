@@ -138,6 +138,14 @@
             <span class="switch" aria-hidden="true"></span>
             <strong>TikTok</strong>
           </label>
+          <label class="switch-row" id="sched-geo-priority-row" title="开启后：每次切换代理IP，自动查询IP所在城市，从剩余实例中匹配备注(remark)填写了该城市/邮编的实例优先执行。未填备注的实例最后按顺序执行。匹配失败时每60秒重试一次，最多15次后降级。">
+            <input id="sched-geo-priority" type="checkbox" />
+            <span class="switch" aria-hidden="true"></span>
+            <span>
+              <strong>城市优先匹配</strong>
+              <small>在 BitBrowser 备注中填写目标城市名或邮编（如 90001 或 Los Angeles），切换IP后自动匹配</small>
+            </span>
+          </label>
         </div>
         <div class="sched-profile-select">
           <div class="sched-profile-select-header">
@@ -329,9 +337,43 @@
                 </label>
               </fieldset>
 
-              <div class="option-row">
+              <fieldset class="auto-upvote-fieldset">
+                <legend>自动关注群组</legend>
+                <label class="switch-row">
+                  <input id="auto-join-enabled" type="checkbox" />
+                  <span class="switch" aria-hidden="true"></span>
+                  <span>
+                    <strong>自动关注群组</strong>
+                    <small>浏览过程中按间隔自动关注预配置的 subreddit</small>
+                  </span>
+                </label>
                 <label class="wide-input">
-                  <span>最大展示帖子数</span>
+                  <span>关注间隔</span>
+                  <span class="input-with-unit">
+                    <input id="auto-join-interval-min" type="number" min="10" max="3600" required />
+                    <small>～</small>
+                    <input id="auto-join-interval-max" type="number" min="10" max="3600" required />
+                    <small>秒</small>
+                  </span>
+                </label>
+                <label class="wide-input">
+                  <span>每次运行最多关注</span>
+                  <span class="input-with-unit">
+                    <input id="auto-join-max-per-run" type="number" min="1" max="50" required />
+                    <small>个群组</small>
+                  </span>
+                </label>
+                <label class="wide-input">
+                  <span>预配置群组列表</span>
+                  <textarea id="join-targets-text" rows="5" style="width:100%;font-family:var(--font-mono);font-size:12px;resize:vertical;" placeholder="支持批量粘贴，每行/逗号/空格分隔均可，例如：&#10;AskReddit, worldnews&#10;https://www.reddit.com/r/mildlyinteresting/&#10;gadgets"></textarea>
+                </label>
+                <div style="display:flex;gap:8px;align-items:center;">
+                  <button type="button" id="join-targets-save" class="btn btn-secondary" style="padding:6px 14px;font-size:12px;">保存群组列表</button>
+                  <small id="join-targets-status" style="color:var(--text-muted);"></small>
+                </div>
+              </fieldset>
+
+              <div class="option-row">
                   <span class="input-with-unit">
                     <input id="max-posts" type="number" min="0" max="100000" required />
                     <small>0 = 无限次轮流浏览</small>

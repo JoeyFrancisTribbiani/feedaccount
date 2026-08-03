@@ -18,7 +18,7 @@ import { LocalDatabase } from "./database.js";
 import { TiktokJobManager, TIKTOK_DEFAULT_OPTIONS } from "./tiktok/tiktok-job-manager.js";
 import { TiktokPublishManager } from "./tiktok/tiktok-publish-manager.js";
 import { RotationScheduler, SCHEDULER_DEFAULTS } from "./scheduler.js";
-import { checkIpViaSocks5 } from "./socks5-check.js";
+import { checkIpViaSocks5, checkIpGeoViaSocks5 } from "./socks5-check.js";
 import { dedupVideo, stitchVideos, probeVideo, OUTPUT_DIR as REMIX_OUTPUT_DIR } from "./video-remix.js";
 
 const THIS_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -276,6 +276,17 @@ export function createMonitorServer({
         const body = await readJson(request);
         const options = normalizeOptions(body.options);
         sendJson(response, 200, { options: store.saveOptions(options) });
+        return;
+      }
+
+      if (request.method === "GET" && pathname === "/api/reddit/join-targets") {
+        sendJson(response, 200, { targets: store.getJoinTargets() });
+        return;
+      }
+      if (request.method === "PUT" && pathname === "/api/reddit/join-targets") {
+        const body = await readJson(request);
+        const targets = store.saveJoinTargets(body.targets || []);
+        sendJson(response, 200, { targets });
         return;
       }
 
@@ -670,15 +681,21 @@ export function createMonitorServer({
           }
           const startMs = Date.now();
           try {
-            const ip = await checkIpViaSocks5({
+            const geo = await checkIpGeoViaSocks5({
               host: detail.host,
               port: detail.port,
               username: detail.proxyUserName,
               password: detail.proxyPassword,
             });
-            if (ip) {
+            if (geo) {
               sendJson(response, 200, {
-                ip,
+                ip: geo.ip,
+                city: geo.city,
+                zip: geo.zip,
+                region: geo.region,
+                country: geo.country,
+                countryCode: geo.countryCode,
+                remark: detail.remark || "",
                 durationMs: Date.now() - startMs,
                 proxyType: detail.proxyType,
                 host: detail.host,
@@ -687,7 +704,7 @@ export function createMonitorServer({
                 hasAuth: Boolean(detail.proxyUserName),
               });
             } else {
-              console.error("[check-ip] SOCKS5 检测返回 null，请查看上方 [socks5-check] 日志");
+              console.error("[check-ip] SOCKS5 geo 检测返回 null，请查看上方 [socks5-check] 日志");
               sendJson(response, 200, {
                 ip: null,
                 error: "代理检测返回空结果（详见终端日志）",

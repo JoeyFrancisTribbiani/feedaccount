@@ -280,6 +280,8 @@ export class LocalDatabase {
     this.#ensureColumn("task_runs", "upvoted_comment_ids_json", "TEXT NOT NULL DEFAULT '[]'");
     this.#ensureColumn("task_runs", "auto_upvote_count", "INTEGER NOT NULL DEFAULT 0");
     this.#ensureColumn("task_runs", "auto_comment_upvote_count", "INTEGER NOT NULL DEFAULT 0");
+    this.#ensureColumn("task_runs", "joined_subreddits_json", "TEXT NOT NULL DEFAULT '[]'");
+    this.#ensureColumn("task_runs", "auto_join_count", "INTEGER NOT NULL DEFAULT 0");
     this.#ensureColumn("remix_tasks", "downloaded", "INTEGER NOT NULL DEFAULT 0");
   }
 
@@ -375,9 +377,9 @@ export class LocalDatabase {
         targetUrl,
         startedAt,
         startedAt,
-        options.waitMinSec,
-        options.waitMaxSec,
-        options.maxPosts,
+        options.waitMinSec ?? DEFAULT_OPTIONS.waitMinSec,
+        options.waitMaxSec ?? DEFAULT_OPTIONS.waitMaxSec,
+        options.maxPosts ?? DEFAULT_OPTIONS.maxPosts,
         booleanInt(options.autoStopAtBottom),
         options.detailLoopEnabled === false ? "feed_only" : "feed_detail_readonly",
         options.detailAfterMinPosts ?? DEFAULT_OPTIONS.detailAfterMinPosts,
@@ -405,7 +407,8 @@ export class LocalDatabase {
           comment_scroll_count = ?, comment_scroll_progress = ?, comment_scroll_target = ?,
           skipped_promoted_count = ?, detail_post_json = ?, error = ?,
           upvoted_post_ids_json = ?, upvoted_comment_ids_json = ?,
-          auto_upvote_count = ?, auto_comment_upvote_count = ?
+          auto_upvote_count = ?, auto_comment_upvote_count = ?,
+          joined_subreddits_json = ?, auto_join_count = ?
         WHERE id = ?
       `)
       .run(
@@ -439,6 +442,8 @@ export class LocalDatabase {
         JSON.stringify([...(job.upvotedCommentIds || [])]),
         Number(job.autoUpvoteCount || 0),
         Number(job.autoCommentUpvoteCount || 0),
+        JSON.stringify([...(job.joinedSubredditIds || [])]),
+        Number(job.autoJoinCount || 0),
         job.runId,
       );
   }
@@ -494,6 +499,16 @@ export class LocalDatabase {
           : Boolean(options.autoCommentUpvoteEnabled),
       autoCommentUpvoteProbability:
         options.autoCommentUpvoteProbability ?? DEFAULT_OPTIONS.autoCommentUpvoteProbability,
+      autoJoinEnabled:
+        options.autoJoinEnabled === undefined
+          ? DEFAULT_OPTIONS.autoJoinEnabled
+          : Boolean(options.autoJoinEnabled),
+      autoJoinIntervalMinSec:
+        options.autoJoinIntervalMinSec ?? DEFAULT_OPTIONS.autoJoinIntervalMinSec,
+      autoJoinIntervalMaxSec:
+        options.autoJoinIntervalMaxSec ?? DEFAULT_OPTIONS.autoJoinIntervalMaxSec,
+      autoJoinMaxPerRun:
+        options.autoJoinMaxPerRun ?? DEFAULT_OPTIONS.autoJoinMaxPerRun,
     };
     this.db
       .prepare(`
@@ -510,8 +525,8 @@ export class LocalDatabase {
     const options = parseJson(row?.value_json, null);
     if (!options) return null;
     return {
-      waitMinSec: options.waitMinSec,
-      waitMaxSec: options.waitMaxSec,
+      waitMinSec: options.waitMinSec ?? DEFAULT_OPTIONS.waitMinSec,
+      waitMaxSec: options.waitMaxSec ?? DEFAULT_OPTIONS.waitMaxSec,
       maxPosts: options.maxPosts ?? options.maxScrolls ?? 0,
       autoStopAtBottom: Boolean(options.autoStopAtBottom),
       detailLoopEnabled:
@@ -535,6 +550,13 @@ export class LocalDatabase {
       ),
       autoCommentUpvoteProbability:
         options.autoCommentUpvoteProbability ?? DEFAULT_OPTIONS.autoCommentUpvoteProbability,
+      autoJoinEnabled: Boolean(options.autoJoinEnabled ?? DEFAULT_OPTIONS.autoJoinEnabled),
+      autoJoinIntervalMinSec:
+        options.autoJoinIntervalMinSec ?? DEFAULT_OPTIONS.autoJoinIntervalMinSec,
+      autoJoinIntervalMaxSec:
+        options.autoJoinIntervalMaxSec ?? DEFAULT_OPTIONS.autoJoinIntervalMaxSec,
+      autoJoinMaxPerRun:
+        options.autoJoinMaxPerRun ?? DEFAULT_OPTIONS.autoJoinMaxPerRun,
     };
   }
 
@@ -642,6 +664,48 @@ export class LocalDatabase {
       if (Array.isArray(comments)) for (const id of comments) commentIds.add(String(id));
     }
     return { postIds, commentIds };
+  }
+
+  getJoinedSubredditsForProfile(profileId, { limit = 50 } = {}) {
+    const rows = this.db
+      .prepare(
+        `SELECT joined_subreddits_json
+         FROM task_runs
+         WHERE profile_id = ?
+         ORDER BY started_at DESC, id DESC
+         LIMIT ?`,
+      )
+      .all(profileId, Math.min(Math.max(Number(limit) || 50, 1), 500));
+    const joined = new Set();
+    for (const row of rows) {
+      const items = parseJson(row.joined_subreddits_json, []);
+      if (Array.isArray(items)) for (const id of items) joined.add(String(id).toLowerCase());
+    }
+    return joined;
+  }
+
+  getJoinTargets() {
+    const row = this.db.prepare("SELECT value_json FROM app_settings WHERE key = 'reddit_join_targets'").get();
+    const items = parseJson(row?.value_json, []);
+    return Array.isArray(items) ? items : [];
+  }
+
+  saveJoinTargets(targets) {
+    const clean = (Array.isArray(targets) ? targets : [])
+      .map((t) => {
+        if (typeof t === "string") return { name: t.trim() };
+        if (t && typeof t.name === "string") return { name: t.name.trim() };
+        return null;
+      })
+      .filter((t) => t && t.name);
+    this.db
+      .prepare(`
+        INSERT INTO app_settings (key, value_json, updated_at)
+        VALUES ('reddit_join_targets', ?, ?)
+        ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at
+      `)
+      .run(JSON.stringify(clean), nowIso());
+    return clean;
   }
 
   listEvents({ limit = 200, offset = 0, runId = null, profileId = null, level = null } = {}) {
