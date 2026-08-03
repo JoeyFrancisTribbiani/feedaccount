@@ -66,6 +66,10 @@ test("publicOptions exposes configuration without internal millisecond fields", 
     autoUpvoteProbability: 0,
     autoCommentUpvoteEnabled: false,
     autoCommentUpvoteProbability: 0,
+    autoJoinEnabled: false,
+    autoJoinIntervalMinSec: 60,
+    autoJoinIntervalMaxSec: 180,
+    autoJoinMaxPerRun: 3,
   });
   assert.equal("detailWaitMinMs" in options, false);
   assert.equal("returnWaitMaxMs" in options, false);

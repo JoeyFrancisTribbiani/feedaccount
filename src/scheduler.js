@@ -1,4 +1,4 @@
-import { checkIpViaSocks5 } from "./socks5-check.js";
+import { checkIpViaSocks5, checkIpGeoViaSocks5 } from "./socks5-check.js";
 
 export const SCHEDULER_DEFAULTS = Object.freeze({
   minMinutes: 23,
@@ -7,6 +7,9 @@ export const SCHEDULER_DEFAULTS = Object.freeze({
   proxyRotateUrl: null,
   enableReddit: true,
   enableTiktok: true,
+  ipMatchMode: "sequential",
+  geoMaxRetries: 15,
+  geoRetryIntervalSec: 60,
 });
 
 function nowIso() {
@@ -105,22 +108,63 @@ export class RotationScheduler extends EventTarget {
       this.#emit();
       return;
     }
+
+    const useGeoPriority = opts.ipMatchMode === "geo_priority" && Boolean(opts.proxyRotateUrl);
+    const geoProfiles = useGeoPriority
+      ? queue.filter((p) => p.remark && p.remark.trim())
+      : [];
+    const plainProfiles = useGeoPriority
+      ? queue.filter((p) => !p.remark || !p.remark.trim())
+      : queue;
+
     const platformList = [];
     if (opts.enableReddit) platformList.push("Reddit");
     if (opts.enableTiktok) platformList.push("TikTok");
-    this.#log(`轮换调度开始，共 ${queue.length} 个实例：${queue.map((p) => `#${p.seq}`).join(" → ")}，平台：${platformList.join(" + ")}，每实例 ${opts.minMinutes}-${opts.maxMinutes} 分钟`, "info", { count: queue.length });
+
+    if (useGeoPriority) {
+      this.#log(`轮换调度开始（城市优先模式），共 ${queue.length} 个实例（${geoProfiles.length} 个有目标城市，${plainProfiles.length} 个无目标按顺序执行），平台：${platformList.join(" + ")}，每实例 ${opts.minMinutes}-${opts.maxMinutes} 分钟`, "info", { count: queue.length });
+      if (geoProfiles.length > 0) {
+        this.#log(`目标城市配置：${geoProfiles.map((p) => `#${p.seq}→${p.remark.trim()}`).join("，")}`, "info");
+      }
+    } else {
+      this.#log(`轮换调度开始，共 ${queue.length} 个实例：${queue.map((p) => `#${p.seq}`).join(" → ")}，平台：${platformList.join(" + ")}，每实例 ${opts.minMinutes}-${opts.maxMinutes} 分钟`, "info", { count: queue.length });
+    }
 
     const savedRedditOptions = this.persistence?.getSavedOptions?.() || {};
     let prevId = null;
+    const executed = new Set();
+    let instanceCount = 0;
 
-    for (let i = 0; i < queue.length; i++) {
-      if (this.state.cancelled) break;
-      const profile = queue[i];
-      this.state.profileIndex = i;
+    while (instanceCount < queue.length && !this.state.cancelled) {
+      let profile = null;
+      let ipAlreadyChecked = false;
+
+      if (useGeoPriority && geoProfiles.some((p) => !executed.has(p.id))) {
+        const result = await this.#pickNextByGeo(geoProfiles, executed, opts);
+        if (result) {
+          profile = result.profile;
+          ipAlreadyChecked = true;
+        } else if (this.state.cancelled) {
+          break;
+        } else {
+          this.#log(`⚠️ 城市匹配未能命中，降级为顺序选择剩余实例`, "warning");
+          profile = geoProfiles.find((p) => !executed.has(p.id))
+            || plainProfiles.find((p) => !executed.has(p.id));
+        }
+      } else {
+        profile = plainProfiles.find((p) => !executed.has(p.id))
+          || geoProfiles.find((p) => !executed.has(p.id));
+      }
+
+      if (!profile) break;
+      executed.add(profile.id);
+      instanceCount++;
+
+      this.state.profileIndex = instanceCount - 1;
       this.state.currentSeq = profile.seq;
       this.state.currentName = profile.name;
       this.state.currentProfileId = profile.id;
-      this.#log(`━━━ 开始实例 ${i + 1}/${queue.length}：#${profile.seq} ${profile.name} ━━━`, "info");
+      this.#log(`━━━ 开始实例 ${instanceCount}/${queue.length}：#${profile.seq} ${profile.name}${profile.remark ? `（目标：${profile.remark.trim()}）` : ""} ━━━`, "info");
 
       // 关前一个浏览器
       if (prevId) {
@@ -136,7 +180,7 @@ export class RotationScheduler extends EventTarget {
       // 打开当前 + 刷新代理 + 确认IP变化
       this.state.phase = "opening";
       this.#emit();
-      await this.#openAndCheckIp(profile, opts);
+      await this.#openAndCheckIp(profile, opts, { ipAlreadyChecked });
 
       if (this.state.cancelled) {
         this.#log(`实例 #${profile.seq} 代理检测阶段收到停止指令，跳过任务启动`, "warning");
@@ -151,9 +195,12 @@ export class RotationScheduler extends EventTarget {
       this.#log(`实例 #${profile.seq} 正在启动 ${platforms.join(" + ")} 任务`, "info");
       this.#emit();
       if (opts.enableReddit) {
-        await this.redditJobs.start(profile.id, profile.name, savedRedditOptions)
-          .then(() => this.#log(`实例 #${profile.seq} Reddit 任务已启动`, "info"))
-          .catch((e) => this.#log(`实例 #${profile.seq} Reddit 启动失败：${e.message}`, "warning"));
+        try {
+          this.redditJobs.start(profile, savedRedditOptions);
+          this.#log(`实例 #${profile.seq} Reddit 任务已启动`, "info");
+        } catch (e) {
+          this.#log(`实例 #${profile.seq} Reddit 启动失败：${e.message}`, "warning");
+        }
       }
       if (opts.enableTiktok) {
         const savedTiktokOptions = this.persistence?.getTiktokOptions?.(profile.id)
@@ -237,7 +284,100 @@ export class RotationScheduler extends EventTarget {
     this.#log(`等待结束，开始检测出口IP`, "info");
   }
 
-  async #openAndCheckIp(profile, opts) {
+  #matchGeoProfile(geoProfiles, geo, executed) {
+    const remaining = geoProfiles.filter((p) => !executed.has(p.id));
+    for (const profile of remaining) {
+      const remark = (profile.remark || "").trim();
+      if (!remark) continue;
+      const targets = remark.split(/[,;|]/).map((s) => s.trim()).filter(Boolean);
+      for (const target of targets) {
+        if (/^\d{3,5}$/.test(target)) {
+          if (geo.zip && geo.zip.substring(0, 3) === target.substring(0, 3)) {
+            return { profile, matchedBy: `邮编 ${target} ↔ ${geo.zip}` };
+          }
+        } else {
+          if (geo.city && geo.city.toLowerCase() === target.toLowerCase()) {
+            return { profile, matchedBy: `城市 ${target} ↔ ${geo.city}` };
+          }
+        }
+      }
+    }
+    return null;
+  }
+
+  async #pickNextByGeo(geoProfiles, executed, opts) {
+    const remaining = geoProfiles.filter((p) => !executed.has(p.id));
+    if (remaining.length === 0) return null;
+
+    const probeProfile = remaining[0];
+    this.#log(`正在获取实例 #${probeProfile.seq} 的代理配置（用于IP地理查询）`, "info");
+    const detail = await this.bitBrowserApi.getProfileDetail(probeProfile.id);
+    this.#log(`代理配置：${detail.host}:${detail.port}，认证=${detail.proxyUserName ? "有" : "无"}`, "info", { host: detail.host, port: detail.port });
+
+    const maxRetries = opts.geoMaxRetries || 15;
+    const retryIntervalMs = (opts.geoRetryIntervalSec || 60) * 1000;
+
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      if (this.state.cancelled) return null;
+
+      if (attempt > 0) {
+        this.#log(`等待 ${retryIntervalMs / 1000} 秒后重新切换代理（代理商最低1分钟切换一次）`, "info");
+        this.#emit();
+        await new Promise((r) => setTimeout(r, retryIntervalMs));
+      }
+
+      await this.#rotateProxy(opts.proxyRotateUrl);
+
+      if (this.state.cancelled) return null;
+
+      const attemptStart = Date.now();
+      let geo = null;
+      try {
+        geo = await checkIpGeoViaSocks5({
+          host: detail.host,
+          port: detail.port,
+          username: detail.proxyUserName,
+          password: detail.proxyPassword,
+        });
+      } catch (e) {
+        this.#log(`第${attempt + 1}次IP地理查询失败：${e.message}（耗时 ${Date.now() - attemptStart}ms）`, "warning");
+      }
+
+      if (!geo) {
+        this.#log(`第${attempt + 1}次查询未获取到IP地理位置`, "warning");
+        this.#emit();
+        continue;
+      }
+
+      this.state.lastIp = geo.ip;
+      this.state.ipChange = { old: null, new: geo.ip, city: geo.city, zip: geo.zip, region: geo.region, country: geo.country };
+      this.#emit();
+
+      const match = this.#matchGeoProfile(geoProfiles, geo, executed);
+      if (match) {
+        this.#log(`✅ 第${attempt + 1}次切换命中：IP=${geo.ip}，城市=${geo.city}（${geo.zip}），地区=${geo.region} → 匹配 #${match.profile.seq} ${match.profile.name}（${match.matchedBy}）`, "info", { ip: geo.ip, city: geo.city, zip: geo.zip, matchedSeq: match.profile.seq });
+        return { profile: match.profile, geo };
+      }
+
+      this.#log(`第${attempt + 1}次切换：IP=${geo.ip}，城市=${geo.city}（${geo.zip}），地区=${geo.region}，未匹配到目标城市实例`, "warning", { ip: geo.ip, city: geo.city, zip: geo.zip });
+      const targets = remaining.map((p) => `#${p.seq}→${p.remark.trim()}`).join("，");
+      this.#log(`剩余目标：${targets}`, "info");
+      this.#emit();
+    }
+
+    this.#log(`⚠️ 城市匹配重试 ${maxRetries} 次仍未命中，将降级为顺序执行`, "warning");
+    this.#emit();
+    return null;
+  }
+
+  async #openAndCheckIp(profile, opts, { ipAlreadyChecked = false } = {}) {
+    if (ipAlreadyChecked) {
+      this.#log(`实例 #${profile.seq} IP已通过城市匹配确认，直接打开浏览器`, "info");
+      await this.bitBrowserApi.openProfile(profile.id, { extractIp: false });
+      this.#log(`实例 #${profile.seq} 浏览器已打开，开始任务`, "info");
+      return;
+    }
+
     const wantRotate = Boolean(opts.proxyRotateUrl);
     if (!wantRotate) {
       this.#log(`实例 #${profile.seq} 未配置代理刷新，直接打开浏览器`, "info");
@@ -316,7 +456,7 @@ export class RotationScheduler extends EventTarget {
   #fail(error) {
     this.state.running = false;
     this.state.phase = "error";
-    this.#log(`调度出错：${error.message}`, "error", { error: error.message });
+    this.#log(`调度出错：${error.message}`, "error", { error: error.message, stack: error.stack || "" });
     this.#emit();
   }
 

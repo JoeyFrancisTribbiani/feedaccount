@@ -22,6 +22,10 @@ export const DEFAULT_OPTIONS = Object.freeze({
   autoUpvoteProbability: 0,
   autoCommentUpvoteEnabled: false,
   autoCommentUpvoteProbability: 0,
+  autoJoinEnabled: false,
+  autoJoinIntervalMinSec: 60,
+  autoJoinIntervalMaxSec: 180,
+  autoJoinMaxPerRun: 3,
 });
 
 function integerInRange(value, fallback, label, min, max) {
@@ -134,6 +138,32 @@ export function normalizeOptions(input = {}) {
     100,
   );
 
+  const autoJoinEnabled =
+    input.autoJoinEnabled === undefined
+      ? DEFAULT_OPTIONS.autoJoinEnabled
+      : Boolean(input.autoJoinEnabled);
+  const autoJoinIntervalMinSec = integerInRange(
+    input.autoJoinIntervalMinSec,
+    DEFAULT_OPTIONS.autoJoinIntervalMinSec,
+    "关注群组最短间隔",
+    10,
+    3600,
+  );
+  const autoJoinIntervalMaxSec = integerInRange(
+    input.autoJoinIntervalMaxSec,
+    DEFAULT_OPTIONS.autoJoinIntervalMaxSec,
+    "关注群组最长间隔",
+    10,
+    3600,
+  );
+  const autoJoinMaxPerRun = integerInRange(
+    input.autoJoinMaxPerRun,
+    DEFAULT_OPTIONS.autoJoinMaxPerRun,
+    "每次运行最多关注数",
+    1,
+    50,
+  );
+
   if (waitMinSec > waitMaxSec) {
     throw new Error("最短等待时间不能大于最长等待时间");
   }
@@ -148,6 +178,9 @@ export function normalizeOptions(input = {}) {
   }
   if (returnWaitMinSec > returnWaitMaxSec) {
     throw new Error("返回前最短停留时间不能大于最长停留时间");
+  }
+  if (autoJoinIntervalMinSec > autoJoinIntervalMaxSec) {
+    throw new Error("关注群组最短间隔不能大于最长间隔");
   }
   return {
     waitMinSec,
@@ -179,6 +212,12 @@ export function normalizeOptions(input = {}) {
     autoUpvoteProbability,
     autoCommentUpvoteEnabled,
     autoCommentUpvoteProbability,
+    autoJoinEnabled,
+    autoJoinIntervalMinSec,
+    autoJoinIntervalMaxSec,
+    autoJoinIntervalMinMs: autoJoinIntervalMinSec * 1000,
+    autoJoinIntervalMaxMs: autoJoinIntervalMaxSec * 1000,
+    autoJoinMaxPerRun,
   };
 }
 
@@ -208,5 +247,9 @@ export function publicOptions(options) {
     autoUpvoteProbability: options.autoUpvoteProbability,
     autoCommentUpvoteEnabled: options.autoCommentUpvoteEnabled,
     autoCommentUpvoteProbability: options.autoCommentUpvoteProbability,
+    autoJoinEnabled: options.autoJoinEnabled,
+    autoJoinIntervalMinSec: options.autoJoinIntervalMinSec,
+    autoJoinIntervalMaxSec: options.autoJoinIntervalMaxSec,
+    autoJoinMaxPerRun: options.autoJoinMaxPerRun,
   };
 }

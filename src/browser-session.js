@@ -2634,6 +2634,145 @@ export class BrowserSession {
     }
   }
 
+  async joinSubreddit(subredditName) {
+    const cleanName = String(subredditName).trim().replace(/^\/?r\//, "").replace(/\/.*$/, "");
+    if (!cleanName) throw new Error("无效的群组名称");
+
+    const subredditUrl = `https://www.reddit.com/r/${cleanName}/`;
+
+    try {
+      const domReady = this.client.waitForEvent("Page.domContentEventFired", {
+        sessionId: this.feedSessionId,
+        timeoutMs: 30000,
+      });
+      const navigation = await this.client.call(
+        "Page.navigate",
+        { url: subredditUrl },
+        this.feedSessionId,
+        30000,
+      );
+      if (navigation.errorText) {
+        throw new Error(`打开 r/${cleanName} 失败：${navigation.errorText}`);
+      }
+      await domReady;
+      await new Promise((r) => setTimeout(r, 2500));
+
+      const loginBlocked = await this.#checkSubredditBlocked();
+      if (loginBlocked) {
+        throw new Error(`r/${cleanName} 页面被登录墙或验证码阻塞`);
+      }
+
+      const joinInfo = await this.#findJoinButton();
+      if (!joinInfo.found) {
+        throw new Error(`未找到 r/${cleanName} 的关注按钮`);
+      }
+      if (joinInfo.joined) {
+        return { ok: true, alreadyJoined: true, subreddit: cleanName };
+      }
+
+      this.pageMode = "subreddit";
+      await this.#dispatchSafeClick(
+        joinInfo.center.x,
+        joinInfo.center.y,
+        this.feedSessionId,
+        joinInfo.rect,
+      );
+      await new Promise((r) => setTimeout(r, 3000));
+
+      const afterInfo = await this.#findJoinButton();
+      const joined = afterInfo.joined || afterInfo.text !== joinInfo.text;
+      return { ok: joined, alreadyJoined: false, subreddit: cleanName };
+    } finally {
+      await this.#navigateBackToFeed();
+    }
+  }
+
+  async #findJoinButton() {
+    const expression = `(() => {
+      const all = [];
+      function search(root) {
+        root.querySelectorAll('button, [role="button"]').forEach((btn) => {
+          const text = (btn.textContent || '').trim().toLowerCase();
+          const aria = (btn.getAttribute('aria-label') || '').toLowerCase();
+          if (text === 'join' || text === 'joined' || text === 'leave' || aria.includes('join') || aria.includes('leave')) {
+            const r = btn.getBoundingClientRect();
+            if (r.width > 0 && r.height > 0) {
+              all.push({
+                text, aria,
+                top: Math.round(r.y),
+                center: { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) },
+                rect: { x: r.x, y: r.y, width: r.width, height: r.height },
+              });
+            }
+          }
+        });
+        root.querySelectorAll('*').forEach((el) => {
+          if (el.shadowRoot) search(el.shadowRoot);
+        });
+      }
+      search(document);
+      if (all.length === 0) return JSON.stringify({ found: false });
+      all.sort((a, b) => a.top - b.top);
+      const first = all[0];
+      const joined = first.text === 'joined' || first.text === 'leave' || first.aria.includes('leave') || first.aria.includes('joined');
+      return JSON.stringify({ found: true, joined, text: first.text, aria: first.aria, center: first.center, rect: first.rect });
+    })()`;
+
+    const res = await this.client.call(
+      "Runtime.evaluate",
+      { expression, returnByValue: true },
+      this.feedSessionId,
+      15000,
+    );
+    try {
+      return JSON.parse(res?.result?.value || '{"found":false}');
+    } catch {
+      return { found: false };
+    }
+  }
+
+  async #checkSubredditBlocked() {
+    const res = await this.client.call(
+      "Runtime.evaluate",
+      {
+        expression: `(() => {
+          const login = document.querySelector('[data-e2e="login-container"], #login-dialog');
+          if (login && login.getBoundingClientRect().height > 0) return 'blocked';
+          const title = document.title || '';
+          if (/not found|doesn't exist|已删除|不存在/i.test(title)) return 'notfound';
+          return 'ok';
+        })()`,
+        returnByValue: true,
+      },
+      this.feedSessionId,
+      10000,
+    );
+    const status = res?.result?.value || "ok";
+    return status === "blocked";
+  }
+
+  async #navigateBackToFeed() {
+    try {
+      const domReady = this.client.waitForEvent("Page.domContentEventFired", {
+        sessionId: this.feedSessionId,
+        timeoutMs: 30000,
+      });
+      await this.client.call(
+        "Page.navigate",
+        { url: this.targetUrl },
+        this.feedSessionId,
+        30000,
+      );
+      await domReady;
+      await new Promise((r) => setTimeout(r, 2000));
+    } catch {
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+    this.pageMode = "feed";
+    this.lastPostId = null;
+    this.navigationContext = null;
+  }
+
   async close() {
     const detailSessionId = this.navigationContext?.detailSessionId;
     const detailTargetId = this.navigationContext?.detailTargetId;

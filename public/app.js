@@ -25,6 +25,10 @@ const FALLBACK_OPTIONS = Object.freeze({
   autoUpvoteProbability: 0,
   autoCommentUpvoteEnabled: false,
   autoCommentUpvoteProbability: 0,
+  autoJoinEnabled: false,
+  autoJoinIntervalMinSec: 60,
+  autoJoinIntervalMaxSec: 180,
+  autoJoinMaxPerRun: 3,
 });
 
 const OPTIONS_STORAGE_KEY = "reddit-flow-options-v3";
@@ -86,6 +90,13 @@ const elements = {
   autoUpvoteProbability: document.querySelector("#auto-upvote-probability"),
   autoCommentUpvoteEnabled: document.querySelector("#auto-comment-upvote-enabled"),
   autoCommentUpvoteProbability: document.querySelector("#auto-comment-upvote-probability"),
+  autoJoinEnabled: document.querySelector("#auto-join-enabled"),
+  autoJoinIntervalMin: document.querySelector("#auto-join-interval-min"),
+  autoJoinIntervalMax: document.querySelector("#auto-join-interval-max"),
+  autoJoinMaxPerRun: document.querySelector("#auto-join-max-per-run"),
+  joinTargetsText: document.querySelector("#join-targets-text"),
+  joinTargetsSave: document.querySelector("#join-targets-save"),
+  joinTargetsStatus: document.querySelector("#join-targets-status"),
   metricProfiles: document.querySelector("#metric-profiles"),
   metricActive: document.querySelector("#metric-active"),
   metricPosts: document.querySelector("#metric-posts"),
@@ -537,9 +548,10 @@ function renderJobs() {
             <div class="job-stat"><span>查看详情</span><strong>${formatNumber(job.detailVisitCount)}</strong></div>
             <div class="job-stat"><span>当前阶段</span><strong>${escapeHtml(workflowPhaseLabel(job))}</strong></div>
           </div>
-          ${(Number(job.autoUpvoteCount) > 0 || Number(job.autoCommentUpvoteCount) > 0) ? `<div class="job-stats">
+          ${(Number(job.autoUpvoteCount) > 0 || Number(job.autoCommentUpvoteCount) > 0 || Number(job.autoJoinCount) > 0) ? `<div class="job-stats">
             <div class="job-stat"><span>自动点赞</span><strong>${formatNumber(job.autoUpvoteCount)} 帖</strong></div>
             <div class="job-stat"><span>自动赞评</span><strong>${formatNumber(job.autoCommentUpvoteCount)} 条</strong></div>
+            ${Number(job.autoJoinCount) > 0 ? `<div class="job-stat"><span>自动关注</span><strong>${formatNumber(job.autoJoinCount)} 个</strong></div>` : ""}
             <div class="job-stat"><span>已锁帖</span><strong>${formatNumber(job.upvotedPostCount)}</strong></div>
           </div>` : ""}
           <div class="progress-track" title="${escapeHtml(commentPhase ? "评论浏览进度" : "本轮 Feed 进度")} ${progressPercent}%"><i style="width: ${progressPercent}%"></i></div>
@@ -607,6 +619,10 @@ function readOptions({ persistLocal = true } = {}) {
     autoUpvoteProbability: Number(elements.autoUpvoteProbability.value),
     autoCommentUpvoteEnabled: elements.autoCommentUpvoteEnabled.checked,
     autoCommentUpvoteProbability: Number(elements.autoCommentUpvoteProbability.value),
+    autoJoinEnabled: elements.autoJoinEnabled.checked,
+    autoJoinIntervalMinSec: Number(elements.autoJoinIntervalMin.value),
+    autoJoinIntervalMaxSec: Number(elements.autoJoinIntervalMax.value),
+    autoJoinMaxPerRun: Number(elements.autoJoinMaxPerRun.value),
   };
   if (!elements.optionsForm.reportValidity()) throw new Error("请检查任务参数");
   if (options.waitMinSec > options.waitMaxSec) throw new Error("最短等待不能大于最长等待");
@@ -621,6 +637,9 @@ function readOptions({ persistLocal = true } = {}) {
   }
   if (options.returnWaitMinSec > options.returnWaitMaxSec) {
     throw new Error("返回前最短停留不能大于最长停留");
+  }
+  if (options.autoJoinIntervalMinSec > options.autoJoinIntervalMaxSec) {
+    throw new Error("关注群组最短间隔不能大于最长间隔");
   }
   if (persistLocal) localStorage.setItem(OPTIONS_STORAGE_KEY, JSON.stringify(options));
   return options;
@@ -656,6 +675,15 @@ function applyOptions(options = {}) {
   );
   elements.autoCommentUpvoteProbability.value =
     options.autoCommentUpvoteProbability ?? FALLBACK_OPTIONS.autoCommentUpvoteProbability;
+  elements.autoJoinEnabled.checked = Boolean(
+    options.autoJoinEnabled ?? FALLBACK_OPTIONS.autoJoinEnabled,
+  );
+  elements.autoJoinIntervalMin.value =
+    options.autoJoinIntervalMinSec ?? FALLBACK_OPTIONS.autoJoinIntervalMinSec;
+  elements.autoJoinIntervalMax.value =
+    options.autoJoinIntervalMaxSec ?? FALLBACK_OPTIONS.autoJoinIntervalMaxSec;
+  elements.autoJoinMaxPerRun.value =
+    options.autoJoinMaxPerRun ?? FALLBACK_OPTIONS.autoJoinMaxPerRun;
 }
 
 async function saveOptionsToDatabase() {
@@ -1180,6 +1208,60 @@ function updateCountdowns() {
   }
 }
 
+async function fetchJoinTargets() {
+  try {
+    const res = await request("/api/reddit/join-targets");
+    const targets = res.targets || [];
+    if (elements.joinTargetsText) {
+      elements.joinTargetsText.value = targets.map((t) => t.name).join("\n");
+    }
+  } catch {}
+}
+
+function parseJoinTargetsText(text) {
+  const seen = new Set();
+  return text
+    .split(/[\n\r,;\t]+/)
+    .flatMap((segment) => segment.trim().split(/\s+/))
+    .map((token) => {
+      let name = token.trim();
+      if (!name || name.startsWith("#")) return null;
+      try {
+        const url = new URL(name);
+        const match = url.pathname.match(/^\/r\/([^/]+)/i);
+        if (match) name = match[1];
+      } catch {}
+      name = name.replace(/^\/?r\//i, "").replace(/\/.*$/, "").trim();
+      return name || null;
+    })
+    .filter((name) => {
+      if (!name) return false;
+      const key = name.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .map((name) => ({ name }));
+}
+
+if (elements.joinTargetsSave) {
+  elements.joinTargetsSave.addEventListener("click", async () => {
+    try {
+      const targets = parseJoinTargetsText(elements.joinTargetsText.value);
+      const res = await request("/api/reddit/join-targets", {
+        method: "PUT",
+        body: JSON.stringify({ targets }),
+      });
+      elements.joinTargetsText.value = (res.targets || []).map((t) => t.name).join("\n");
+      elements.joinTargetsStatus.textContent = `已保存 ${res.targets.length} 个群组`;
+      showToast(`群组列表已保存（${res.targets.length} 个）`);
+    } catch (e) {
+      elements.joinTargetsStatus.textContent = `保存失败：${e.message}`;
+      showToast(e.message, true);
+    }
+  });
+}
+
 async function initialize() {
   try {
     const [config, jobsPayload] = await Promise.all([
@@ -1201,6 +1283,7 @@ async function initialize() {
       localOptions = null;
     }
     applyOptions(config.savedOptions || localOptions || config.defaults);
+    await fetchJoinTargets();
     renderJobs();
   } catch (error) {
     showToast(error.message, true);
@@ -1786,8 +1869,10 @@ function schedPlatformHint() {
 function saveSchedToggles() {
   const r = document.querySelector("#sched-enable-reddit");
   const t = document.querySelector("#sched-enable-tiktok");
+  const g = document.querySelector("#sched-geo-priority");
   if (r) localStorage.setItem("sched-enable-reddit", r.checked ? "1" : "0");
   if (t) localStorage.setItem("sched-enable-tiktok", t.checked ? "1" : "0");
+  if (g) localStorage.setItem("sched-geo-priority", g.checked ? "1" : "0");
 }
 
 function getSchedProfileIds() {
@@ -1817,6 +1902,7 @@ function renderSchedProfiles() {
         <input type="checkbox" value="${escapeHtml(p.id)}" ${checked ? "checked" : ""} />
         <span class="sched-seq">#${escapeHtml(p.seq)}</span>
         <span class="sched-name">${escapeHtml(p.name)}</span>
+        ${p.remark ? `<span class="sched-remark" title="BitBrowser备注：目标城市/邮编">${escapeHtml(p.remark)}</span>` : ""}
       </label>`;
     })
     .join("");
@@ -1851,8 +1937,10 @@ function updateSchedSelectAllBtn() {
 function restoreSchedToggles() {
   const r = document.querySelector("#sched-enable-reddit");
   const t = document.querySelector("#sched-enable-tiktok");
+  const g = document.querySelector("#sched-geo-priority");
   if (r) r.checked = localStorage.getItem("sched-enable-reddit") !== "0";
   if (t) t.checked = localStorage.getItem("sched-enable-tiktok") !== "0";
+  if (g) g.checked = localStorage.getItem("sched-geo-priority") === "1";
 }
 
 function renderScheduler() {
@@ -1869,7 +1957,7 @@ function renderScheduler() {
   const remaining = s.running && s.remainingMs > 0 ? formatRemaining(s.remainingMs) : "—";
   const logs = (s.log || []).slice(-50).reverse().map((l) => `<li class="log-item log-${escapeHtml(l.level)}"><span class="log-time">${formatDateTime(l.at)}</span><span class="log-level">${escapeHtml(l.level)}</span><span class="log-msg">${escapeHtml(l.message)}</span></li>`).join("");
   const ipChange = s.ipChange
-    ? `<div class="sched-ip-change"><span>代理IP</span><strong><span class="ip-old">${escapeHtml(s.ipChange.old || "—")}</span><span class="ip-arrow">→</span><span class="ip-new">${escapeHtml(s.ipChange.new || "未知")}</span></strong></div>`
+    ? `<div class="sched-ip-change"><span>代理IP</span><strong><span class="ip-old">${escapeHtml(s.ipChange.old || "—")}</span><span class="ip-arrow">→</span><span class="ip-new">${escapeHtml(s.ipChange.new || "未知")}</span></strong>${s.ipChange.city ? `<span class="ip-geo">📍 ${escapeHtml(s.ipChange.city)}（${escapeHtml(s.ipChange.zip)}）${s.ipChange.region ? ` ${escapeHtml(s.ipChange.region)}` : ""}</span>` : ""}</div>`
     : "";
 
   const pid = s.currentProfileId;
@@ -1883,7 +1971,7 @@ function renderScheduler() {
         `<li class="log-item log-${escapeHtml(l.level || "info")}"><span class="log-time">${formatDateTime(l.time)}</span><span class="log-msg">${escapeHtml(l.message)}</span></li>`,
       ).join("");
       sections.push(`<div class="sched-job-section">
-        <div class="sched-job-head"><span class="sched-job-tag tag-reddit">Reddit</span>${escapeHtml(workflowPhaseLabel(redditJob))} · 帖子 ${formatNumber(redditJob.postCount)} · 详情 ${formatNumber(redditJob.detailVisitCount)}${Number(redditJob.autoUpvoteCount) > 0 ? ` · 自动赞 ${formatNumber(redditJob.autoUpvoteCount)}` : ""}</div>
+        <div class="sched-job-head"><span class="sched-job-tag tag-reddit">Reddit</span>${escapeHtml(workflowPhaseLabel(redditJob))} · 帖子 ${formatNumber(redditJob.postCount)} · 详情 ${formatNumber(redditJob.detailVisitCount)}${Number(redditJob.autoUpvoteCount) > 0 ? ` · 自动赞 ${formatNumber(redditJob.autoUpvoteCount)}` : ""}${Number(redditJob.autoJoinCount) > 0 ? ` · 关注 ${formatNumber(redditJob.autoJoinCount)}` : ""}</div>
         ${rLogs ? `<ol class="database-log-list sched-job-log">${rLogs}</ol>` : ""}
       </div>`);
     }
@@ -1932,6 +2020,7 @@ async function initScheduler() {
 
 document.querySelector("#sched-enable-reddit")?.addEventListener("change", () => { saveSchedToggles(); renderScheduler(); });
 document.querySelector("#sched-enable-tiktok")?.addEventListener("change", () => { saveSchedToggles(); renderScheduler(); });
+document.querySelector("#sched-geo-priority")?.addEventListener("change", () => { saveSchedToggles(); renderScheduler(); });
 document.querySelector("#sched-proxy-url")?.addEventListener("input", () => {
   localStorage.setItem("sched-proxy-url", document.querySelector("#sched-proxy-url").value);
 });
@@ -1959,7 +2048,9 @@ document.querySelector("#sched-check-ip")?.addEventListener("click", async () =>
       resultEl.className = "sched-check-result sched-check-error";
     } else if (res.ip) {
       const changed = res.lastIp && res.ip !== res.lastIp;
-      resultEl.innerHTML = `IP：<strong>${escapeHtml(res.ip)}</strong>（${res.durationMs}ms）${res.lastIp ? ` | 上次：${escapeHtml(res.lastIp)} ${changed ? "→ 已变化" : "→ 未变化"}` : ""} | ${escapeHtml(res.proxyType)} ${escapeHtml(res.host)}:${res.port}`;
+      const geoInfo = res.city ? ` | 📍 ${escapeHtml(res.city)}（${escapeHtml(res.zip)}）${res.region ? `，${escapeHtml(res.region)}` : ""}` : "";
+      const remarkInfo = res.remark ? ` | 备注：${escapeHtml(res.remark)}` : "";
+      resultEl.innerHTML = `IP：<strong>${escapeHtml(res.ip)}</strong>${geoInfo}${remarkInfo}（${res.durationMs}ms）${res.lastIp ? ` | 上次：${escapeHtml(res.lastIp)} ${changed ? "→ 已变化" : "→ 未变化"}` : ""} | ${escapeHtml(res.proxyType)} ${escapeHtml(res.host)}:${res.port}`;
       resultEl.className = `sched-check-result sched-check-${changed ? "ok" : "warn"}`;
     } else {
       resultEl.innerHTML = `检测失败：${escapeHtml(res.error || "未知错误")}（${res.durationMs}ms）| ${escapeHtml(res.proxyType || "?")} ${escapeHtml(res.host || "?")}:${res.port || "?"}`;
@@ -1990,7 +2081,8 @@ sched.startBtn.addEventListener("click", async () => {
     const enableReddit = document.querySelector("#sched-enable-reddit")?.checked ?? true;
     const enableTiktok = document.querySelector("#sched-enable-tiktok")?.checked ?? true;
     const profileIds = [...document.querySelectorAll("#sched-profile-list input[type=checkbox]:checked")].map((cb) => cb.value);
-    const options = { enableReddit, enableTiktok, profileIds };
+    const ipMatchMode = document.querySelector("#sched-geo-priority")?.checked ? "geo_priority" : "sequential";
+    const options = { enableReddit, enableTiktok, profileIds, ipMatchMode };
     if (proxyRotateUrl) options.proxyRotateUrl = proxyRotateUrl;
     const res = await request("/api/scheduler/start", { method: "POST", body: JSON.stringify({ options }) });
     state.scheduler = res.status;
