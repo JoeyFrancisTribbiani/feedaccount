@@ -21,14 +21,20 @@ try {
 }
 
 function runFfmpeg(args) {
+  const FFMPEG_TIMEOUT_MS = 10 * 60 * 1000;
   return new Promise((resolve, reject) => {
-    const proc = execFile("ffmpeg", args, { maxBuffer: 20 * 1024 * 1024 }, (error, stdout, stderr) => {
+    const proc = execFile("ffmpeg", ["-threads", "0", ...args], { maxBuffer: 20 * 1024 * 1024 }, (error, stdout, stderr) => {
+      clearTimeout(timer);
       if (error) {
         reject(new Error(`FFmpeg 失败：${error.message}\n${stderr?.slice(-800)}`));
       } else {
         resolve(stderr);
       }
     });
+    const timer = setTimeout(() => {
+      proc.kill("SIGKILL");
+      reject(new Error("FFmpeg 处理超时（10分钟），可能视频过大或滤镜链过重"));
+    }, FFMPEG_TIMEOUT_MS);
   });
 }
 
@@ -100,77 +106,182 @@ function genId() {
   return crypto.randomBytes(6).toString("hex");
 }
 
-async function processSingleVideo(inputPath, outputPath, meta) {
+function randomBetween(min, max) {
+  return min + Math.random() * (max - min);
+}
+
+// ─── 去重强度预设 ───
+export const DEDUP_PRESETS = Object.freeze({
+  light: { flip: true, speed: 0.97, cropPercent: 0.03, hueShift: 5, saturation: 1.08, contrast: 1.03, brightness: 0.01, grainStrength: 8, pitchSemitones: 1, watermarkOpacity: 0.06 },
+  medium: { flip: true, speed: 0.95, cropPercent: 0.05, hueShift: 8, saturation: 1.15, contrast: 1.05, brightness: 0.02, grainStrength: 12, pitchSemitones: 2, watermarkOpacity: 0.08 },
+  strong: { flip: true, speed: 0.92, cropPercent: 0.08, hueShift: 12, saturation: 1.25, contrast: 1.08, brightness: 0.03, grainStrength: 18, pitchSemitones: 3, watermarkOpacity: 0.10 },
+});
+
+const RATIO_MAP = {
+  "9:16": { w: 1080, h: 1920 },
+  "1:1": { w: 1080, h: 1080 },
+  "16:9": { w: 1920, h: 1080 },
+  "4:5": { w: 1080, h: 1350 },
+};
+
+function pickRandomTransform(preset) {
+  const sign = () => (Math.random() < 0.5 ? -1 : 1);
+  return {
+    flip: preset.flip,
+    speed: preset.speed + randomBetween(-0.01, 0.01),
+    cropPercent: preset.cropPercent + randomBetween(-0.01, 0.01),
+    hueShift: preset.hueShift * sign() + randomBetween(-2, 2),
+    saturation: preset.saturation + randomBetween(-0.03, 0.03),
+    contrast: preset.contrast + randomBetween(-0.02, 0.02),
+    brightness: preset.brightness + randomBetween(-0.01, 0.01),
+    grainStrength: Math.round(preset.grainStrength + randomBetween(-3, 3)),
+    pitchSemitones: preset.pitchSemitones * sign() + randomBetween(-0.5, 0.5),
+    watermarkOpacity: preset.watermarkOpacity,
+  };
+}
+
+async function processSingleVideo(inputPath, outputPath, meta, options = {}) {
   const { duration, width, height, fps, sampleRate, hasAudio } = meta;
+  const preset = options.preset || DEDUP_PRESETS.medium;
+  const t = pickRandomTransform(preset);
+  const ratio = options.ratio || null;
 
-  const trimStart = duration > 3 ? 1 : 0;
-  const trimEnd = duration > 3 ? duration - 1 : duration;
-  const trimmedDuration = trimEnd - trimStart;
-  const segLen = trimmedDuration / 3;
-  const seg1End = segLen;
-  const seg2End = segLen * 2;
-  const seg3End = trimmedDuration;
+  // 目标尺寸
+  let targetW = width;
+  let targetH = height;
+  if (ratio && RATIO_MAP[ratio]) {
+    targetW = RATIO_MAP[ratio].w;
+    targetH = RATIO_MAP[ratio].h;
+  }
 
-  const fpsStr = fps.toFixed(2);
-  const durStr = trimmedDuration.toFixed(3);
+  // 裁切计算：先按目标比例裁切，再从边缘裁掉 cropPercent
+  const targetAspect = targetW / targetH;
+  const srcAspect = width / height;
+  let ratioCropW = width;
+  let ratioCropH = height;
+  if (Math.abs(srcAspect - targetAspect) > 0.01) {
+    if (srcAspect > targetAspect) {
+      ratioCropW = Math.round(height * targetAspect);
+    } else {
+      ratioCropH = Math.round(width / targetAspect);
+    }
+  }
+  const cropW = Math.round(ratioCropW * (1 - 2 * t.cropPercent));
+  const cropH = Math.round(ratioCropH * (1 - 2 * t.cropPercent));
+  const cropX = Math.round((width - cropW) / 2);
+  const cropY = Math.round((height - cropH) / 2);
 
-  const overlayColors = ["0x1a1a2e", "0x2e1a1a", "0x1a2e1a"];
+  // 首尾裁切：去掉 0.3~0.8 秒
+  const trimHead = Math.min(0.8, duration * 0.03);
+  const trimTail = Math.min(0.8, duration * 0.03);
+  const needTrim = duration > 5 && (trimHead + trimTail) > 0.5;
 
+  // 变速
+  const speed = Math.max(0.5, Math.min(2.0, t.speed));
+  const setptsFactor = (1 / speed).toFixed(6);
+
+  // 音频变调
+  const pitchFactor = Math.pow(2, t.pitchSemitones / 12);
+  const atempoVal = (speed / pitchFactor).toFixed(6);
+
+  // 帧率微调
+  const targetFps = Math.round(fps) === 30 ? 29 : Math.round(fps) === 60 ? 59 : Math.round(fps * 0.97);
+
+  // 水印：在随机角落画一个半透明色块
+  const wmSize = Math.round(Math.min(targetW, targetH) * 0.04);
+  const corners = [
+    `${targetW - wmSize - 10}:${targetH - wmSize - 10}`,
+    `10:${targetH - wmSize - 10}`,
+    `${targetW - wmSize - 10}:10`,
+    `10:10`,
+  ];
+  const wmPos = corners[Math.floor(Math.random() * corners.length)];
+
+  // ─── 构建 video filter chain ───
+  const vFilters = [];
+
+  // 1. 首尾裁切
+  if (needTrim) {
+    vFilters.push(`trim=start=${trimHead.toFixed(3)}:end=${(duration - trimTail).toFixed(3)}`, "setpts=PTS-STARTPTS");
+  }
+
+  // 2. 水平镜像翻转（最有效的单手段）
+  if (t.flip) {
+    vFilters.push("hflip");
+  }
+
+  // 3. 中心裁切（改变像素位置）
+  vFilters.push(`crop=${cropW}:${cropH}:${cropX}:${cropY}`);
+
+  // 4. 缩放到目标尺寸（bicubic 比 lanczos 快很多，去重场景足够）
+  vFilters.push(`scale=${targetW}:${targetH}:flags=bicubic`);
+
+  // 5. 变速
+  vFilters.push(`setpts=PTS*${setptsFactor}`);
+
+  // 6. 色彩变换：色相偏移 + 饱和度 + 对比度 + 亮度
+  vFilters.push(
+    `hue=h=${t.hueShift.toFixed(1)}:s=${t.saturation.toFixed(3)}`,
+    `eq=contrast=${t.contrast.toFixed(3)}:brightness=${t.brightness.toFixed(3)}:saturation=1.0`,
+  );
+
+  // 7. 轻微锐化（减小范围以加速）
+  vFilters.push(`unsharp=3:3:0.4:3:3:0`);
+
+  // 8. 胶片颗粒噪点（只用 temporal 避免逐像素计算过重）
+  vFilters.push(`noise=alls=${t.grainStrength}:allf=t`);
+
+  // 9. 水印色块
+  vFilters.push(`drawbox=x=${wmPos.split(":")[0]}:y=${wmPos.split(":")[1]}:w=${wmSize}:h=${wmSize}:color=0x000000@${(t.watermarkOpacity).toFixed(2)}:t=fill`);
+
+  // 10. 帧率变换
+  vFilters.push(`fps=${targetFps}`);
+
+  // 11. 确保像素格式
+  vFilters.push("format=yuv420p");
+
+  // ─── 构建 audio filter chain ───
+  let audioArgs = [];
+  if (hasAudio) {
+    const aFilters = [];
+
+    // 首尾裁切同步
+    if (needTrim) {
+      aFilters.push(`atrim=start=${trimHead.toFixed(3)}:end=${(duration - trimTail).toFixed(3)}`, "asetpts=PTS-STARTPTS");
+    }
+
+    // 变调 + 变速
+    aFilters.push(
+      `asetrate=${sampleRate}*${pitchFactor.toFixed(6)}`,
+      `atempo=${atempoVal}`,
+      `aresample=${sampleRate}`,
+    );
+
+    // EQ 调整（改变音频指纹）
+    aFilters.push(
+      `equalizer=f=800:t=q:w=1:g=2`,
+      `equalizer=f=3000:t=q:w=1:g=-1.5`,
+      `bass=g=2:f=120:w=0.7`,
+      `treble=g=1.5:f=8000:w=0.7`,
+    );
+
+    // 音量归一化
+    aFilters.push(`volume=1.5dB`);
+
+    audioArgs = ["-af", aFilters.join(",")];
+  }
+
+  // ─── 构建 ffmpeg 命令 ───
   const args = [
     "-i", inputPath,
-    "-f", "lavfi", "-t", durStr, "-i", `color=c=${overlayColors[0]}:s=${width}x${height}:r=${fpsStr}`,
-    "-f", "lavfi", "-t", durStr, "-i", `color=c=${overlayColors[1]}:s=${width}x${height}:r=${fpsStr}`,
-    "-f", "lavfi", "-t", durStr, "-i", `color=c=${overlayColors[2]}:s=${width}x${height}:r=${fpsStr}`,
-  ];
-
-  const videoFilters = [];
-  if (trimStart > 0) {
-    videoFilters.push(`trim=start=${trimStart}:end=${trimEnd}`, "setpts=PTS-STARTPTS");
-  }
-  videoFilters.push(
-    "colorbalance=rm=-0.02:gm=-0.02:bm=0.02",
-    "eq=brightness=0.01",
-    "unsharp=5:5:0.7:5:5:0",
-  );
-
-  const filterParts = [
-    `[0:v]${videoFilters.join(",")}[v_base]`,
-    `[1:v]format=rgba,colorchannelmixer=aa=0.01[ov1]`,
-    `[2:v]format=rgba,colorchannelmixer=aa=0.02[ov2]`,
-    `[3:v]format=rgba,colorchannelmixer=aa=0.01[ov3]`,
-    `[v_base][ov1]overlay=0:0:enable='between(t,0,${seg1End.toFixed(3)})'[v1]`,
-    `[v1][ov2]overlay=0:0:enable='between(t,${seg1End.toFixed(3)},${seg2End.toFixed(3)})'[v2]`,
-    `[v2][ov3]overlay=0:0:enable='between(t,${seg2End.toFixed(3)},${seg3End.toFixed(3)})'[v_out]`,
-  ];
-
-  if (hasAudio) {
-    const audioFilters = [];
-    if (trimStart > 0) {
-      audioFilters.push(`atrim=start=${trimStart}:end=${trimEnd}`, "asetpts=PTS-STARTPTS");
-    }
-    audioFilters.push(
-      "volume=8dB",
-      `asetrate=${sampleRate}*1.0601`,
-      "atempo=0.9433",
-    );
-    filterParts.push(`[0:a]${audioFilters.join(",")}[a_out]`);
-  }
-
-  args.push("-filter_complex", filterParts.join(";"));
-
-  if (hasAudio) {
-    args.push("-map", "[v_out]", "-map", "[a_out]");
-  } else {
-    args.push("-map", "[v_out]");
-  }
-
-  args.push(
+    "-vf", vFilters.join(","),
+    ...audioArgs,
     "-c:v", "libx264",
     "-crf", "23",
-    "-preset", "fast",
+    "-preset", "veryfast",
     "-pix_fmt", "yuv420p",
     "-movflags", "+faststart",
-  );
+  ];
 
   if (hasAudio) {
     args.push("-c:a", "aac", "-b:a", "128k");
@@ -211,18 +322,18 @@ async function concatVideos(inputPaths, outputPath) {
   }
 }
 
-export async function dedupVideo(inputPath, ratio = null) {
+export async function dedupVideo(inputPath, ratio = null, options = {}) {
   const meta = await probeVideo(inputPath);
   if (!meta) throw new Error("无法读取视频信息");
 
   const baseName = path.basename(inputPath, path.extname(inputPath));
   const cleanName = baseName.startsWith("dedup_") ? baseName.slice(6) : baseName;
   const outputPath = path.join(OUTPUT_DIR, `dedup_${cleanName}.mp4`);
-  await processSingleVideo(inputPath, outputPath, meta);
+  await processSingleVideo(inputPath, outputPath, meta, { ...options, ratio });
   return outputPath;
 }
 
-export async function stitchVideos(inputPaths, ratio = null) {
+export async function stitchVideos(inputPaths, ratio = null, options = {}) {
   const id = genId();
   const tempPaths = [];
 
@@ -233,7 +344,7 @@ export async function stitchVideos(inputPaths, ratio = null) {
       if (!meta) throw new Error(`无法读取视频 ${i + 1} 的信息`);
 
       const processedPath = path.join(TEMP_DIR, `segment_${id}_${i}.mp4`);
-      await processSingleVideo(inputPaths[i], processedPath, meta);
+      await processSingleVideo(inputPaths[i], processedPath, meta, { ...options, ratio });
       processedPaths.push(processedPath);
       tempPaths.push(processedPath);
     }

@@ -43,6 +43,20 @@ export function isTiktokForyou(rawUrl) {
   }
 }
 
+export function isTiktokSearch(rawUrl) {
+  try {
+    const url = new URL(rawUrl);
+    if (!isTiktokHost(url.hostname)) return false;
+    return url.pathname === "/search" || url.pathname.startsWith("/search");
+  } catch {
+    return false;
+  }
+}
+
+export function buildSearchUrl(keyword) {
+  return `https://www.tiktok.com/search?q=${encodeURIComponent(keyword)}`;
+}
+
 export function buildTiktokFeedDomExpression() {
   return `(() => {
     const TIKTOK_SELECTORS = ${JSON.stringify(TIKTOK_SELECTORS)};
@@ -72,13 +86,18 @@ export function buildTiktokFeedDomExpression() {
     const videos = [...document.querySelectorAll(TIKTOK_SELECTORS.feed.video)];
     const video = videos.find((v) => !v.paused) || videos.find((v) => visibleInViewport(rectOf(v))) || videos[0] || null;
 
-    if (!section || !video) {
-      return { ready: false, url: location.href, title: document.title, reason: "no-video-card" };
+    // On video detail pages (/@user/video/xxx) there are no feed-video sections,
+    // but the action buttons (like-icon, comment-icon, etc.) exist at document level.
+    // Fall back to using document as the search scope.
+    const scope = section || document;
+
+    if (!video) {
+      return { ready: false, url: location.href, title: document.title, reason: "no-video" };
     }
 
-    const descEl = section.querySelector(TIKTOK_SELECTORS.meta.desc);
+    const descEl = scope.querySelector(TIKTOK_SELECTORS.meta.desc) || q(TIKTOK_SELECTORS.meta.desc);
     const desc = (descEl ? descEl.textContent || "" : "").trim();
-    const authorLinks = [...section.querySelectorAll(TIKTOK_SELECTORS.meta.authorLink)]
+    const authorLinks = [...scope.querySelectorAll(TIKTOK_SELECTORS.meta.authorLink)]
       .filter((a) => !/\\/tag\\//.test(a.pathname));
     const authorLink = authorLinks[0] || null;
     const author = authorLink ? (authorLink.textContent || "").trim() : "";

@@ -1,5 +1,5 @@
 import { CdpClient } from "../cdp-client.js";
-import { buildTiktokFeedDomExpression, tiktokVideoIdentity, isTiktokForyou } from "./tiktok-selectors.js";
+import { buildTiktokFeedDomExpression, tiktokVideoIdentity, isTiktokForyou, isTiktokSearch, buildSearchUrl } from "./tiktok-selectors.js";
 
 const SETTLE_SAMPLE_INTERVAL_MS = 300;
 const SETTLE_MAX_SAMPLES = 12;
@@ -17,6 +17,7 @@ export class TiktokSession {
   constructor({ client = new CdpClient(), targetUrl = "https://www.tiktok.com/foryou" } = {}) {
     this.client = client;
     this.targetUrl = targetUrl;
+    this.currentPageUrl = targetUrl;
     this.sessionId = null;
     this.targetId = null;
     this.lastVideoIdentity = null;
@@ -29,18 +30,32 @@ export class TiktokSession {
     const tk = (targets.targetInfos || []).find(
       (t) => t.type === "page" && /tiktok\.com/.test(t.url),
     );
-    if (!tk) throw new Error("未找到 TikTok 标签页");
-    this.targetId = tk.targetId;
-    const attached = await this.client.call("Target.attachToTarget", {
-      targetId: this.targetId,
-      flatten: true,
-    });
-    this.sessionId = attached.sessionId;
-    await this.client.call("Page.enable", {}, this.sessionId);
-    if (!isTiktokForyou(tk.url)) {
-      await this.client.call("Page.navigate", { url: this.targetUrl }, this.sessionId, 30000);
+
+    if (tk) {
+      this.targetId = tk.targetId;
+      const attached = await this.client.call("Target.attachToTarget", {
+        targetId: this.targetId,
+        flatten: true,
+      });
+      this.sessionId = attached.sessionId;
+      await this.client.call("Page.enable", {}, this.sessionId);
+      if (!isTiktokForyou(tk.url)) {
+        await this.client.call("Page.navigate", { url: this.targetUrl }, this.sessionId, 30000);
+        await this.#waitForReady();
+      }
+    } else {
+      // No TikTok tab — create a new one
+      const created = await this.client.call("Target.createTarget", { url: this.targetUrl });
+      this.targetId = created.targetId;
+      const attached = await this.client.call("Target.attachToTarget", {
+        targetId: this.targetId,
+        flatten: true,
+      });
+      this.sessionId = attached.sessionId;
+      await this.client.call("Page.enable", {}, this.sessionId);
       await this.#waitForReady();
     }
+
     await this.#waitStable();
     let info = null;
     for (let i = 0; i < 24; i++) {
@@ -58,6 +73,145 @@ export class TiktokSession {
     }
     if (info.blocked) throw new Error("TikTok 页面被登录墙或验证码阻塞");
     return info;
+  }
+
+  async search(keyword) {
+    if (!keyword || !keyword.trim()) throw new Error("搜索关键词为空");
+    const cleanKeyword = keyword.trim();
+    const searchUrl = buildSearchUrl(cleanKeyword);
+
+    this.lastVideoIdentity = null;
+    this.currentPageUrl = searchUrl;
+
+    // Step 1: Navigate to search page
+    const domReady = this.client.call(
+      "Runtime.evaluate",
+      {
+        expression: "new Promise(r => document.readyState === 'loading' ? document.addEventListener('DOMContentLoaded', r, {once:true}) : r())",
+        awaitPromise: true,
+        returnByValue: true,
+      },
+      this.sessionId,
+      30000,
+    );
+    await this.client.call("Page.navigate", { url: searchUrl }, this.sessionId, 30000);
+    await domReady;
+    await new Promise((r) => setTimeout(r, 3000));
+
+    // Step 2: Wait for search result video links to appear
+    for (let attempt = 0; attempt < 20; attempt++) {
+      const checkRes = await this.client.call(
+        "Runtime.evaluate",
+        {
+          expression: `(() => {
+            const items = document.querySelectorAll('[data-e2e="search_top-item"]');
+            const videoLinks = document.querySelectorAll('a[href*="/video/"]');
+            return JSON.stringify({ items: items.length, videoLinks: videoLinks.length, hasLogin: !!document.querySelector('[data-e2e="login-container"]') });
+          })()`,
+          returnByValue: true,
+        },
+        this.sessionId,
+        8000,
+      );
+      const info = JSON.parse(checkRes?.result?.value || "{}");
+      if (info.hasLogin) throw new Error("搜索页被登录墙阻塞");
+      if (info.items > 0 || info.videoLinks > 0) break;
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+
+    // Step 3: Get the first video URL from search results and navigate to it
+    const getVideoUrlExpr = `(() => {
+      const link = document.querySelector('a[href*="/video/"]');
+      if (!link) {
+        const item = document.querySelector('[data-e2e="search_top-item"]');
+        if (item) { item.click(); return JSON.stringify({ ok: true, method: 'click-item' }); }
+        return JSON.stringify({ ok: false, reason: 'no-video-link' });
+      }
+      return JSON.stringify({ ok: true, method: 'navigate', url: link.href });
+    })()`;
+    const urlRes = await this.client.call(
+      "Runtime.evaluate",
+      { expression: getVideoUrlExpr, returnByValue: true },
+      this.sessionId,
+      8000,
+    );
+    const urlInfo = JSON.parse(urlRes?.result?.value || "{}");
+    if (!urlInfo.ok) throw new Error("无法找到搜索结果视频");
+
+    if (urlInfo.method === "navigate" && urlInfo.url) {
+      const videoReady = this.client.call(
+        "Runtime.evaluate",
+        {
+          expression: "new Promise(r => document.readyState === 'loading' ? document.addEventListener('DOMContentLoaded', r, {once:true}) : r())",
+          awaitPromise: true,
+          returnByValue: true,
+        },
+        this.sessionId,
+        30000,
+      );
+      await this.client.call("Page.navigate", { url: urlInfo.url }, this.sessionId, 30000);
+      await videoReady;
+    }
+
+    // Step 4: Wait for video detail page to be ready
+    await new Promise((r) => setTimeout(r, 5000));
+    for (let attempt = 0; attempt < 24; attempt++) {
+      const res = await this.client.call(
+        "Runtime.evaluate",
+        { expression: buildTiktokFeedDomExpression(), returnByValue: true },
+        this.sessionId,
+        10000,
+      );
+      const info = valueOf(res);
+      if (info?.ready && info.current?.author && info.actions?.like?.visible) {
+        this.lastVideoIdentity = tiktokVideoIdentity(info);
+        this.currentPageUrl = info.url || searchUrl;
+        return info;
+      }
+      if (info?.blocked) throw new Error("全屏视频页被登录墙或验证码阻塞");
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+    throw new Error(`搜索 "${cleanKeyword}" 后全屏视频页未就绪`);
+  }
+
+  async returnToForyou() {
+    this.lastVideoIdentity = null;
+    this.currentPageUrl = this.targetUrl;
+    const domReady = this.client.call(
+      "Runtime.evaluate",
+      {
+        expression: "new Promise(r => document.readyState === 'loading' ? document.addEventListener('DOMContentLoaded', r, {once:true}) : r())",
+        awaitPromise: true,
+        returnByValue: true,
+      },
+      this.sessionId,
+      30000,
+    );
+    await this.client.call(
+      "Page.navigate",
+      { url: this.targetUrl },
+      this.sessionId,
+      30000,
+    );
+    await domReady;
+    await new Promise((r) => setTimeout(r, 2500));
+
+    for (let attempt = 0; attempt < 24; attempt++) {
+      const res = await this.client.call(
+        "Runtime.evaluate",
+        { expression: buildTiktokFeedDomExpression(), returnByValue: true },
+        this.sessionId,
+        10000,
+      );
+      const info = valueOf(res);
+      if (info?.ready && info.current?.author) {
+        this.lastVideoIdentity = tiktokVideoIdentity(info);
+        return info;
+      }
+      if (info?.blocked) throw new Error("返回 For You 页被阻塞");
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+    throw new Error("返回 For You 页超时");
   }
 
   async #waitForReady() {
@@ -112,12 +266,46 @@ export class TiktokSession {
   async advanceVideo() {
     const before = await this.readFeed();
     const beforeId = tiktokVideoIdentity(before);
-    const container = before.container;
-    if (!container) throw new Error("未找到 TikTok 视频流容器");
+
+    // Try multiple navigation strategies:
+    // 1. feed-navigation-next button (video detail page)
+    // 2. scrollIntoView on next section (For You page)
+    // 3. fallback scrollTop
     await this.client.call(
       "Runtime.evaluate",
       {
-        expression: `(() => { const c = document.querySelector('[class*="DivColumnListContainer"]'); if (c) c.scrollTop += c.clientHeight; return c ? c.scrollTop : -1; })()`,
+        expression: `(() => {
+          // Strategy 1: feed-navigation-next button (video detail page)
+          const nextBtn = document.querySelector('[data-e2e="feed-navigation-next"]');
+          if (nextBtn) {
+            const r = nextBtn.getBoundingClientRect();
+            if (r.width > 0 && r.height > 0) {
+              nextBtn.click();
+              return 'nav-next-clicked';
+            }
+          }
+          // Strategy 2: scrollIntoView on next feed-video section (For You page)
+          const sections = [...document.querySelectorAll('section[data-e2e="feed-video"]')];
+          const current = sections.find((s) => {
+            const r = s.getBoundingClientRect();
+            return r.top <= innerHeight / 2 && r.bottom >= innerHeight / 2;
+          }) || sections[0];
+          if (current) {
+            const idx = sections.indexOf(current);
+            const next = sections[idx + 1];
+            if (next) {
+              next.scrollIntoView({ behavior: 'instant', block: 'start' });
+              return 'scrolled-to-next';
+            }
+          }
+          // Strategy 3: fallback scrollTop
+          const c = document.querySelector('[class*="DivColumnListContainer"]');
+          if (c) {
+            c.scrollTop += c.clientHeight;
+            return 'fallback-scrolltop';
+          }
+          return 'no-navigation';
+        })()`,
         returnByValue: true,
       },
       this.sessionId,
@@ -188,7 +376,8 @@ export class TiktokSession {
   }
 
   async closeComments() {
-    await this.client.call("Page.navigate", { url: this.targetUrl }, this.sessionId, 30000);
+    const returnUrl = this.currentPageUrl || this.targetUrl;
+    await this.client.call("Page.navigate", { url: returnUrl }, this.sessionId, 30000);
     await this.#waitForReady();
     await this.#waitStable();
     let info = null;
@@ -202,7 +391,8 @@ export class TiktokSession {
       if (info && info.ready && info.current?.author && info.actions?.like?.visible) break;
       await new Promise((r) => setTimeout(r, 600));
     }
-    if (!info || info.ready !== true) throw new Error("返回 For You 失败");
+    if (!info || info.ready !== true) throw new Error("返回视频页面失败");
+    this.lastVideoIdentity = tiktokVideoIdentity(info);
     return info;
   }
 

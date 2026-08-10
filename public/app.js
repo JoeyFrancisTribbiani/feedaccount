@@ -29,6 +29,12 @@ const FALLBACK_OPTIONS = Object.freeze({
   autoJoinIntervalMinSec: 60,
   autoJoinIntervalMaxSec: 180,
   autoJoinMaxPerRun: 3,
+  autoCommentEnabled: false,
+  autoCommentProbability: 0,
+  autoCommentMinIntervalSec: 1800,
+  autoCommentMaxIntervalSec: 7200,
+  autoCommentMaxPerRun: 2,
+  autoCommentTexts: [],
 });
 
 const OPTIONS_STORAGE_KEY = "reddit-flow-options-v3";
@@ -97,6 +103,28 @@ const elements = {
   joinTargetsText: document.querySelector("#join-targets-text"),
   joinTargetsSave: document.querySelector("#join-targets-save"),
   joinTargetsStatus: document.querySelector("#join-targets-status"),
+  autoCommentEnabled: document.querySelector("#auto-comment-enabled"),
+  autoCommentProbability: document.querySelector("#auto-comment-probability"),
+  autoCommentMinInterval: document.querySelector("#auto-comment-min-interval"),
+  autoCommentMaxInterval: document.querySelector("#auto-comment-max-interval"),
+  autoCommentMaxPerRun: document.querySelector("#auto-comment-max-per-run"),
+  autoCommentTexts: document.querySelector("#auto-comment-texts"),
+  aiCommentUse: document.querySelector("#ai-comment-use"),
+  aiCommentBaseUrl: document.querySelector("#ai-comment-base-url"),
+  aiCommentApiKey: document.querySelector("#ai-comment-api-key"),
+  aiCommentModel: document.querySelector("#ai-comment-model"),
+  aiCommentPrompt: document.querySelector("#ai-comment-prompt"),
+  aiCommentMaxTokens: document.querySelector("#ai-comment-max-tokens"),
+  aiCommentTemperature: document.querySelector("#ai-comment-temperature"),
+  aiCommentSave: document.querySelector("#ai-comment-save"),
+  aiCommentStatus: document.querySelector("#ai-comment-status"),
+  optionsPanelBody: document.querySelector("#options-panel-body"),
+  optionsPanelToggle: document.querySelector("#options-panel-toggle"),
+  optionsCollapseIcon: document.querySelector("#options-collapse-icon"),
+  optionsScopeBadge: document.querySelector("#options-scope-badge"),
+  optionsScopeSelect: document.querySelector("#options-scope-select"),
+  optionsProfileSelect: document.querySelector("#options-profile-select"),
+  optionsScopeHint: document.querySelector("#options-scope-hint"),
   metricProfiles: document.querySelector("#metric-profiles"),
   metricActive: document.querySelector("#metric-active"),
   metricPosts: document.querySelector("#metric-posts"),
@@ -548,9 +576,10 @@ function renderJobs() {
             <div class="job-stat"><span>查看详情</span><strong>${formatNumber(job.detailVisitCount)}</strong></div>
             <div class="job-stat"><span>当前阶段</span><strong>${escapeHtml(workflowPhaseLabel(job))}</strong></div>
           </div>
-          ${(Number(job.autoUpvoteCount) > 0 || Number(job.autoCommentUpvoteCount) > 0 || Number(job.autoJoinCount) > 0) ? `<div class="job-stats">
+          ${(Number(job.autoUpvoteCount) > 0 || Number(job.autoCommentUpvoteCount) > 0 || Number(job.autoJoinCount) > 0 || Number(job.autoCommentCount) > 0) ? `<div class="job-stats">
             <div class="job-stat"><span>自动点赞</span><strong>${formatNumber(job.autoUpvoteCount)} 帖</strong></div>
             <div class="job-stat"><span>自动赞评</span><strong>${formatNumber(job.autoCommentUpvoteCount)} 条</strong></div>
+            ${Number(job.autoCommentCount) > 0 ? `<div class="job-stat"><span>自动评论</span><strong>${formatNumber(job.autoCommentCount)} 条</strong></div>` : ""}
             ${Number(job.autoJoinCount) > 0 ? `<div class="job-stat"><span>自动关注</span><strong>${formatNumber(job.autoJoinCount)} 个</strong></div>` : ""}
             <div class="job-stat"><span>已锁帖</span><strong>${formatNumber(job.upvotedPostCount)}</strong></div>
           </div>` : ""}
@@ -623,6 +652,12 @@ function readOptions({ persistLocal = true } = {}) {
     autoJoinIntervalMinSec: Number(elements.autoJoinIntervalMin.value),
     autoJoinIntervalMaxSec: Number(elements.autoJoinIntervalMax.value),
     autoJoinMaxPerRun: Number(elements.autoJoinMaxPerRun.value),
+    autoCommentEnabled: elements.autoCommentEnabled.checked,
+    autoCommentProbability: Number(elements.autoCommentProbability.value),
+    autoCommentMinIntervalSec: Number(elements.autoCommentMinInterval.value),
+    autoCommentMaxIntervalSec: Number(elements.autoCommentMaxInterval.value),
+    autoCommentMaxPerRun: Number(elements.autoCommentMaxPerRun.value),
+    autoCommentTexts: (elements.autoCommentTexts.value || "").split("\n").map((t) => t.trim()).filter(Boolean),
   };
   if (!elements.optionsForm.reportValidity()) throw new Error("请检查任务参数");
   if (options.waitMinSec > options.waitMaxSec) throw new Error("最短等待不能大于最长等待");
@@ -640,6 +675,9 @@ function readOptions({ persistLocal = true } = {}) {
   }
   if (options.autoJoinIntervalMinSec > options.autoJoinIntervalMaxSec) {
     throw new Error("关注群组最短间隔不能大于最长间隔");
+  }
+  if (options.autoCommentMinIntervalSec > options.autoCommentMaxIntervalSec) {
+    throw new Error("评论最短间隔不能大于最长间隔");
   }
   if (persistLocal) localStorage.setItem(OPTIONS_STORAGE_KEY, JSON.stringify(options));
   return options;
@@ -684,16 +722,140 @@ function applyOptions(options = {}) {
     options.autoJoinIntervalMaxSec ?? FALLBACK_OPTIONS.autoJoinIntervalMaxSec;
   elements.autoJoinMaxPerRun.value =
     options.autoJoinMaxPerRun ?? FALLBACK_OPTIONS.autoJoinMaxPerRun;
+  elements.autoCommentEnabled.checked = Boolean(
+    options.autoCommentEnabled ?? FALLBACK_OPTIONS.autoCommentEnabled,
+  );
+  elements.autoCommentProbability.value =
+    options.autoCommentProbability ?? FALLBACK_OPTIONS.autoCommentProbability;
+  elements.autoCommentMinInterval.value =
+    options.autoCommentMinIntervalSec ?? FALLBACK_OPTIONS.autoCommentMinIntervalSec;
+  elements.autoCommentMaxInterval.value =
+    options.autoCommentMaxIntervalSec ?? FALLBACK_OPTIONS.autoCommentMaxIntervalSec;
+  elements.autoCommentMaxPerRun.value =
+    options.autoCommentMaxPerRun ?? FALLBACK_OPTIONS.autoCommentMaxPerRun;
+  elements.autoCommentTexts.value = Array.isArray(options.autoCommentTexts)
+    ? options.autoCommentTexts.join("\n")
+    : "";
+}
+
+// --- AI 评论配置 ---
+async function loadAiCommentConfig() {
+  try {
+    const res = await request("/api/settings/ai-comment");
+    const cfg = res.config || {};
+    if (elements.aiCommentUse) elements.aiCommentUse.checked = Boolean(cfg.useAI);
+    if (elements.aiCommentBaseUrl) elements.aiCommentBaseUrl.value = cfg.baseURL || "https://api.openai.com/v1";
+    if (elements.aiCommentApiKey) elements.aiCommentApiKey.value = cfg.apiKey || "";
+    if (elements.aiCommentModel) elements.aiCommentModel.value = cfg.model || "gpt-4o-mini";
+    if (elements.aiCommentPrompt) elements.aiCommentPrompt.value = cfg.systemPrompt || "";
+    if (elements.aiCommentMaxTokens) elements.aiCommentMaxTokens.value = cfg.maxTokens || 200;
+    if (elements.aiCommentTemperature) elements.aiCommentTemperature.value = cfg.temperature ?? 0.8;
+  } catch { /* ignore */ }
+}
+
+if (elements.aiCommentSave) {
+  elements.aiCommentSave.addEventListener("click", async () => {
+    try {
+      const config = {
+        useAI: elements.aiCommentUse?.checked ?? false,
+        baseURL: elements.aiCommentBaseUrl?.value.trim() || "https://api.openai.com/v1",
+        apiKey: elements.aiCommentApiKey?.value.trim() || "",
+        model: elements.aiCommentModel?.value.trim() || "gpt-4o-mini",
+        systemPrompt: elements.aiCommentPrompt?.value.trim() || "",
+        maxTokens: Number(elements.aiCommentMaxTokens?.value) || 200,
+        temperature: Number(elements.aiCommentTemperature?.value) || 0.8,
+      };
+      await request("/api/settings/ai-comment", { method: "PUT", body: JSON.stringify({ config }) });
+      if (elements.aiCommentStatus) elements.aiCommentStatus.textContent = "AI 配置已保存";
+      showToast("AI 评论配置已保存");
+    } catch (e) {
+      if (elements.aiCommentStatus) elements.aiCommentStatus.textContent = `保存失败：${e.message}`;
+      showToast(e.message, true);
+    }
+  });
+}
+
+// --- 任务参数面板：折叠 + 作用域切换 ---
+const optionsScopeState = { scope: "global", profileId: null };
+
+function toggleOptionsPanel() {
+  if (!elements.optionsPanelBody) return;
+  const collapsed = elements.optionsPanelBody.classList.toggle("collapsed");
+  if (elements.optionsCollapseIcon) {
+    elements.optionsCollapseIcon.textContent = collapsed ? "▶" : "▼";
+  }
+}
+
+function populateOptionsProfileSelect() {
+  if (!elements.optionsProfileSelect) return;
+  const profiles = (state.profiles || []).filter(p => p.seq != null).sort((a, b) => a.seq - b.seq);
+  elements.optionsProfileSelect.innerHTML = profiles.map(p =>
+    `<option value="${escapeHtml(p.id)}">#${escapeHtml(p.seq)} ${escapeHtml(p.name)}</option>`
+  ).join("");
+}
+
+async function loadOptionsForScope() {
+  if (optionsScopeState.scope === "global") {
+    if (elements.optionsProfileSelect) elements.optionsProfileSelect.classList.add("hidden");
+    if (elements.optionsScopeBadge) { elements.optionsScopeBadge.textContent = "全局"; elements.optionsScopeBadge.classList.remove("profile-scope"); }
+    if (elements.optionsScopeHint) elements.optionsScopeHint.textContent = "所有未单独配置的实例将使用这些参数";
+    try {
+      const res = await request("/api/config");
+      applyOptions(res.savedOptions || res.defaults || FALLBACK_OPTIONS);
+    } catch { /* ignore */ }
+  } else {
+    if (elements.optionsProfileSelect) elements.optionsProfileSelect.classList.remove("hidden");
+    const profileId = elements.optionsProfileSelect?.value;
+    if (!profileId) return;
+    optionsScopeState.profileId = profileId;
+    const profileName = elements.optionsProfileSelect.selectedOptions[0]?.textContent || profileId;
+    if (elements.optionsScopeBadge) { elements.optionsScopeBadge.textContent = profileName; elements.optionsScopeBadge.classList.add("profile-scope"); }
+    try {
+      const res = await request(`/api/settings/profile/${encodeURIComponent(profileId)}`);
+      if (res.options) {
+        applyOptions(res.options);
+        if (elements.optionsScopeHint) elements.optionsScopeHint.textContent = res.hasProfileOverride ? "已加载此实例的独立参数" : "此实例尚未配置独立参数，当前显示全局默认值";
+      } else {
+        const cfg = await request("/api/config");
+        applyOptions(cfg.defaults || FALLBACK_OPTIONS);
+        if (elements.optionsScopeHint) elements.optionsScopeHint.textContent = "此实例尚未配置独立参数，当前显示全局默认值";
+      }
+    } catch { /* ignore */ }
+  }
+}
+
+if (elements.optionsPanelToggle) {
+  elements.optionsPanelToggle.addEventListener("click", (e) => {
+    if (e.target.closest("button") && !e.target.closest("#options-collapse-icon") && e.target.id !== "options-panel-toggle") return;
+    toggleOptionsPanel();
+  });
+}
+if (elements.optionsScopeSelect) {
+  elements.optionsScopeSelect.addEventListener("change", () => {
+    optionsScopeState.scope = elements.optionsScopeSelect.value;
+    loadOptionsForScope();
+  });
+}
+if (elements.optionsProfileSelect) {
+  elements.optionsProfileSelect.addEventListener("change", loadOptionsForScope);
 }
 
 async function saveOptionsToDatabase() {
   try {
     const options = readOptions();
-    await request("/api/settings", {
-      method: "PUT",
-      body: JSON.stringify({ options }),
-    });
-    elements.dbStatus.textContent = "DB 参数已保存";
+    if (optionsScopeState.scope === "profile" && optionsScopeState.profileId) {
+      await request(`/api/settings/profile/${encodeURIComponent(optionsScopeState.profileId)}`, {
+        method: "PUT",
+        body: JSON.stringify({ options }),
+      });
+      elements.dbStatus.textContent = `DB 参数已保存（实例级：${elements.optionsProfileSelect.selectedOptions[0]?.textContent || ""}）`;
+    } else {
+      await request("/api/settings", {
+        method: "PUT",
+        body: JSON.stringify({ options }),
+      });
+      elements.dbStatus.textContent = "DB 参数已保存（全局）";
+    }
   } catch {
     // Invalid intermediate form values are saved after the user finishes editing.
   }
@@ -711,6 +873,9 @@ async function refreshProfiles({ quiet = false } = {}) {
     setApiStatus(true, "BitBrowser 已连接");
     renderProfiles();
     renderSchedProfiles();
+    populateRdtProfileSelect();
+    populateOptionsProfileSelect();
+    populateTkProfileCheckboxes();
     renderMetrics();
   } catch (error) {
     setApiStatus(false, "BitBrowser 未连接");
@@ -1284,12 +1449,17 @@ async function initialize() {
     }
     applyOptions(config.savedOptions || localOptions || config.defaults);
     await fetchJoinTargets();
+    loadAiCommentConfig();
     renderJobs();
   } catch (error) {
     showToast(error.message, true);
   }
 
   await refreshProfiles();
+  populateRdtProfileSelect();
+  populateOptionsProfileSelect();
+  renderRdtActionsGroups([]);
+  refreshRedditAccounts();
   await refreshData({ quiet: true });
   connectEventStream();
   initTiktok();
@@ -1342,10 +1512,20 @@ const TK_FALLBACK = Object.freeze({
   commentEnabled: false,
   commentProbability: 0,
   commentTexts: [],
+  searchEnabled: false,
+  searchKeywords: [],
+  searchVideosPerKeyword: 5,
+  searchCommentEnabled: false,
+  searchCommentProbability: 0,
+  searchCommentTexts: [],
 });
 
 const tk = {
-  profileSelect: document.querySelector("#tk-profile"),
+  scopeSelect: document.querySelector("#tk-scope-select"),
+  profileCheckboxes: document.querySelector("#tk-profile-checkboxes"),
+  scopeHint: document.querySelector("#tk-scope-hint"),
+  startAllBtn: document.querySelector("#tk-start-all"),
+  stopAllBtn: document.querySelector("#tk-stop-all"),
   watchMin: document.querySelector("#tk-watch-min"),
   watchMax: document.querySelector("#tk-watch-max"),
   maxVideos: document.querySelector("#tk-max-videos"),
@@ -1356,6 +1536,12 @@ const tk = {
   commentEnabled: document.querySelector("#tk-comment-enabled"),
   commentProb: document.querySelector("#tk-comment-prob"),
   commentTexts: document.querySelector("#tk-comment-texts"),
+  searchEnabled: document.querySelector("#tk-search-enabled"),
+  searchKeywords: document.querySelector("#tk-search-keywords"),
+  searchVideos: document.querySelector("#tk-search-videos"),
+  searchCommentEnabled: document.querySelector("#tk-search-comment-enabled"),
+  searchCommentProb: document.querySelector("#tk-search-comment-prob"),
+  searchCommentTexts: document.querySelector("#tk-search-comment-texts"),
   resetBtn: document.querySelector("#tk-reset"),
   startBtn: document.querySelector("#tk-start"),
   stopBtn: document.querySelector("#tk-stop"),
@@ -1371,6 +1557,63 @@ const tk = {
 
 const tkState = { history: [], logs: [] };
 
+const tkScopeState = { scope: "global", selectedProfileIds: [] };
+
+function populateTkProfileCheckboxes() {
+  if (!tk.profileCheckboxes) return;
+  const profiles = (state.profiles || []).filter(p => p.seq != null).sort((a, b) => a.seq - b.seq);
+  tk.profileCheckboxes.innerHTML = profiles.map(p =>
+    `<label class="tk-profile-check"><input type="checkbox" value="${escapeHtml(p.id)}" /><span>#${escapeHtml(p.seq)}</span><span>${escapeHtml(p.name)}</span></label>`
+  ).join("");
+  tk.profileCheckboxes.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+    cb.addEventListener("change", () => {
+      tkScopeState.selectedProfileIds = [...tk.profileCheckboxes.querySelectorAll('input[type="checkbox"]:checked')].map(c => c.value);
+      loadTkOptionsForScope();
+    });
+  });
+}
+
+async function loadTkOptionsForScope() {
+  if (tkScopeState.scope === "global") {
+    if (tk.scopeHint) { tk.scopeHint.textContent = "所有未单独配置的实例将使用这些参数"; }
+    try {
+      const cfg = await request("/api/tiktok/config");
+      applyTiktokOptions(cfg.saved || cfg.defaults || {});
+    } catch {}
+  } else {
+    const ids = tkScopeState.selectedProfileIds;
+    if (ids.length === 0) {
+      if (tk.scopeHint) tk.scopeHint.textContent = "请勾选要配置的实例";
+      return;
+    }
+    if (ids.length === 1) {
+      if (tk.scopeHint) tk.scopeHint.textContent = `正在编辑实例 ${ids[0].substring(0, 8)}… 的独立参数`;
+      try {
+        const cfg = await request(`/api/tiktok/config?profileId=${encodeURIComponent(ids[0])}`);
+        applyTiktokOptions(cfg.saved || cfg.defaults || {});
+      } catch {}
+    } else {
+      if (tk.scopeHint) tk.scopeHint.textContent = `已选 ${ids.length} 个实例，保存时将批量应用到所有选中实例`;
+      try {
+        const cfg = await request("/api/tiktok/config");
+        applyTiktokOptions(cfg.defaults || {});
+      } catch {}
+    }
+  }
+}
+
+if (tk.scopeSelect) {
+  tk.scopeSelect.addEventListener("change", () => {
+    tkScopeState.scope = tk.scopeSelect.value;
+    if (tkScopeState.scope === "global") {
+      tk.profileCheckboxes?.classList.add("hidden");
+    } else {
+      tk.profileCheckboxes?.classList.remove("hidden");
+    }
+    loadTkOptionsForScope();
+  });
+}
+
 function applyTiktokOptions(options) {
   const o = { ...TK_FALLBACK, ...options };
   tk.watchMin.value = o.watchMinSec;
@@ -1383,10 +1626,18 @@ function applyTiktokOptions(options) {
   tk.commentEnabled.checked = Boolean(o.commentEnabled);
   tk.commentProb.value = o.commentProbability;
   tk.commentTexts.value = Array.isArray(o.commentTexts) ? o.commentTexts.join("\n") : "";
+  tk.searchEnabled.checked = Boolean(o.searchEnabled);
+  tk.searchKeywords.value = Array.isArray(o.searchKeywords) ? o.searchKeywords.join("\n") : "";
+  tk.searchVideos.value = o.searchVideosPerKeyword || 5;
+  tk.searchCommentEnabled.checked = Boolean(o.searchCommentEnabled);
+  tk.searchCommentProb.value = o.searchCommentProbability || 0;
+  tk.searchCommentTexts.value = Array.isArray(o.searchCommentTexts) ? o.searchCommentTexts.join("\n") : "";
 }
 
 function collectTiktokOptions() {
   const texts = tk.commentTexts.value.split("\n").map((s) => s.trim()).filter(Boolean);
+  const searchKeywords = tk.searchKeywords.value.split("\n").map((s) => s.trim()).filter(Boolean);
+  const searchCommentTexts = tk.searchCommentTexts.value.split("\n").map((s) => s.trim()).filter(Boolean);
   return {
     watchMinSec: Number(tk.watchMin.value),
     watchMaxSec: Number(tk.watchMax.value),
@@ -1398,6 +1649,12 @@ function collectTiktokOptions() {
     commentEnabled: tk.commentEnabled.checked,
     commentProbability: Number(tk.commentProb.value),
     commentTexts: texts,
+    searchEnabled: tk.searchEnabled.checked,
+    searchKeywords,
+    searchVideosPerKeyword: Number(tk.searchVideos.value),
+    searchCommentEnabled: tk.searchCommentEnabled.checked,
+    searchCommentProbability: Number(tk.searchCommentProb.value),
+    searchCommentTexts,
   };
 }
 
@@ -1408,21 +1665,46 @@ function renderTiktokJobs() {
     tk.jobList.innerHTML = `<div class="empty-state compact">没有运行中的 TikTok 任务。</div>`;
     return;
   }
-  tk.jobList.innerHTML = jobs.map((job) => `
-    <div class="tk-job-card">
+  tk.jobList.innerHTML = jobs.map((job) => {
+    const opts = job.options || {};
+    const runningMs = job.startedAt ? Date.now() - new Date(job.startedAt).getTime() : 0;
+    const runningStr = runningMs > 0 ? formatDuration(runningMs) : "";
+    const featTags = [
+      opts.likeEnabled ? '<span class="tk-feat on">点赞</span>' : '<span class="tk-feat">点赞</span>',
+      opts.commentEnabled ? '<span class="tk-feat on">评论</span>' : '<span class="tk-feat">评论</span>',
+      opts.commentWatchEnabled ? '<span class="tk-feat on">看评论</span>' : '<span class="tk-feat">看评论</span>',
+      opts.searchEnabled ? '<span class="tk-feat on">搜索</span>' : '<span class="tk-feat">搜索</span>',
+    ].join("");
+    const cv = job.currentVideo;
+    const cvDesc = cv?.desc ? (cv.desc.length > 40 ? cv.desc.substring(0, 40) + "…" : cv.desc) : "";
+    const cvLiked = cv?.liked ? '<span class="tk-liked">已赞</span>' : "";
+    return `
+    <div class="tk-job-card tk-status-${escapeHtml(job.status)}">
       <div class="tk-job-head">
         <strong>${escapeHtml(job.profileName)}</strong>
-        <span class="tk-status tk-status-${escapeHtml(job.status)}">${escapeHtml(job.statusText || job.status)}</span>
+        <span class="tk-status-badge tk-status-${escapeHtml(job.status)}">${escapeHtml(job.statusText || job.status)}</span>
+        ${runningStr ? `<span class="tk-duration">${runningStr}</span>` : ""}
       </div>
       <div class="tk-job-stats">
-        <span>视频 ${job.videoCount}</span>
-        <span>点赞 ${job.likeCount}</span>
-        <span>评论 ${job.commentCount}</span>
-        ${job.currentVideo ? `<span class="tk-current">${escapeHtml(job.currentVideo.author)} · ${escapeHtml(job.currentVideo.likeCount || "")}</span>` : ""}
+        <div class="tk-stat"><span>For You</span><strong>${job.videoCount || 0}</strong></div>
+        <div class="tk-stat"><span>搜索</span><strong>${job.searchVideoCount || 0}</strong></div>
+        <div class="tk-stat"><span>点赞</span><strong>${job.likeCount || 0}</strong></div>
+        <div class="tk-stat"><span>评论</span><strong>${job.commentCount || 0}</strong></div>
       </div>
+      ${cv ? `<div class="tk-job-current"><span class="tk-author">${escapeHtml(cv.author || "")}</span>${cvDesc ? ` · <span class="tk-desc">${escapeHtml(cvDesc)}</span>` : ""}${cvLiked}</div>` : ""}
+      <div class="tk-job-feats">${featTags}</div>
       ${job.error ? `<div class="tk-job-error">${escapeHtml(job.error)}</div>` : ""}
-    </div>
-  `).join("");
+    </div>`;
+  }).join("");
+}
+
+function formatDuration(ms) {
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}秒`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}分${s % 60}秒`;
+  const h = Math.floor(m / 60);
+  return `${h}时${m % 60}分`;
 }
 
 function renderTiktokHistory() {
@@ -1465,6 +1747,315 @@ async function refreshTiktokData() {
   } catch (e) {
     showToast("TikTok 数据加载失败：" + e.message, true);
   }
+}
+
+// ---- Reddit 账号管理模块 ----
+const rdtExt = {
+  bindProfile: document.querySelector("#rdt-bind-profile"),
+  username: document.querySelector("#rdt-username"),
+  registeredAt: document.querySelector("#rdt-registered-at"),
+  nurtureStartedAt: document.querySelector("#rdt-nurture-started-at"),
+  stage: document.querySelector("#rdt-stage"),
+  karma: document.querySelector("#rdt-karma"),
+  notes: document.querySelector("#rdt-notes"),
+  btnSave: document.querySelector("#btn-save-reddit-account"),
+  btnRefresh: document.querySelector("#rdt-refresh-accounts"),
+  tableBody: document.querySelector("#rdt-accounts-table-body"),
+  actionsGroups: document.querySelector("#rdt-actions-groups"),
+};
+const rdtExtState = { accounts: [], editingId: null };
+const NURTURE_STAGE_LABELS = {
+  week1: "Week 1（仅点赞）",
+  week2: "Week 2（开始评论）",
+  week3: "Week 3（开始发帖）",
+};
+
+const NURTURE_ACTION_GROUPS = [
+  {
+    group: "week1",
+    label: "Week 1：点赞养号",
+    items: [
+      { key: "w1_feed_upvote", label: "主页 Feed 点赞" },
+      { key: "w1_comment_upvote", label: "评论区点赞" },
+      { key: "w1_join_subreddit", label: "关注目标社群" },
+      { key: "w1_targeted_upvote", label: "浏览目标社群并点赞" },
+    ],
+  },
+  {
+    group: "week2",
+    label: "Week 2：评论互动",
+    items: [
+      { key: "w2_post_comment", label: "发评论" },
+      { key: "w2_comment_on_new", label: "筛选 new 帖子评论" },
+      { key: "w2_check_post_age", label: "帖子发布 >1 小时检查" },
+      { key: "w2_check_author", label: "发帖人权重检查" },
+      { key: "w2_multi_comment", label: "多条评论（每天 2+）" },
+      { key: "w2_hourly_comment", label: "每小时一条评论" },
+    ],
+  },
+  {
+    group: "week3",
+    label: "Week 3：发帖",
+    items: [
+      { key: "w3_create_post", label: "发帖" },
+      { key: "w3_narrative_post", label: "叙事图文帖（谁在哪里干了什么）" },
+      { key: "w3_image_post", label: "带实拍图发帖" },
+    ],
+  },
+];
+const NURTURE_ACTION_LABELS = {};
+for (const g of NURTURE_ACTION_GROUPS) {
+  for (const item of g.items) NURTURE_ACTION_LABELS[item.key] = item.label;
+}
+
+const NURTURE_ACTION_CONFIGS = {
+  w1_join_subreddit: [{ label: "目标社群列表", type: "textarea", placeholder: "每行一个社群名，如：\nLV\nChanel\nhandbags", key: "targets" }],
+  w2_post_comment: [
+    { label: "使用 AI 生成评论", type: "checkbox", key: "useAI" },
+    { label: "评论文本库（AI 失败时回退）", type: "textarea", placeholder: "每行一条评论，随机选取发布\n如：This is really helpful!\nGreat point, thanks!", key: "texts" },
+  ],
+  w2_check_post_age: [{ label: "帖子最小发布时间（小时）", type: "number", placeholder: "1", key: "minHours" }],
+  w2_check_author: [{ label: "发帖人最低 Karma", type: "number", placeholder: "200", key: "minKarma" }],
+  w2_multi_comment: [{ label: "每天评论数上限", type: "number", placeholder: "2", key: "dailyMax" }],
+  w3_narrative_post: [{ label: "文案模板", type: "textarea", placeholder: "每行一个文案模板，如：\nBought my first LV bag in LA last week...", key: "templates" }],
+  w3_image_post: [{ label: "图片目录路径", type: "text", placeholder: "D:/images/reddit/", key: "imageDir" }],
+};
+
+function renderRdtActionsGroups(selectedActions = [], actionConfigs = {}) {
+  if (!rdtExt.actionsGroups) return;
+  const selectedSet = new Set(selectedActions);
+  rdtExt.actionsGroups.innerHTML = NURTURE_ACTION_GROUPS.map(group => {
+    const allChecked = group.items.every(i => selectedSet.has(i.key));
+    return `<div class="rdt-action-group">
+      <div class="rdt-action-group-header">
+        <label class="switch-row" style="font-size:12px;">
+          <input type="checkbox" class="rdt-group-toggle" data-group="${group.group}" ${allChecked ? "checked" : ""} />
+          <strong>${escapeHtml(group.label)}</strong>
+        </label>
+      </div>
+      <div class="rdt-action-items">
+        ${group.items.map(item => {
+          const configDefs = NURTURE_ACTION_CONFIGS[item.key];
+          const isChecked = selectedSet.has(item.key);
+          let configHtml = "";
+          if (configDefs && Array.isArray(configDefs)) {
+            configHtml = configDefs.map(configDef => {
+              const savedValue = (actionConfigs[item.key] || {})[configDef.key];
+              if (configDef.type === "checkbox") {
+                return `<div class="rdt-action-config ${isChecked ? "" : "hidden"}" data-action-key="${escapeHtml(item.key)}">
+                  <label class="rdt-config-label" style="flex-direction:row;align-items:center;gap:6px;">
+                    <input class="rdt-action-config-input" data-action-key="${escapeHtml(item.key)}" data-config-key="${escapeHtml(configDef.key)}" type="checkbox" ${savedValue ? "checked" : ""} style="width:14px;height:14px;" />
+                    <span>${escapeHtml(configDef.label)}</span>
+                  </label>
+                </div>`;
+              }
+              const savedStr = savedValue || "";
+              const valAttr = configDef.type === "textarea"
+                ? `>${escapeHtml(savedStr)}</textarea>`
+                : ` value="${escapeHtml(savedStr)}" />`;
+              return `<div class="rdt-action-config ${isChecked ? "" : "hidden"}" data-action-key="${escapeHtml(item.key)}">
+                <label class="rdt-config-label">
+                  <span>${escapeHtml(configDef.label)}</span>
+                  ${configDef.type === "textarea"
+                    ? `<textarea class="rdt-action-config-input" data-action-key="${escapeHtml(item.key)}" data-config-key="${escapeHtml(configDef.key)}" rows="3" placeholder="${escapeHtml(configDef.placeholder || "")}"${valAttr}`
+                    : `<input class="rdt-action-config-input" data-action-key="${escapeHtml(item.key)}" data-config-key="${escapeHtml(configDef.key)}" type="${configDef.type}" style="width:80px;" placeholder="${escapeHtml(configDef.placeholder || "")}"${valAttr}`
+                  }
+                </label>
+              </div>`;
+            }).join("");
+          }
+          return `<label class="rdt-action-item">
+            <input type="checkbox" class="rdt-action-checkbox" value="${escapeHtml(item.key)}" ${isChecked ? "checked" : ""} />
+            <span>${escapeHtml(item.label)}</span>
+          </label>
+          ${configHtml}`;
+        }).join("")}
+      </div>
+    </div>`;
+  }).join("");
+
+  rdtExt.actionsGroups.querySelectorAll(".rdt-group-toggle").forEach(toggle => {
+    toggle.addEventListener("change", () => {
+      const group = toggle.dataset.group;
+      const groupDef = NURTURE_ACTION_GROUPS.find(g => g.group === group);
+      if (!groupDef) return;
+      groupDef.items.forEach(item => {
+        const cb = rdtExt.actionsGroups.querySelector(`.rdt-action-checkbox[value="${item.key}"]`);
+        if (cb) {
+          cb.checked = toggle.checked;
+          const configEls = rdtExt.actionsGroups.querySelectorAll(`.rdt-action-config[data-action-key="${item.key}"]`);
+          configEls.forEach(el => el.classList.toggle("hidden", !cb.checked));
+        }
+      });
+    });
+  });
+
+  rdtExt.actionsGroups.querySelectorAll(".rdt-action-checkbox").forEach(cb => {
+    cb.addEventListener("change", () => {
+      const configEls = rdtExt.actionsGroups.querySelectorAll(`.rdt-action-config[data-action-key="${cb.value}"]`);
+      configEls.forEach(el => el.classList.toggle("hidden", !cb.checked));
+    });
+  });
+}
+
+function getSelectedRdtActions() {
+  if (!rdtExt.actionsGroups) return [];
+  return [...rdtExt.actionsGroups.querySelectorAll(".rdt-action-checkbox:checked")].map(cb => cb.value);
+}
+
+function getRdtActionConfigs() {
+  if (!rdtExt.actionsGroups) return {};
+  const configs = {};
+  for (const [actionKey, defList] of Object.entries(NURTURE_ACTION_CONFIGS)) {
+    for (const def of defList) {
+      const input = rdtExt.actionsGroups.querySelector(`.rdt-action-config-input[data-action-key="${actionKey}"][data-config-key="${def.key}"]`);
+      if (!input) continue;
+      const value = def.type === "checkbox" ? input.checked : input.value.trim();
+      if (def.type === "checkbox" ? true : value !== "") {
+        if (!configs[actionKey]) configs[actionKey] = {};
+        configs[actionKey][def.key] = value;
+      }
+    }
+  }
+  return configs;
+}
+
+async function refreshRedditAccounts() {
+  try {
+    const res = await request("/api/reddit/accounts");
+    rdtExtState.accounts = res.accounts || [];
+    renderRedditAccounts();
+    if (rdtExt.bindProfile?.value) {
+      const profileId = rdtExt.bindProfile.value;
+      const acc = rdtExtState.accounts.find(a => a.profileId === profileId);
+      if (acc) fillRdtFormFromAccount(acc);
+      else { fillRdtFormFromAccount(null); if (rdtExt.stage) rdtExt.stage.value = "week1"; if (rdtExt.karma) rdtExt.karma.value = "0"; }
+    }
+  } catch (e) {
+    showToast("Reddit 账号列表加载失败：" + e.message, true);
+  }
+}
+
+function renderRedditAccounts() {
+  if (!rdtExt.tableBody) return;
+  const list = rdtExtState.accounts;
+  if (!list.length) {
+    rdtExt.tableBody.innerHTML = `<tr><td colspan="9" style="text-align: center; color: var(--text-muted); padding: 24px;">暂无 Reddit 账号记录</td></tr>`;
+    return;
+  }
+  rdtExt.tableBody.innerHTML = list.map(a => {
+    const days = a.nurtureStartedAt ? Math.floor((Date.now() - new Date(a.nurtureStartedAt).getTime()) / 86400000) : null;
+    const actions = (a.enabledActions || []).map(k => NURTURE_ACTION_LABELS[k]).filter(Boolean);
+    const actionsHtml = actions.length
+      ? actions.map(label => `<span class="rdt-action-tag">${escapeHtml(label)}</span>`).join("")
+      : '<span style="color:var(--text-muted)">未配置</span>';
+    return `<tr>
+      <td>${escapeHtml(a.profileSeq ?? "—")}</td>
+      <td>${escapeHtml(a.profileName)}</td>
+      <td>${a.redditUsername ? `<strong>${escapeHtml(a.redditUsername)}</strong>` : '<span style="color:var(--text-muted)">未填写</span>'}</td>
+      <td>${a.registeredAt ? escapeHtml(a.registeredAt.substring(0, 10)) : '<span style="color:var(--text-muted)">—</span>'}</td>
+      <td>${a.nurtureStartedAt ? `${escapeHtml(a.nurtureStartedAt.substring(0, 10))}${days !== null ? ` <small style="color:var(--text-muted)">(${days}天)</small>` : ""}` : '<span style="color:var(--text-muted)">—</span>'}</td>
+      <td><div class="rdt-action-tags">${actionsHtml}</div></td>
+      <td><strong>${a.karmaTotal || 0}</strong>${a.karmaPost || a.karmaComment ? `<br><small style="color:var(--text-muted)">帖${a.karmaPost} 评${a.karmaComment}</small>` : ""}</td>
+      <td>${a.notes ? escapeHtml(a.notes) : '<span style="color:var(--text-muted)">—</span>'}</td>
+      <td>
+        <button class="button button-secondary" style="padding:2px 8px;font-size:11px;" onclick="window.editRedditAccount('${escapeHtml(a.id)}')">编辑</button>
+        <button class="danger-button data-danger" style="padding:2px 8px;font-size:11px;" onclick="window.deleteRedditAccount('${escapeHtml(a.id)}')">删除</button>
+      </td>
+    </tr>`;
+  }).join("");
+}
+
+function fillRdtFormFromAccount(acc) {
+  if (!acc) {
+    rdtExtState.editingId = null;
+    renderRdtActionsGroups([], {});
+    return;
+  }
+  rdtExtState.editingId = acc.id;
+  if (rdtExt.bindProfile) rdtExt.bindProfile.value = acc.profileId;
+  if (rdtExt.username) rdtExt.username.value = acc.redditUsername || "";
+  if (rdtExt.registeredAt) rdtExt.registeredAt.value = acc.registeredAt ? acc.registeredAt.substring(0, 10) : "";
+  if (rdtExt.nurtureStartedAt) rdtExt.nurtureStartedAt.value = acc.nurtureStartedAt ? acc.nurtureStartedAt.substring(0, 10) : "";
+  if (rdtExt.stage) rdtExt.stage.value = acc.nurtureStage || "week1";
+  if (rdtExt.karma) rdtExt.karma.value = acc.karmaTotal || 0;
+  if (rdtExt.notes) rdtExt.notes.value = acc.notes || "";
+  renderRdtActionsGroups(acc.enabledActions || [], acc.actionConfigs || {});
+}
+
+window.editRedditAccount = function(id) {
+  const acc = rdtExtState.accounts.find(a => a.id === id);
+  if (acc) fillRdtFormFromAccount(acc);
+};
+
+window.deleteRedditAccount = async function(id) {
+  if (!confirm("确定删除此 Reddit 账号记录吗？")) return;
+  try {
+    await request(`/api/reddit/accounts/${encodeURIComponent(id)}`, { method: "DELETE" });
+    showToast("已删除");
+    await refreshRedditAccounts();
+  } catch (e) {
+    showToast(e.message, true);
+  }
+};
+
+function populateRdtProfileSelect() {
+  if (!rdtExt.bindProfile) return;
+  const profiles = (state.profiles || []).filter(p => p.seq != null).sort((a, b) => a.seq - b.seq);
+  rdtExt.bindProfile.innerHTML = profiles.map(p =>
+    `<option value="${escapeHtml(p.id)}">#${escapeHtml(p.seq)} ${escapeHtml(p.name)}</option>`
+  ).join("");
+}
+
+if (rdtExt.btnSave) {
+  rdtExt.btnSave.addEventListener("click", async () => {
+    const profileId = rdtExt.bindProfile?.value;
+    if (!profileId) { showToast("请选择实例", true); return; }
+    const enabledActions = getSelectedRdtActions();
+    try {
+      await request("/api/reddit/accounts", {
+        method: "POST",
+        body: JSON.stringify({
+          id: rdtExtState.editingId || undefined,
+          profileId,
+          redditUsername: rdtExt.username?.value.trim() || "",
+          registeredAt: rdtExt.registeredAt?.value || null,
+          nurtureStartedAt: rdtExt.nurtureStartedAt?.value || null,
+          nurtureStage: rdtExt.stage?.value || "week1",
+          karmaTotal: Number(rdtExt.karma?.value) || 0,
+          notes: rdtExt.notes?.value.trim() || "",
+          enabledActions,
+          actionConfigs: getRdtActionConfigs(),
+        }),
+      });
+      showToast("已保存");
+      await refreshRedditAccounts();
+      const savedProfileId = profileId;
+      const acc = rdtExtState.accounts.find(a => a.profileId === savedProfileId);
+      if (acc) fillRdtFormFromAccount(acc);
+      else fillRdtFormFromAccount(null);
+    } catch (e) {
+      showToast(e.message, true);
+    }
+  });
+}
+
+if (rdtExt.btnRefresh) {
+  rdtExt.btnRefresh.addEventListener("click", refreshRedditAccounts);
+}
+
+if (rdtExt.bindProfile) {
+  rdtExt.bindProfile.addEventListener("change", () => {
+    const profileId = rdtExt.bindProfile.value;
+    const acc = rdtExtState.accounts.find(a => a.profileId === profileId);
+    if (acc) {
+      fillRdtFormFromAccount(acc);
+    } else {
+      fillRdtFormFromAccount(null);
+      if (rdtExt.stage) rdtExt.stage.value = "week1";
+      if (rdtExt.karma) rdtExt.karma.value = "0";
+    }
+  });
 }
 
 // ---- TikTok 扩展模块: 账号映射, 素材库, 自动化发布 ----
@@ -1743,28 +2334,20 @@ async function initTiktok() {
     ]);
     state.tiktokJobs = cfg.jobs || [];
     state.tiktokConfig = cfg.saved || cfg.defaults;
+    if (profilesPayload.profiles && profilesPayload.profiles.length > 0) {
+      state.profiles = profilesPayload.profiles;
+    }
     applyTiktokOptions(cfg.saved || cfg.defaults || {});
-    tk.profileSelect.innerHTML = (profilesPayload.profiles || [])
-      .map((p) => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)}（${p.seq ?? "?"}）</option>`)
-      .join("");
+    populateTkProfileCheckboxes();
+    loadTkOptionsForScope();
     renderTiktokJobs();
     await refreshTiktokData();
     await initTiktokExt();
   } catch (e) {
     showToast("TikTok 初始化失败：" + e.message, true);
+    populateTkProfileCheckboxes();
   }
 }
-
-tk.profileSelect.addEventListener("change", async () => {
-  const profileId = tk.profileSelect.value;
-  if (!profileId) return;
-  try {
-    const cfg = await request(`/api/tiktok/config?profileId=${encodeURIComponent(profileId)}`);
-    applyTiktokOptions(cfg.saved || cfg.defaults || {});
-  } catch (e) {
-    showToast("加载实例配置失败：" + e.message, true);
-  }
-});
 
 tk.resetBtn.addEventListener("click", () => {
   applyTiktokOptions(TK_FALLBACK);
@@ -1777,37 +2360,75 @@ function scheduleTiktokSave() {
   clearTimeout(tkSaveTimer);
   tkSaveTimer = setTimeout(async () => {
     try {
-      const profileId = tk.profileSelect.value || null;
-      await request("/api/tiktok/settings", { method: "PUT", body: JSON.stringify({ profileId, options: collectTiktokOptions() }) });
+      const options = collectTiktokOptions();
+      if (tkScopeState.scope === "global") {
+        await request("/api/tiktok/settings", { method: "PUT", body: JSON.stringify({ profileId: null, options }) });
+      } else {
+        const ids = tkScopeState.selectedProfileIds;
+        if (ids.length === 0) return;
+        if (ids.length === 1) {
+          await request("/api/tiktok/settings", { method: "PUT", body: JSON.stringify({ profileId: ids[0], options }) });
+        } else {
+          await request("/api/tiktok/settings/batch", { method: "PUT", body: JSON.stringify({ profileIds: ids, options }) });
+        }
+      }
     } catch {}
   }, 800);
 }
 document.querySelector("#tk-options-form")?.addEventListener("input", scheduleTiktokSave);
 
-tk.startBtn.addEventListener("click", async () => {
-  const profileId = tk.profileSelect.value;
-  if (!profileId) { showToast("请先选择实例", true); return; }
-  const options = collectTiktokOptions();
-  try {
-    await request(`/api/tiktok/jobs/${encodeURIComponent(profileId)}/start`, {
-      method: "POST",
-      body: JSON.stringify({ options }),
-    });
-    showToast("TikTok 任务已启动");
-  } catch (e) {
-    showToast(e.message, true);
+function getTkTargetProfileIds() {
+  if (tkScopeState.scope === "global") {
+    return (state.profiles || []).filter(p => p.seq != null).map(p => p.id);
   }
+  return tkScopeState.selectedProfileIds;
+}
+
+tk.startBtn.addEventListener("click", async () => {
+  const ids = getTkTargetProfileIds();
+  if (ids.length === 0) { showToast("请先选择实例或切换到全局模式", true); return; }
+  const options = collectTiktokOptions();
+  let ok = 0, fail = 0;
+  for (const profileId of ids) {
+    try {
+      await request(`/api/tiktok/jobs/${encodeURIComponent(profileId)}/start`, { method: "POST", body: JSON.stringify({ options }) });
+      ok++;
+    } catch { fail++; }
+  }
+  showToast(`已启动 ${ok} 个实例${fail ? `，${fail} 个失败` : ""}`, fail > 0);
+});
+
+tk.startAllBtn.addEventListener("click", async () => {
+  const allIds = (state.profiles || []).filter(p => p.seq != null).map(p => p.id);
+  if (allIds.length === 0) { showToast("没有可用实例", true); return; }
+  const options = collectTiktokOptions();
+  let ok = 0, fail = 0;
+  for (const profileId of allIds) {
+    try {
+      await request(`/api/tiktok/jobs/${encodeURIComponent(profileId)}/start`, { method: "POST", body: JSON.stringify({ options }) });
+      ok++;
+    } catch { fail++; }
+  }
+  showToast(`已启动 ${ok} 个实例${fail ? `，${fail} 个失败` : ""}`, fail > 0);
 });
 
 tk.stopBtn.addEventListener("click", async () => {
-  const profileId = tk.profileSelect.value;
-  if (!profileId) return;
+  const ids = getTkTargetProfileIds();
+  if (ids.length === 0) { showToast("请先选择实例或切换到全局模式", true); return; }
+  let ok = 0;
+  for (const profileId of ids) {
+    try {
+      await request(`/api/tiktok/jobs/${encodeURIComponent(profileId)}/stop`, { method: "POST", body: "{}" });
+      ok++;
+    } catch {}
+  }
+  showToast(`已停止 ${ok} 个实例`);
+});
+
+tk.stopAllBtn.addEventListener("click", async () => {
   try {
-    await request(`/api/tiktok/jobs/${encodeURIComponent(profileId)}/stop`, {
-      method: "POST",
-      body: "{}",
-    });
-    showToast("已停止 TikTok 任务");
+    await request("/api/tiktok/jobs/stop-all", { method: "POST", body: "{}" });
+    showToast("已停止全部 TikTok 任务");
   } catch (e) {
     showToast(e.message, true);
   }

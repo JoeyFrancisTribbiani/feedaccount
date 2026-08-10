@@ -2680,10 +2680,306 @@ export class BrowserSession {
       await new Promise((r) => setTimeout(r, 3000));
 
       const afterInfo = await this.#findJoinButton();
-      const joined = afterInfo.joined || afterInfo.text !== joinInfo.text;
+      const joined = afterInfo.found && (afterInfo.joined || afterInfo.text !== joinInfo.text);
       return { ok: joined, alreadyJoined: false, subreddit: cleanName };
     } finally {
       await this.#navigateBackToFeed();
+    }
+  }
+
+  async readPostContext() {
+    if (this.pageMode !== "detail") return null;
+    const sessionId = this.sessionId;
+    if (!sessionId) return null;
+    const expr = `(() => {
+      const post = document.querySelector('shreddit-post') || document.querySelector('article[data-post-id]');
+      const titleEl = document.querySelector('h1') || post?.querySelector('h1') || document.querySelector('[data-testid="post-title"]');
+      const bodyEl = post?.querySelector('[slot="text-body"]') || document.querySelector('[data-testid="post-text"]') || post?.querySelector('.md, .RichTextJSON');
+      const subMatch = location.pathname.match(/^\\/r\\/([^/]+)/i);
+      const subFromPost = post?.getAttribute('subreddit-prefixed-name')?.replace(/^r\\//i, '');
+      const subFromBreadcrumb = document.querySelector('a[href^="/r/"][data-testid="subreddit-name"]')?.getAttribute('href')?.match(/\\/r\\/([^/]+)/);
+      return JSON.stringify({
+        title: (titleEl?.textContent || '').trim().substring(0, 500),
+        body: (bodyEl?.textContent || '').trim().substring(0, 2000),
+        subreddit: subMatch?.[1] || subFromPost || subFromBreadcrumb?.[1] || '',
+        url: location.href,
+      });
+    })()`;
+    try {
+      const result = await this.client.call(
+        "Runtime.evaluate",
+        { expression: expr, returnByValue: true },
+        sessionId,
+        10000,
+      );
+      if (result?.exceptionDetails) {
+        console.error("[browser-session] readPostContext error:", result.exceptionDetails.text);
+        return null;
+      }
+      return JSON.parse(result?.result?.value || "null");
+    } catch (e) {
+      console.error("[browser-session] readPostContext failed:", e.message);
+      return null;
+    }
+  }
+
+  async postComment(text) {
+    if (!text || !text.trim()) throw new Error("评论文本为空");
+    if (this.pageMode !== "detail") throw new Error("当前不在帖子详情页，无法发评论");
+
+    const sessionId = this.sessionId;
+    if (!sessionId) throw new Error("无活动 CDP 会话");
+
+    // Try new Reddit composer first
+    const newRedditResult = await this.#tryPostCommentNewReddit(text, sessionId);
+    if (newRedditResult.ok || newRedditResult.tried) return newRedditResult;
+
+    // Fallback: use old Reddit
+    return this.#tryPostCommentOldReddit(text, sessionId);
+  }
+
+  async #tryPostCommentNewReddit(text, sessionId) {
+    const findCommentTarget = `(() => {
+      const editors = document.querySelectorAll(
+        'shreddit-composer [contenteditable="true"],' +
+        '[data-testid*="comment-composer"] [contenteditable="true"],' +
+        'textarea[name="body"]'
+      );
+      for (const el of editors) {
+        const r = el.getBoundingClientRect();
+        if (r.width > 0 && r.height > 0 && r.y > 0) {
+          return JSON.stringify({ found: true, type: 'editor', tag: el.tagName, x: Math.round(r.x+r.width/2), y: Math.round(r.y+r.height/2), width: Math.round(r.width), height: Math.round(r.height) });
+        }
+      }
+      const rteSlot = document.querySelector('shreddit-composer div[slot="rte"]');
+      if (rteSlot) {
+        const r = rteSlot.getBoundingClientRect();
+        if (r.height > 0) return JSON.stringify({ found: true, type: 'composer-slot', x: Math.round(r.x+r.width/2), y: Math.round(r.y+r.height/2), width: Math.round(r.width), height: Math.round(r.height) });
+      }
+      const composer = document.querySelector('shreddit-composer');
+      if (composer) {
+        const r = composer.getBoundingClientRect();
+        if (r.height > 0) return JSON.stringify({ found: true, type: 'composer', x: Math.round(r.x+r.width/2), y: Math.round(r.y+r.height/2), width: Math.round(r.width), height: Math.round(r.height) });
+      }
+      return JSON.stringify({ found: false });
+    })()`;
+
+    const findResult = await this.client.call("Runtime.evaluate", { expression: findCommentTarget, returnByValue: true }, sessionId, 10000);
+    const targetInfo = JSON.parse(findResult?.result?.value || '{"found":false}');
+
+    if (!targetInfo.found) {
+      return { ok: false, tried: false };
+    }
+
+    try {
+      await this.#dispatchSafeClick(targetInfo.x, targetInfo.y, sessionId, { x: targetInfo.x - targetInfo.width / 2, y: targetInfo.y - targetInfo.height / 2, width: targetInfo.width, height: targetInfo.height });
+    } catch (e) {
+      return { ok: false, tried: true, error: `点击失败: ${e.message}` };
+    }
+    await new Promise((r) => setTimeout(r, 1500));
+
+    if (targetInfo.type !== "editor") {
+      const editorFindResult = await this.client.call("Runtime.evaluate", { expression: findCommentTarget, returnByValue: true }, sessionId, 10000);
+      const editorInfo = JSON.parse(editorFindResult?.result?.value || '{"found":false}');
+      if (editorInfo.found && (editorInfo.type === "editor" || editorInfo.type === "composer-slot")) {
+        try {
+          await this.#dispatchSafeClick(editorInfo.x, editorInfo.y, sessionId, { x: editorInfo.x - editorInfo.width / 2, y: editorInfo.y - editorInfo.height / 2, width: editorInfo.width, height: editorInfo.height });
+        } catch {}
+        await new Promise((r) => setTimeout(r, 800));
+      }
+    }
+
+    // Insert text
+    try {
+      await this.client.call("Input.insertText", { text }, sessionId, 8000);
+    } catch (e) {
+      const fallbackExpr = `(() => {
+        const el = document.querySelector('shreddit-composer [contenteditable="true"]') || document.querySelector('shreddit-composer div[slot="rte"]');
+        if (!el) return 'no-editor';
+        if (el.tagName === 'TEXTAREA') {
+          const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+          setter.call(el, ${JSON.stringify(text)});
+        } else {
+          el.innerText = ${JSON.stringify(text)};
+        }
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        return 'ok';
+      })()`;
+      const fallbackResult = await this.client.call("Runtime.evaluate", { expression: fallbackExpr, returnByValue: true }, sessionId, 5000);
+      if (fallbackResult?.result?.value === "no-editor") {
+        return { ok: false, tried: true, error: "文本输入失败：未找到编辑器" };
+      }
+    }
+    await new Promise((r) => setTimeout(r, 1000));
+
+    // Post-insert check — verify text was actually entered
+    const postInsertCheckExpr = `(() => {
+      const editor = document.querySelector('shreddit-composer [contenteditable="true"]') || document.querySelector('textarea[name="body"]');
+      if (!editor) return JSON.stringify({ hasContent: false, reason: "editor-disappeared" });
+      const content = editor.textContent || editor.value || '';
+      return JSON.stringify({ hasContent: content.trim().length > 0 });
+    })()`;
+    const postInsertResult = await this.client.call("Runtime.evaluate", { expression: postInsertCheckExpr, returnByValue: true }, sessionId, 5000);
+    const postInsertInfo = JSON.parse(postInsertResult?.result?.value || '{"hasContent":false}');
+    if (!postInsertInfo.hasContent) {
+      return { ok: false, tried: true, error: `文本未成功输入编辑器（${postInsertInfo.reason || "empty"}）` };
+    }
+
+    // Find submit button in composer scope
+    const findSubmitExpr = `(() => {
+      const composer = document.querySelector('shreddit-composer, [data-testid*="comment-composer"]');
+      const scope = composer || document;
+      const buttons = [...scope.querySelectorAll('button, [role="button"]')];
+      for (const btn of buttons) {
+        const text = (btn.textContent || '').trim().toLowerCase();
+        const aria = (btn.getAttribute('aria-label') || '').toLowerCase();
+        if ((text === 'comment' || text === 'reply' || text === '评论' || text === '回复' || aria === 'comment' || aria === 'reply') && !btn.disabled) {
+          const r = btn.getBoundingClientRect();
+          if (r.width > 0 && r.height > 0 && r.y > 0) {
+            return JSON.stringify({ found: true, x: Math.round(r.x+r.width/2), y: Math.round(r.y+r.height/2), width: Math.round(r.width), height: Math.round(r.height), text });
+          }
+        }
+      }
+      return JSON.stringify({ found: false });
+    })()`;
+    const submitResult = await this.client.call("Runtime.evaluate", { expression: findSubmitExpr, returnByValue: true }, sessionId, 10000);
+    const submitInfo = JSON.parse(submitResult?.result?.value || '{"found":false}');
+
+    if (!submitInfo.found) {
+      return { ok: false, tried: true, error: "未找到评论提交按钮" };
+    }
+
+    await this.#dispatchSafeClick(submitInfo.x, submitInfo.y, sessionId, { x: submitInfo.x - submitInfo.width / 2, y: submitInfo.y - submitInfo.height / 2, width: submitInfo.width, height: submitInfo.height });
+    await new Promise((r) => setTimeout(r, 3000));
+
+    // Verify — editor cleared or disappeared both indicate likely success
+    const verifyExpr = `(() => {
+      const editor = document.querySelector('shreddit-composer [contenteditable="true"]') || document.querySelector('textarea[name="body"]');
+      if (!editor) return JSON.stringify({ cleared: true, reason: "editor-disappeared-after-submit" });
+      const content = editor.textContent || editor.value || '';
+      return JSON.stringify({ cleared: content.trim().length === 0 });
+    })()`;
+    const verifyResult = await this.client.call("Runtime.evaluate", { expression: verifyExpr, returnByValue: true }, sessionId, 5000);
+    const verifyInfo = JSON.parse(verifyResult?.result?.value || '{"cleared":false}');
+
+    return { ok: verifyInfo.cleared, tried: true, text, submitText: submitInfo.text };
+  }
+
+  async #tryPostCommentOldReddit(text, sessionId) {
+    // Save original URL to navigate back after posting
+    const currentUrlResult = await this.client.call("Runtime.evaluate", { expression: "location.href", returnByValue: true }, sessionId, 5000);
+    const originalUrl = String(currentUrlResult?.result?.value || "");
+    const oldUrl = originalUrl.replace("://www.reddit.com", "://old.reddit.com").replace("://reddit.com", "://old.reddit.com");
+
+    if (!oldUrl.includes("old.reddit.com")) {
+      return { ok: false, tried: true, error: "无法转换为 old.reddit.com URL" };
+    }
+
+    const domReady = this.client.call("Runtime.evaluate", {
+      expression: "new Promise(r => document.readyState === 'loading' ? document.addEventListener('DOMContentLoaded', r, {once:true}) : r())",
+      awaitPromise: true, returnByValue: true,
+    }, sessionId, 30000);
+    await this.client.call("Page.navigate", { url: oldUrl }, sessionId, 30000);
+    await domReady;
+    await new Promise((r) => setTimeout(r, 4000));
+
+    // Find the main comment textarea
+    const findExpr = `(() => {
+      const form = document.querySelector('form.usertext.cloneable') || document.querySelector('form[id^="form-t3_"]');
+      if (!form) return JSON.stringify({ found: false });
+      const ta = form.querySelector('textarea[name="text"]');
+      if (!ta) return JSON.stringify({ found: false });
+      const r = ta.getBoundingClientRect();
+      const btn = form.querySelector('button.save, button[type="submit"], input[type="submit"]');
+      const btnRect = btn?.getBoundingClientRect();
+      return JSON.stringify({
+        found: true,
+        textareaId: ta.id,
+        formId: form.id,
+        btnText: btn?.textContent?.trim() || btn?.value,
+        btnFound: !!btn,
+      });
+    })()`;
+    const findResult = await this.client.call("Runtime.evaluate", { expression: findExpr, returnByValue: true }, sessionId, 10000);
+    const info = JSON.parse(findResult?.result?.value || '{"found":false}');
+
+    if (!info.found) {
+      await this.#navigateBackToNewReddit(originalUrl, sessionId);
+      return { ok: false, tried: true, error: "old Reddit 未找到评论表单" };
+    }
+
+    // Set textarea value
+    await this.client.call("Runtime.evaluate", {
+      expression: `(() => {
+        const form = document.getElementById('${info.formId}');
+        const ta = form.querySelector('textarea[name="text"]');
+        const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+        setter.call(ta, ${JSON.stringify(text)});
+        ta.dispatchEvent(new Event('input', { bubbles: true }));
+        ta.dispatchEvent(new Event('change', { bubbles: true }));
+        return 'set';
+      })()`,
+      returnByValue: true,
+    }, sessionId, 5000);
+
+    await new Promise((r) => setTimeout(r, 500));
+
+    // Click save button
+    const submitResult = await this.client.call("Runtime.evaluate", {
+      expression: `(() => {
+        const form = document.getElementById('${info.formId}');
+        const btn = form.querySelector('button.save, button[type="submit"]');
+        if (btn) { btn.click(); return 'clicked'; }
+        form.submit();
+        return 'form-submitted';
+      })()`,
+      returnByValue: true,
+    }, sessionId, 8000);
+
+    await new Promise((r) => setTimeout(r, 4000));
+
+    // Check result
+    const verifyResult = await this.client.call("Runtime.evaluate", {
+      expression: `(() => {
+        const error = document.querySelector('.error');
+        const status = document.querySelector('.status');
+        return JSON.stringify({
+          error: error?.textContent?.trim()?.substring(0, 100) || '',
+          status: status?.textContent?.trim()?.substring(0, 50) || '',
+          url: location.href.substring(0, 60),
+        });
+      })()`,
+      returnByValue: true,
+    }, sessionId, 5000);
+    const verify = JSON.parse(verifyResult?.result?.value || "{}");
+
+    // Navigate back to new Reddit
+    await this.#navigateBackToNewReddit(originalUrl, sessionId);
+
+    return {
+      ok: !verify.error,
+      tried: true,
+      text,
+      error: verify.error || undefined,
+      method: "old-reddit",
+    };
+  }
+
+  async #navigateBackToNewReddit(originalUrl, sessionId) {
+    try {
+      const newUrl = originalUrl.replace("://old.reddit.com", "://www.reddit.com");
+      const domReady = this.client.call("Runtime.evaluate", {
+        expression: "new Promise(r => document.readyState === 'loading' ? document.addEventListener('DOMContentLoaded', r, {once:true}) : r())",
+        awaitPromise: true, returnByValue: true,
+      }, sessionId, 30000);
+      await this.client.call("Page.navigate", { url: newUrl }, sessionId, 30000);
+      await domReady;
+      await new Promise((r) => setTimeout(r, 3000));
+      // navigationContext CDP target IDs are stale after page navigation — reset to force reconnection
+      this.navigationContext = null;
+      // Keep pageMode = "detail" and lastPostId — the URL is still the detail page
+    } catch {
+      // Best effort — caller will handle reconnection if needed
     }
   }
 
@@ -2748,6 +3044,9 @@ export class BrowserSession {
       10000,
     );
     const status = res?.result?.value || "ok";
+    if (status === "notfound") {
+      throw new Error("子版块不存在或已删除");
+    }
     return status === "blocked";
   }
 

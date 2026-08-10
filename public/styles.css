@@ -187,6 +187,109 @@ select option {
   font-size: 13px;
 }
 
+/* Unified input styles — matches select look */
+input[type="text"],
+input[type="number"],
+input[type="password"],
+input[type="date"],
+input[type="email"],
+input[type="url"] {
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
+  min-height: 38px;
+  padding: 8px 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background-color: #ffffff;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 500;
+  box-shadow: var(--shadow-xs);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease;
+  width: 100%;
+}
+
+input[type="text"]:hover,
+input[type="number"]:hover,
+input[type="password"]:hover,
+input[type="date"]:hover,
+input[type="email"]:hover,
+input[type="url"]:hover {
+  border-color: #94a3b8;
+  background-color: var(--bg-subtle);
+}
+
+input[type="text"]:focus,
+input[type="number"]:focus,
+input[type="password"]:focus,
+input[type="date"]:focus,
+input[type="email"]:focus,
+input[type="url"]:focus {
+  border-color: var(--indigo);
+  background-color: #ffffff;
+  box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.12);
+  outline: none;
+}
+
+input[type="date"]::-webkit-calendar-picker-indicator {
+  filter: invert(0.5);
+  cursor: pointer;
+  opacity: 0.6;
+  transition: opacity 0.2s ease;
+}
+
+input[type="date"]::-webkit-calendar-picker-indicator:hover {
+  opacity: 1;
+}
+
+input[type="number"] {
+  -moz-appearance: textfield;
+}
+
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+/* Unified textarea styles */
+textarea {
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
+  padding: 10px 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background-color: #ffffff;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.6;
+  box-shadow: var(--shadow-xs);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease;
+  width: 100%;
+  resize: vertical;
+}
+
+textarea:hover {
+  border-color: #94a3b8;
+  background-color: var(--bg-subtle);
+}
+
+textarea:focus {
+  border-color: var(--indigo);
+  background-color: #ffffff;
+  box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.12);
+  outline: none;
+}
+
+textarea::placeholder,
+input::placeholder {
+  color: var(--text-light);
+  font-weight: 400;
+}
+
 button {
   cursor: pointer;
   border: none;
@@ -975,6 +1078,10 @@ textarea:focus-visible {
   transition: border-color 0.2s ease;
 }
 
+#reddit-accounts-panel {
+  margin-top: 24px;
+}
+
 .panel:hover {
   border-color: var(--line-strong);
 }
@@ -1110,6 +1217,11 @@ textarea:focus-visible {
   transition: border-color 0.2s ease;
 }
 
+.post-mode-card,
+.option-row {
+  grid-column: 1 / -1;
+}
+
 .options-form fieldset:hover,
 .post-mode-card:hover,
 .option-row:hover {
@@ -1181,6 +1293,59 @@ textarea:focus-visible {
   grid-column: 1 / -1;
   grid-template-columns: 1fr 1fr;
   gap: 16px 24px;
+}
+
+/* 自动评论 fieldset 布局 */
+.comment-fieldset {
+  grid-template-columns: 1fr !important;
+  gap: 14px;
+}
+
+.comment-fieldset-row1,
+.comment-fieldset-row2,
+.comment-full-width,
+.comment-ai-section {
+  grid-column: 1 / -1;
+}
+
+.comment-fieldset-row2 {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  align-items: end;
+}
+
+.comment-full-width {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.comment-ai-section {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 4px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.comment-ai-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 14px;
+  align-items: end;
+}
+
+.comment-ai-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.comment-ai-actions .btn {
+  padding: 7px 16px;
+  font-size: 12px;
 }
 
 .options-form legend {
@@ -1339,6 +1504,24 @@ textarea:focus-visible {
   border: 1px solid var(--line-strong);
   font-family: var(--font-mono);
   font-size: 12px;
+  box-shadow: var(--shadow-xs);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease;
+}
+
+.form-sub-card input:hover,
+.form-sub-card select:hover,
+.form-sub-card textarea:hover {
+  border-color: #94a3b8;
+  background-color: var(--bg-subtle);
+}
+
+.form-sub-card input:focus,
+.form-sub-card select:focus,
+.form-sub-card textarea:focus {
+  border-color: var(--indigo);
+  background-color: #ffffff;
+  box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.12);
+  outline: none;
 }
 
 .column-form {
@@ -2873,5 +3056,424 @@ footer span {
 .remix-add-form .button {
   font-size: 12px;
   padding: 7px 14px;
+}
+
+/* 任务参数面板折叠 */
+.options-panel-body.collapsed {
+  display: none;
+}
+
+.options-collapse-icon {
+  font-size: 14px;
+  color: var(--text-muted);
+  transition: transform 0.2s ease;
+  display: inline-block;
+}
+
+.options-panel:not(.collapsed) .options-collapse-icon {
+  transform: rotate(90deg);
+}
+
+.options-scope-badge {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 10px;
+  border-radius: 99px;
+  background: var(--indigo-soft-bg);
+  color: var(--indigo);
+  vertical-align: middle;
+  margin-left: 8px;
+}
+
+.options-scope-badge.profile-scope {
+  background: var(--accent-reddit-soft);
+  color: var(--accent-reddit);
+}
+
+.options-scope-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-subtle);
+  flex-wrap: wrap;
+}
+
+.options-scope-bar label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+.options-scope-bar select {
+  min-width: 200px;
+  font-size: 12px;
+  padding: 6px 30px 6px 12px !important;
+  min-height: 32px;
+}
+
+/* Reddit 账号操作项分组 */
+.rdt-actions-groups {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.rdt-action-group {
+  flex: 1;
+  min-width: 260px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 12px;
+  background: var(--bg-subtle);
+}
+
+.rdt-action-group-header {
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--line);
+}
+
+.rdt-action-group-header .switch-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.rdt-action-group-header input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--indigo);
+  margin: 0;
+}
+
+.rdt-action-items {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.rdt-action-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text-secondary);
+  padding: 2px 0;
+}
+
+.rdt-action-item input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--indigo);
+  margin: 0;
+  flex: none;
+}
+
+.rdt-action-item:hover {
+  color: var(--text-primary);
+}
+
+.rdt-action-config {
+  margin: 4px 0 6px 22px;
+  padding: 8px 10px;
+  border-left: 2px solid var(--indigo-border);
+  background: var(--bg-subtle);
+  border-radius: 0 var(--radius-xs) var(--radius-xs) 0;
+}
+
+.rdt-action-config.hidden {
+  display: none;
+}
+
+.rdt-config-label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.rdt-config-label span {
+  font-weight: 600;
+}
+
+.rdt-action-config-input:not([type="checkbox"]):not([type="radio"]) {
+  padding: 7px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-xs);
+  background: #ffffff;
+  color: var(--text-primary);
+  box-shadow: var(--shadow-xs);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease;
+  min-height: 32px;
+}
+
+.rdt-action-config-input:not([type="checkbox"]):not([type="radio"]):hover {
+  border-color: #94a3b8;
+  background-color: var(--bg-subtle);
+}
+
+.rdt-action-config-input:not([type="checkbox"]):not([type="radio"]):focus {
+  border-color: var(--indigo);
+  background-color: #ffffff;
+  box-shadow: 0 0 0 2px rgba(79, 70, 229, 0.12);
+  outline: none;
+}
+
+.rdt-action-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  max-width: 280px;
+}
+
+.rdt-action-tag {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 99px;
+  background: var(--indigo-soft-bg);
+  color: var(--indigo);
+  white-space: nowrap;
+}
+
+/* TikTok 任务卡片 */
+.tk-job-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.tk-job-card {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+  background: #ffffff;
+  transition: border-color 0.2s ease;
+}
+
+.tk-job-card.tk-status-running { border-left: 3px solid var(--green); }
+.tk-job-card.tk-status-connecting { border-left: 3px solid var(--amber); }
+.tk-job-card.tk-status-error { border-left: 3px solid var(--red); }
+.tk-job-card.tk-status-completed { border-left: 3px solid var(--text-light); }
+.tk-job-card.tk-status-stopped { border-left: 3px solid var(--text-light); }
+.tk-job-card.tk-status-paused { border-left: 3px solid var(--indigo); }
+
+.tk-job-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.tk-job-head strong {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.tk-status-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 10px;
+  border-radius: 99px;
+  white-space: nowrap;
+}
+
+.tk-status-badge.tk-status-running { background: var(--green-soft); color: var(--green-dark); }
+.tk-status-badge.tk-status-connecting { background: var(--amber-soft); color: var(--amber-dark); }
+.tk-status-badge.tk-status-error { background: var(--red-soft); color: var(--red-dark); }
+.tk-status-badge.tk-status-paused { background: var(--indigo-soft-bg); color: var(--indigo); }
+.tk-status-badge.tk-status-completed,
+.tk-status-badge.tk-status-stopped { background: var(--bg-subtle); color: var(--text-muted); }
+
+.tk-duration {
+  margin-left: auto;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+}
+
+.tk-job-stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.tk-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 6px 4px;
+  border-radius: var(--radius-xs);
+  background: var(--bg-subtle);
+}
+
+.tk-stat span {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.tk-stat strong {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-primary);
+  line-height: 1.3;
+}
+
+.tk-job-current {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tk-author {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.tk-desc {
+  color: var(--text-muted);
+}
+
+.tk-liked {
+  margin-left: 6px;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--red);
+  background: var(--red-soft);
+  padding: 1px 6px;
+  border-radius: 99px;
+}
+
+.tk-job-feats {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.tk-feat {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 99px;
+  background: var(--bg-subtle);
+  color: var(--text-light);
+}
+
+.tk-feat.on {
+  background: var(--indigo-soft-bg);
+  color: var(--indigo);
+}
+
+.tk-job-error {
+  margin-top: 8px;
+  padding: 6px 10px;
+  border-radius: var(--radius-xs);
+  background: var(--red-soft);
+  color: var(--red-dark);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+/* TikTok 作用域选择器 */
+.tk-scope-bar {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-subtle);
+  border-radius: var(--radius-md);
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+
+.tk-scope-bar label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+.tk-scope-bar select {
+  min-width: 200px;
+  font-size: 12px;
+  padding: 6px 30px 6px 12px !important;
+  min-height: 32px;
+}
+
+.tk-profile-checkboxes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  max-width: 100%;
+}
+
+.tk-profile-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs);
+  background: #fff;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.tk-profile-check:hover {
+  border-color: var(--indigo-border);
+}
+
+.tk-profile-check input {
+  margin: 0;
+  width: 14px;
+  height: 14px;
+  accent-color: var(--indigo);
+}
+
+.tk-profile-check span:first-of-type {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  color: var(--text-muted);
+  min-width: 24px;
+}
+
+.tk-profile-check span:last-of-type {
+  color: var(--text-primary);
+}
+
+.tk-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.tk-actions button {
+  font-size: 12px;
+  padding: 8px 16px;
 }
 

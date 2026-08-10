@@ -110,6 +110,7 @@ export class RotationScheduler extends EventTarget {
     }
 
     const useGeoPriority = opts.ipMatchMode === "geo_priority" && Boolean(opts.proxyRotateUrl);
+    let geoDegraded = false;
     const geoProfiles = useGeoPriority
       ? queue.filter((p) => p.remark && p.remark.trim())
       : [];
@@ -130,7 +131,7 @@ export class RotationScheduler extends EventTarget {
       this.#log(`轮换调度开始，共 ${queue.length} 个实例：${queue.map((p) => `#${p.seq}`).join(" → ")}，平台：${platformList.join(" + ")}，每实例 ${opts.minMinutes}-${opts.maxMinutes} 分钟`, "info", { count: queue.length });
     }
 
-    const savedRedditOptions = this.persistence?.getSavedOptions?.() || {};
+    const globalRedditOptions = this.persistence?.getSavedOptions?.() || {};
     let prevId = null;
     const executed = new Set();
     let instanceCount = 0;
@@ -139,7 +140,7 @@ export class RotationScheduler extends EventTarget {
       let profile = null;
       let ipAlreadyChecked = false;
 
-      if (useGeoPriority && geoProfiles.some((p) => !executed.has(p.id))) {
+      if (useGeoPriority && !geoDegraded && geoProfiles.some((p) => !executed.has(p.id))) {
         const result = await this.#pickNextByGeo(geoProfiles, executed, opts);
         if (result) {
           profile = result.profile;
@@ -148,6 +149,7 @@ export class RotationScheduler extends EventTarget {
           break;
         } else {
           this.#log(`⚠️ 城市匹配未能命中，降级为顺序选择剩余实例`, "warning");
+          geoDegraded = true;
           profile = geoProfiles.find((p) => !executed.has(p.id))
             || plainProfiles.find((p) => !executed.has(p.id));
         }
@@ -196,7 +198,7 @@ export class RotationScheduler extends EventTarget {
       this.#emit();
       if (opts.enableReddit) {
         try {
-          this.redditJobs.start(profile, savedRedditOptions);
+          this.redditJobs.start(profile, this.persistence?.getSavedOptions?.(profile.id) || globalRedditOptions);
           this.#log(`实例 #${profile.seq} Reddit 任务已启动`, "info");
         } catch (e) {
           this.#log(`实例 #${profile.seq} Reddit 启动失败：${e.message}`, "warning");
@@ -313,6 +315,15 @@ export class RotationScheduler extends EventTarget {
     this.#log(`正在获取实例 #${probeProfile.seq} 的代理配置（用于IP地理查询）`, "info");
     const detail = await this.bitBrowserApi.getProfileDetail(probeProfile.id);
     this.#log(`代理配置：${detail.host}:${detail.port}，认证=${detail.proxyUserName ? "有" : "无"}`, "info", { host: detail.host, port: detail.port });
+    if (remaining.length > 1) {
+      const otherDetails = await Promise.all(
+        remaining.slice(1).map((p) => this.bitBrowserApi.getProfileDetail(p.id).catch(() => null)),
+      );
+      const diffProxy = otherDetails.some((d) => d && (d.host !== detail.host || d.port !== detail.port));
+      if (diffProxy) {
+        this.#log(`⚠️ 多个实例使用不同代理服务器，城市优先模式假设所有实例共用同一代理。如果代理不同，IP 匹配可能不准确`, "warning");
+      }
+    }
 
     const maxRetries = opts.geoMaxRetries || 15;
     const retryIntervalMs = (opts.geoRetryIntervalSec || 60) * 1000;
@@ -321,7 +332,7 @@ export class RotationScheduler extends EventTarget {
       if (this.state.cancelled) return null;
 
       if (attempt > 0) {
-        this.#log(`等待 ${retryIntervalMs / 1000} 秒后重新切换代理（代理商最低1分钟切换一次）`, "info");
+        this.#log(`等待 ${retryIntervalMs / 1000} 秒后重新切换代理（加上代理刷新等待约 ${retryIntervalMs / 1000 + 20} 秒）`, "info");
         this.#emit();
         await new Promise((r) => setTimeout(r, retryIntervalMs));
       }

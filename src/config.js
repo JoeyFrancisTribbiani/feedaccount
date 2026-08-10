@@ -26,6 +26,12 @@ export const DEFAULT_OPTIONS = Object.freeze({
   autoJoinIntervalMinSec: 60,
   autoJoinIntervalMaxSec: 180,
   autoJoinMaxPerRun: 3,
+  autoCommentEnabled: false,
+  autoCommentProbability: 0,
+  autoCommentMinIntervalSec: 1800,
+  autoCommentMaxIntervalSec: 7200,
+  autoCommentMaxPerRun: 2,
+  autoCommentTexts: [],
 });
 
 function integerInRange(value, fallback, label, min, max) {
@@ -164,6 +170,42 @@ export function normalizeOptions(input = {}) {
     50,
   );
 
+  const autoCommentEnabled =
+    input.autoCommentEnabled === undefined
+      ? DEFAULT_OPTIONS.autoCommentEnabled
+      : Boolean(input.autoCommentEnabled);
+  const autoCommentProbability = integerInRange(
+    input.autoCommentProbability,
+    DEFAULT_OPTIONS.autoCommentProbability,
+    "自动评论概率",
+    0,
+    100,
+  );
+  const autoCommentMinIntervalSec = integerInRange(
+    input.autoCommentMinIntervalSec,
+    DEFAULT_OPTIONS.autoCommentMinIntervalSec,
+    "评论最短间隔",
+    60,
+    86400,
+  );
+  const autoCommentMaxIntervalSec = integerInRange(
+    input.autoCommentMaxIntervalSec,
+    DEFAULT_OPTIONS.autoCommentMaxIntervalSec,
+    "评论最长间隔",
+    60,
+    86400,
+  );
+  const autoCommentMaxPerRun = integerInRange(
+    input.autoCommentMaxPerRun,
+    DEFAULT_OPTIONS.autoCommentMaxPerRun,
+    "每次运行最多评论数",
+    1,
+    20,
+  );
+  const autoCommentTexts = Array.isArray(input.autoCommentTexts)
+    ? input.autoCommentTexts.map((t) => String(t).trim()).filter(Boolean)
+    : [];
+
   if (waitMinSec > waitMaxSec) {
     throw new Error("最短等待时间不能大于最长等待时间");
   }
@@ -181,6 +223,9 @@ export function normalizeOptions(input = {}) {
   }
   if (autoJoinIntervalMinSec > autoJoinIntervalMaxSec) {
     throw new Error("关注群组最短间隔不能大于最长间隔");
+  }
+  if (autoCommentMinIntervalSec > autoCommentMaxIntervalSec) {
+    throw new Error("评论最短间隔不能大于最长间隔");
   }
   return {
     waitMinSec,
@@ -218,6 +263,14 @@ export function normalizeOptions(input = {}) {
     autoJoinIntervalMinMs: autoJoinIntervalMinSec * 1000,
     autoJoinIntervalMaxMs: autoJoinIntervalMaxSec * 1000,
     autoJoinMaxPerRun,
+    autoCommentEnabled,
+    autoCommentProbability,
+    autoCommentMinIntervalSec,
+    autoCommentMaxIntervalSec,
+    autoCommentMinIntervalMs: autoCommentMinIntervalSec * 1000,
+    autoCommentMaxIntervalMs: autoCommentMaxIntervalSec * 1000,
+    autoCommentMaxPerRun,
+    autoCommentTexts,
   };
 }
 
@@ -251,5 +304,11 @@ export function publicOptions(options) {
     autoJoinIntervalMinSec: options.autoJoinIntervalMinSec,
     autoJoinIntervalMaxSec: options.autoJoinIntervalMaxSec,
     autoJoinMaxPerRun: options.autoJoinMaxPerRun,
+    autoCommentEnabled: options.autoCommentEnabled,
+    autoCommentProbability: options.autoCommentProbability,
+    autoCommentMinIntervalSec: options.autoCommentMinIntervalSec,
+    autoCommentMaxIntervalSec: options.autoCommentMaxIntervalSec,
+    autoCommentMaxPerRun: options.autoCommentMaxPerRun,
+    autoCommentTexts: options.autoCommentTexts,
   };
 }

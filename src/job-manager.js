@@ -1,7 +1,13 @@
 import { EventEmitter } from "node:events";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const THIS_DIR = path.dirname(fileURLToPath(import.meta.url));
 
 import { BrowserSession } from "./browser-session.js";
 import { TARGET_URL, publicOptions, randomInteger } from "./config.js";
+import { generateAiComment } from "./ai-comment-generator.js";
+import { initCorpus, pickCommentFromCorpus } from "./comment-corpus.js";
 
 export const ACTIVE_JOB_STATES = new Set([
   "connecting",
@@ -77,6 +83,9 @@ export class JobManager extends EventEmitter {
     this.randomInteger = randomIntegerFn || randomInteger;
     this.persistence = persistence || null;
     this.jobs = new Map();
+    this.corpusCount = initCorpus(
+      path.resolve(THIS_DIR, "..", "data", "reddit-comment-corpus.json"),
+    );
   }
 
   start(profile, options) {
@@ -86,8 +95,59 @@ export class JobManager extends EventEmitter {
     }
 
     const startedAt = nowIso();
-    const detailLoopEnabled = options.detailLoopEnabled === true;
-    const runId = this.persistence?.createRun(profile, options, TARGET_URL, startedAt) ?? null;
+
+    const account = this.persistence?.getRedditAccountByProfileId?.(profile.id);
+    const effectiveOptions = { ...options };
+    let accountActionTargets = null;
+
+    if (account && Array.isArray(account.enabledActions) && account.enabledActions.length > 0) {
+      const actions = new Set(account.enabledActions);
+      const configs = account.actionConfigs || {};
+      effectiveOptions.autoUpvoteEnabled = actions.has("w1_feed_upvote");
+      effectiveOptions.autoCommentUpvoteEnabled = actions.has("w1_comment_upvote");
+      effectiveOptions.autoJoinEnabled = actions.has("w1_join_subreddit");
+      effectiveOptions.autoCommentEnabled = actions.has("w2_post_comment");
+      if (configs.w2_post_comment?.texts) {
+        effectiveOptions.autoCommentTexts = configs.w2_post_comment.texts.split("\n").map((t) => t.trim()).filter(Boolean);
+      }
+      if (configs.w2_post_comment?.useAI) {
+        effectiveOptions._useAiComment = true;
+        const aiConfig = this.persistence?.getAiCommentConfig?.();
+        if (aiConfig && aiConfig.apiKey) {
+          effectiveOptions._aiCommentConfig = aiConfig;
+        } else {
+          console.warn("[job-manager] AI 评论已启用但 API Key 未配置，将回退到语料库/文本库");
+        }
+      }
+      if (configs.w2_multi_comment?.dailyMax != null) {
+        const dm = Number(configs.w2_multi_comment.dailyMax);
+        if (Number.isFinite(dm) && dm > 0) {
+          effectiveOptions.autoCommentMaxPerRun = dm;
+        }
+      }
+      if (configs.w2_check_post_age?.minHours) {
+        effectiveOptions._autoCommentMinPostAgeHours = Number(configs.w2_check_post_age.minHours);
+      }
+      if (configs.w2_check_author?.minKarma) {
+        effectiveOptions._autoCommentMinAuthorKarma = Number(configs.w2_check_author.minKarma);
+      }
+      if (configs.w1_join_subreddit?.targets) {
+        accountActionTargets = configs.w1_join_subreddit.targets
+          .split(/[\n\r,;\t]+/)
+          .map((t) => t.trim().replace(/^\/?r\//i, "").replace(/\/.*$/, "").trim())
+          .filter(Boolean)
+          .map((name) => ({ name }));
+      }
+      if (configs.w3_narrative_post?.templates) {
+        effectiveOptions._autoPostTemplates = configs.w3_narrative_post.templates.split("\n").map((t) => t.trim()).filter(Boolean);
+      }
+      if (configs.w3_image_post?.imageDir) {
+        effectiveOptions._autoPostImageDir = configs.w3_image_post.imageDir;
+      }
+    }
+
+    const detailLoopEnabled = effectiveOptions.detailLoopEnabled === true;
+    const runId = this.persistence?.createRun(profile, effectiveOptions, TARGET_URL, startedAt) ?? null;
     const job = {
       runId,
       profileId: profile.id,
@@ -95,7 +155,7 @@ export class JobManager extends EventEmitter {
       name: profile.name,
       status: "connecting",
       statusText: "正在连接",
-      options,
+      options: effectiveOptions,
       startedAt,
       updatedAt: startedAt,
       stoppedAt: null,
@@ -128,7 +188,7 @@ export class JobManager extends EventEmitter {
       workflowMode: detailLoopEnabled ? "feed_detail_readonly" : "feed_only",
       workflowPhase: "connecting",
       feedPostsSinceDetail: 0,
-      feedPostsTarget: detailLoopEnabled ? this.#drawFeedTarget(options) : 0,
+      feedPostsTarget: detailLoopEnabled ? this.#drawFeedTarget(effectiveOptions) : 0,
       detailVisitCount: 0,
       commentScrollCount: 0,
       commentScrollProgress: 0,
@@ -163,6 +223,10 @@ export class JobManager extends EventEmitter {
       nextJoinDelay: 0,
       joinTargets: [],
       joinTargetIndex: 0,
+      autoCommentCount: 0,
+      postedCommentPostIds: new Set(),
+      lastCommentAt: 0,
+      nextCommentDelay: 0,
     };
 
     this.jobs.set(profile.id, job);
@@ -195,9 +259,14 @@ export class JobManager extends EventEmitter {
 
     if (job.options.autoJoinEnabled) {
       try {
-        job.joinTargets = this.persistence?.getJoinTargets?.() || [];
-        if (job.joinTargets.length > 0) {
-          this.#log(job, `已加载 ${job.joinTargets.length} 个预配置群组`, "info", "join_targets_loaded", { count: job.joinTargets.length });
+        if (accountActionTargets && accountActionTargets.length > 0) {
+          job.joinTargets = accountActionTargets;
+          this.#log(job, `已加载账号配置的 ${job.joinTargets.length} 个目标群组`, "info", "join_targets_loaded", { count: job.joinTargets.length, source: "account_config" });
+        } else {
+          job.joinTargets = this.persistence?.getJoinTargets?.() || [];
+          if (job.joinTargets.length > 0) {
+            this.#log(job, `已加载 ${job.joinTargets.length} 个预配置群组`, "info", "join_targets_loaded", { count: job.joinTargets.length, source: "global" });
+          }
         }
       } catch (e) {
         this.#log(job, `加载群组列表失败：${e.message}`, "warning", "join_targets_load_error");
@@ -216,6 +285,16 @@ export class JobManager extends EventEmitter {
     }
 
     this.#log(job, "正在连接指定的 BitBrowser 实例", "info", "lifecycle");
+    if (account && Array.isArray(account.enabledActions) && account.enabledActions.length > 0) {
+      const enabledList = account.enabledActions.join(", ");
+      this.#log(job, `已加载养号操作项配置（${enabledList}），已覆盖任务参数开关`, "info", "nurture_actions_loaded", {
+        enabledActions: account.enabledActions,
+        effectiveUpvote: effectiveOptions.autoUpvoteEnabled,
+        effectiveCommentUpvote: effectiveOptions.autoCommentUpvoteEnabled,
+        effectiveJoin: effectiveOptions.autoJoinEnabled,
+        effectiveComment: effectiveOptions.autoCommentEnabled,
+      });
+    }
     if (detailLoopEnabled) {
       this.#log(
         job,
@@ -807,12 +886,6 @@ export class JobManager extends EventEmitter {
         return;
       }
 
-      const shouldOpen = this.#shouldOpenCurrentPost(job, result);
-      if (shouldOpen) {
-        job.nextOperation = "open-detail";
-      } else {
-        job.nextOperation = "feed-scroll";
-      }
       let waitMs = this.randomInteger(job.options.waitMinMs, job.options.waitMaxMs);
       job.workflowPhase = "feed_wait";
 
@@ -828,6 +901,13 @@ export class JobManager extends EventEmitter {
       if (job.options.autoJoinEnabled && job.joinTargets.length > 0) {
         await this.#tryAutoJoinSubreddit(job);
         if (job.cancelled) return;
+      }
+
+      const shouldOpen = this.#shouldOpenCurrentPost(job, result);
+      if (shouldOpen) {
+        job.nextOperation = "open-detail";
+      } else {
+        job.nextOperation = "feed-scroll";
       }
 
       this.#log(
@@ -1145,10 +1225,9 @@ export class JobManager extends EventEmitter {
     let target = null;
     while (job.joinTargetIndex < job.joinTargets.length) {
       const candidate = job.joinTargets[job.joinTargetIndex];
-      job.joinTargetIndex += 1;
       const name = String(candidate?.name || "").trim();
-      if (!name) continue;
-      if (job.joinedSubredditIds.has(name.toLowerCase())) continue;
+      if (!name) { job.joinTargetIndex += 1; continue; }
+      if (job.joinedSubredditIds.has(name.toLowerCase())) { job.joinTargetIndex += 1; continue; }
       target = name;
       break;
     }
@@ -1161,14 +1240,15 @@ export class JobManager extends EventEmitter {
       const result = await job.session.joinSubreddit(target);
       if (job.cancelled) return;
 
-      job.joinedSubredditIds.add(target.toLowerCase());
       job.lastJoinAt = Date.now();
       job.nextJoinDelay = this.randomInteger(
         job.options.autoJoinIntervalMinMs,
         job.options.autoJoinIntervalMaxMs,
       );
 
-      if (result.ok) {
+      if (result.ok || result.alreadyJoined) {
+        job.joinTargetIndex += 1;
+        job.joinedSubredditIds.add(target.toLowerCase());
         job.autoJoinCount += 1;
         this.#log(
           job,
@@ -1178,7 +1258,7 @@ export class JobManager extends EventEmitter {
           { subreddit: target, alreadyJoined: result.alreadyJoined },
         );
       } else {
-        this.#log(job, `关注 r/${target} 未成功`, "warning", "auto_join_failed", { subreddit: target });
+        this.#log(job, `关注 r/${target} 未成功：${result.error || "未知原因"}`, "warning", "auto_join_failed", { subreddit: target });
       }
       this.persistence?.updateRun(job);
     } catch (error) {
@@ -1288,6 +1368,156 @@ export class JobManager extends EventEmitter {
         "warning",
         "auto_comment_upvote_error",
         { commentId, error: error.message },
+      );
+    }
+  }
+
+  async #tryAutoPostComment(job) {
+    if (!job.options.autoCommentEnabled) return;
+    if (!job.session || typeof job.session.postComment !== "function") return;
+    if (job.autoCommentCount >= Number(job.options.autoCommentMaxPerRun || 0)) return;
+    if (!job.options.detailLoopEnabled) {
+      this.#log(job, `自动评论已启用但"自动只读详情循环"未开启，评论需要进入帖子详情页才能执行`, "warning", "auto_comment_disabled_no_detail_loop");
+      return;
+    }
+
+    const now = Date.now();
+    if (job.lastCommentAt > 0 && now - job.lastCommentAt < job.nextCommentDelay) return;
+
+    const postId = String(job.currentPost?.postId || "");
+    if (!postId) return;
+    if (job.postedCommentPostIds.has(postId)) return;
+
+    if (job.options._autoCommentMinPostAgeHours) {
+      const postAgeHours = job.currentPost?.postedAt
+        ? (Date.now() - new Date(job.currentPost.postedAt).getTime()) / 3600000
+        : null;
+      if (postAgeHours !== null && postAgeHours < job.options._autoCommentMinPostAgeHours) {
+        this.#log(job, `帖子发布仅 ${postAgeHours.toFixed(1)} 小时，未达到最小 ${job.options._autoCommentMinPostAgeHours} 小时要求，跳过评论`, "info", "auto_comment_post_too_new", { postId, postAgeHours: Math.round(postAgeHours * 10) / 10, minHours: job.options._autoCommentMinPostAgeHours });
+        return;
+      }
+    }
+    if (job.options._autoCommentMinAuthorKarma && job.currentPost?.authorKarma !== undefined) {
+      if (Number(job.currentPost.authorKarma) < job.options._autoCommentMinAuthorKarma) {
+        this.#log(job, `发帖人 Karma ${job.currentPost.authorKarma} 低于阈值 ${job.options._autoCommentMinAuthorKarma}，跳过评论`, "info", "auto_comment_low_author_karma", { postId, authorKarma: job.currentPost.authorKarma, minKarma: job.options._autoCommentMinAuthorKarma });
+        return;
+      }
+    }
+
+    const texts = Array.isArray(job.options.autoCommentTexts)
+      ? job.options.autoCommentTexts.filter((t) => t && t.trim())
+      : [];
+
+    const probability = Number(job.options.autoCommentProbability || 0);
+    if (probability <= 0) return;
+    const roll = this.randomInteger(0, 99);
+    if (roll >= probability) {
+      this.#log(job, `自动评论概率未命中（${roll + 1}% >= ${probability}%），跳过`, "info", "auto_comment_skipped", { postId, roll: roll + 1, threshold: probability });
+      return;
+    }
+
+    let commentText = null;
+    let commentSource = "library";
+    let postContext = null;
+
+    // 1. 优先从语料库匹配评论
+    job.workflowPhase = "comment_posting";
+    try {
+      postContext = await job.session.readPostContext();
+      if (postContext && postContext.title) {
+        const match = pickCommentFromCorpus(postContext, { randomFn: () => this.randomInteger(0, 999999) / 1000000 });
+        if (match && match.text) {
+          commentText = match.text;
+          commentSource = "corpus";
+          this.#log(
+            job,
+            `语料库匹配评论（相似度 ${match.similarity}，r/${match.subreddit}，原帖：${match.matchedPost}…，评论赞数 ${match.commentScore}）`,
+            "info",
+            "corpus_comment_matched",
+            { postId, similarity: match.similarity, matchedPost: match.matchedPost, subreddit: match.subreddit, commentScore: match.commentScore, preview: match.text.substring(0, 100) },
+          );
+        }
+      }
+    } catch (e) {
+      this.#log(job, `语料库匹配评论失败：${e.message}`, "warning", "corpus_comment_error", { postId, error: e.message });
+    }
+
+    // 2. 如果语料库未匹配，尝试 AI 生成
+    if (!commentText && job.options._useAiComment && job.options._aiCommentConfig) {
+      try {
+        this.#setStatus(job, "scrolling", "正在用 AI 生成评论");
+        if (!postContext) postContext = await job.session.readPostContext();
+        if (postContext && postContext.title) {
+          this.#log(job, `正在用 AI 分析帖子并生成评论（r/${postContext.subreddit}：${postContext.title.substring(0, 60)}）`, "info", "ai_comment_generating", { postId, title: postContext.title.substring(0, 80), subreddit: postContext.subreddit });
+          commentText = await generateAiComment(job.options._aiCommentConfig, postContext);
+          commentSource = "ai";
+          this.#log(job, `AI 评论已生成（${commentText.length} 字）`, "info", "ai_comment_generated", { postId, preview: commentText.substring(0, 120) });
+        }
+      } catch (e) {
+        this.#log(job, `AI 评论生成失败，回退到文本库：${e.message}`, "warning", "ai_comment_fallback", { postId, error: e.message });
+      }
+    }
+
+    // 3. 回退到文本库
+    if (!commentText) {
+      if (texts.length === 0) {
+        this.#log(job, `无评论文本可用（语料库和 AI 均未匹配，且文本库为空）`, "warning", "auto_comment_no_text", { postId });
+        return;
+      }
+      commentText = texts[this.randomInteger(0, texts.length - 1)];
+      commentSource = "library";
+    }
+
+    const sourceLabel = commentSource === "corpus" ? "语料库" : commentSource === "ai" ? "AI" : "文本库";
+    this.#setStatus(job, "scrolling", `正在自动评论（${sourceLabel}）`);
+    this.#log(job, `准备在帖子 ${postId} 上评论（${sourceLabel}）：${commentText.substring(0, 50)}${commentText.length > 50 ? "…" : ""}`, "info", "auto_comment_attempt", { postId, textPreview: commentText.substring(0, 80), source: commentSource });
+
+    try {
+      const result = await job.session.postComment(commentText);
+      if (job.cancelled) return;
+
+      if (result.ok) {
+        job.postedCommentPostIds.add(postId);
+        job.autoCommentCount += 1;
+        job.lastCommentAt = Date.now();
+        job.nextCommentDelay = this.randomInteger(
+          job.options.autoCommentMinIntervalMs,
+          job.options.autoCommentMaxIntervalMs,
+        );
+        this.#log(
+          job,
+          `自动评论成功（第 ${job.autoCommentCount}/${job.options.autoCommentMaxPerRun} 条），下次评论间隔 ${Math.round(job.nextCommentDelay / 1000)} 秒`,
+          "info",
+          "auto_comment",
+          { postId, text: commentText.substring(0, 100) },
+        );
+        this.persistence?.updateRun(job);
+      } else {
+        this.#log(
+          job,
+          `自动评论未成功：${result.error || "未知原因"}`,
+          "warning",
+          "auto_comment_failed",
+          { postId, error: result.error },
+        );
+        job.lastCommentAt = Date.now();
+        job.nextCommentDelay = this.randomInteger(
+          job.options.autoCommentMinIntervalMs,
+          job.options.autoCommentMaxIntervalMs,
+        );
+      }
+    } catch (error) {
+      this.#log(
+        job,
+        `自动评论出错：${error.message}`,
+        "warning",
+        "auto_comment_error",
+        { postId, error: error.message },
+      );
+      job.lastCommentAt = Date.now();
+      job.nextCommentDelay = this.randomInteger(
+        job.options.autoCommentMinIntervalMs,
+        job.options.autoCommentMaxIntervalMs,
       );
     }
   }
@@ -1405,6 +1635,10 @@ export class JobManager extends EventEmitter {
       if (result?.available === false || result?.commentsClosed || result?.atBottom) {
         this.#scheduleReturn(job);
         return;
+      }
+      if (job.options.autoCommentEnabled) {
+        await this.#tryAutoPostComment(job);
+        if (job.cancelled) return;
       }
       job.workflowPhase = "comment_scrolling";
       job.nextOperation = "comment-scroll";
@@ -1805,6 +2039,7 @@ export class JobManager extends EventEmitter {
       skippedPromotedCount: job.skippedPromotedCount,
     autoUpvoteCount: job.autoUpvoteCount,
     autoCommentUpvoteCount: job.autoCommentUpvoteCount,
+    autoCommentCount: job.autoCommentCount,
     autoJoinCount: job.autoJoinCount,
     joinedSubredditCount: job.joinedSubredditIds.size,
       upvotedPostCount: job.upvotedPostIds.size,

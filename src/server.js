@@ -18,8 +18,8 @@ import { LocalDatabase } from "./database.js";
 import { TiktokJobManager, TIKTOK_DEFAULT_OPTIONS } from "./tiktok/tiktok-job-manager.js";
 import { TiktokPublishManager } from "./tiktok/tiktok-publish-manager.js";
 import { RotationScheduler, SCHEDULER_DEFAULTS } from "./scheduler.js";
-import { checkIpViaSocks5, checkIpGeoViaSocks5 } from "./socks5-check.js";
-import { dedupVideo, stitchVideos, probeVideo, OUTPUT_DIR as REMIX_OUTPUT_DIR } from "./video-remix.js";
+import { checkIpGeoViaSocks5 } from "./socks5-check.js";
+import { dedupVideo, stitchVideos, probeVideo, OUTPUT_DIR as REMIX_OUTPUT_DIR, DEDUP_PRESETS } from "./video-remix.js";
 
 const THIS_DIR = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_PUBLIC_DIR = path.resolve(THIS_DIR, "../public");
@@ -197,16 +197,17 @@ export function createMonitorServer({
     if (remixProcessing) return;
     remixProcessing = true;
     while (remixQueue.length > 0) {
-      const { taskId, localPaths, mode, ratio } = remixQueue.shift();
+      const { taskId, localPaths, mode, ratio, preset } = remixQueue.shift();
       store.updateRemixTask(taskId, { status: "PROCESSING" });
       try {
+        const opts = preset ? { preset: DEDUP_PRESETS[preset] || DEDUP_PRESETS.medium } : {};
         if (mode === "stitch") {
-          const out = await stitchVideos(localPaths, ratio);
+          const out = await stitchVideos(localPaths, ratio, opts);
           store.updateRemixTask(taskId, { status: "DONE", outputUrl: `/data/remix-output/${path.basename(out)}`, completedAt: nowIso() });
         } else {
           let lastOut = null;
           for (let i = 0; i < localPaths.length; i++) {
-            const out = await dedupVideo(localPaths[i], ratio);
+            const out = await dedupVideo(localPaths[i], ratio, opts);
             lastOut = out;
           }
           store.updateRemixTask(taskId, { status: "DONE", outputUrl: `/data/remix-output/${path.basename(lastOut)}`, completedAt: nowIso() });
@@ -276,6 +277,38 @@ export function createMonitorServer({
         const body = await readJson(request);
         const options = normalizeOptions(body.options);
         sendJson(response, 200, { options: store.saveOptions(options) });
+        return;
+      }
+
+      const profileSettingsMatch = pathname.match(/^\/api\/settings\/profile\/([^/]+)$/);
+      if (request.method === "GET" && profileSettingsMatch) {
+        const profileId = decodeURIComponent(profileSettingsMatch[1]);
+        const options = store.getSavedOptions(profileId);
+        sendJson(response, 200, { options, profileId, hasProfileOverride: options !== null });
+        return;
+      }
+      if (request.method === "PUT" && profileSettingsMatch) {
+        const profileId = decodeURIComponent(profileSettingsMatch[1]);
+        const body = await readJson(request);
+        const options = normalizeOptions(body.options);
+        sendJson(response, 200, { options: store.saveOptions(options, profileId), profileId });
+        return;
+      }
+      if (request.method === "DELETE" && profileSettingsMatch) {
+        const profileId = decodeURIComponent(profileSettingsMatch[1]);
+        const deleted = store.deleteProfileOptions(profileId);
+        sendJson(response, 200, { deleted: deleted > 0, profileId });
+        return;
+      }
+
+      if (request.method === "GET" && pathname === "/api/settings/ai-comment") {
+        sendJson(response, 200, { config: store.getAiCommentConfig() || {} });
+        return;
+      }
+      if (request.method === "PUT" && pathname === "/api/settings/ai-comment") {
+        const body = await readJson(request);
+        const config = store.saveAiCommentConfig(body.config || {});
+        sendJson(response, 200, { config });
         return;
       }
 
@@ -514,6 +547,29 @@ export function createMonitorServer({
         return;
       }
 
+      if (request.method === "PUT" && pathname === "/api/tiktok/settings/batch") {
+        const body = await readJson(request);
+        const profileIds = Array.isArray(body.profileIds) ? body.profileIds.filter(Boolean) : [];
+        const options = body.options || {};
+        const results = [];
+        for (const pid of profileIds) {
+          try {
+            const saved = store.saveTiktokOptions(pid, options);
+            results.push({ profileId: pid, ok: true });
+          } catch (e) {
+            results.push({ profileId: pid, ok: false, error: e.message });
+          }
+        }
+        sendJson(response, 200, { results, count: results.filter(r => r.ok).length });
+        return;
+      }
+
+      if (request.method === "POST" && pathname === "/api/tiktok/jobs/stop-all") {
+        const results = await tiktokJobs.stopAll();
+        sendJson(response, 200, { stopped: results.length });
+        return;
+      }
+
       if (request.method === "GET" && pathname === "/api/tiktok/jobs") {
         sendJson(response, 200, { jobs: tiktokJobs.list() });
         return;
@@ -583,6 +639,26 @@ export function createMonitorServer({
       const tkAccountDeleteMatch = pathname.match(/^\/api\/tiktok\/accounts\/([^/]+)$/);
       if (request.method === "DELETE" && tkAccountDeleteMatch) {
         const deleted = store.deleteTkAccount(decodeURIComponent(tkAccountDeleteMatch[1]));
+        sendJson(response, 200, { deleted });
+        return;
+      }
+
+      // --- Reddit 账号管理 API ---
+      if (request.method === "GET" && pathname === "/api/reddit/accounts") {
+        const accounts = store.listRedditAccounts();
+        sendJson(response, 200, { accounts });
+        return;
+      }
+      if (request.method === "POST" && pathname === "/api/reddit/accounts") {
+        const body = await readJson(request);
+        if (!body.profileId) throw new Error("缺失对应的 Profile ID");
+        const account = store.upsertRedditAccount(body);
+        sendJson(response, 200, { account });
+        return;
+      }
+      const redditAccountDeleteMatch = pathname.match(/^\/api\/reddit\/accounts\/([^/]+)$/);
+      if (request.method === "DELETE" && redditAccountDeleteMatch) {
+        const deleted = store.deleteRedditAccount(decodeURIComponent(redditAccountDeleteMatch[1]));
         sendJson(response, 200, { deleted });
         return;
       }
@@ -771,7 +847,7 @@ export function createMonitorServer({
             const meta = await probeVideo(body.url).catch(() => null);
             const dur = meta?.duration ?? null;
             if (dur) {
-              store.db.prepare("UPDATE remix_videos SET duration = ? WHERE id = ?").run(dur, video.id);
+              store.updateRemixVideoDuration(video.id, dur);
               video.duration = dur;
             }
             sendJson(response, 200, video);
@@ -843,7 +919,7 @@ export function createMonitorServer({
         }
         if (request.method === "POST" && pathname === "/api/remix/tasks") {
           const body = await readJson(request);
-          const { videoUrls, sourceVideos, title, ratio, mode } = body;
+          const { videoUrls, sourceVideos, title, ratio, mode, preset } = body;
           if (!videoUrls || !videoUrls.length) { sendJson(response, 400, { error: "缺少视频" }); return; }
 
           const resolveLocal = (url) => {
@@ -859,7 +935,7 @@ export function createMonitorServer({
 
           const task = store.createRemixTask({ title: title || "未命名任务", mode: mode || "dedup", videoUrls, sourceVideos, ratio: ratio || "9:16" });
           sendJson(response, 200, task);
-          remixQueue.push({ taskId: task.id, localPaths, mode: mode || "dedup", ratio: ratio || "9:16" });
+          remixQueue.push({ taskId: task.id, localPaths, mode: mode || "dedup", ratio: ratio || "9:16", preset: preset || "medium" });
           processRemixQueue();
           return;
         }

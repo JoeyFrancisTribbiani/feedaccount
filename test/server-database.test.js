@@ -107,6 +107,12 @@ test("database HTTP endpoints expose settings, profiles, history, logs and stats
     autoJoinIntervalMinSec: 60,
     autoJoinIntervalMaxSec: 180,
     autoJoinMaxPerRun: 3,
+    autoCommentEnabled: false,
+    autoCommentProbability: 0,
+    autoCommentMinIntervalSec: 1800,
+    autoCommentMaxIntervalSec: 7200,
+    autoCommentMaxPerRun: 2,
+    autoCommentTexts: [],
   });
 
   const legacySaved = await jsonRequest(baseUrl, "/api/settings", {

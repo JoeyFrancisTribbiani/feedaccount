@@ -49,6 +49,7 @@ function completedJob(runId) {
     stoppedAt: "2026-07-15T00:00:05.000Z",
     nextActionAt: null,
     postCount: 2,
+    scrollCount: 2,
     fullPostCount: 1,
     totalPixels: 300,
     lastScrollPixels: 200,
@@ -108,6 +109,12 @@ test("LocalDatabase persists per-post settings, runs, events and aggregate stats
     autoJoinIntervalMinSec: 60,
     autoJoinIntervalMaxSec: 180,
     autoJoinMaxPerRun: 3,
+    autoCommentEnabled: false,
+    autoCommentProbability: 0,
+    autoCommentMinIntervalSec: 1800,
+    autoCommentMaxIntervalSec: 7200,
+    autoCommentMaxPerRun: 2,
+    autoCommentTexts: [],
   });
   assert.deepEqual(database.getSavedOptions(), {
     waitMinSec: 2,
@@ -131,6 +138,12 @@ test("LocalDatabase persists per-post settings, runs, events and aggregate stats
     autoJoinIntervalMinSec: 60,
     autoJoinIntervalMaxSec: 180,
     autoJoinMaxPerRun: 3,
+    autoCommentEnabled: false,
+    autoCommentProbability: 0,
+    autoCommentMinIntervalSec: 1800,
+    autoCommentMaxIntervalSec: 7200,
+    autoCommentMaxPerRun: 2,
+    autoCommentTexts: [],
   });
 
   const runId = database.createRun(
@@ -198,6 +211,8 @@ test("LocalDatabase persists per-post settings, runs, events and aggregate stats
     skippedPromotedCount: 1,
     autoUpvoteCount: 0,
     autoCommentUpvoteCount: 0,
+    autoCommentCount: 0,
+    autoJoinCount: 0,
     totalPixels: 300,
     completedCount: 1,
     errorCount: 0,
@@ -334,6 +349,12 @@ test("LocalDatabase migrates legacy pixel runs without relabeling their history"
         autoJoinIntervalMinSec: 60,
         autoJoinIntervalMaxSec: 180,
         autoJoinMaxPerRun: 3,
+        autoCommentEnabled: false,
+        autoCommentProbability: 0,
+        autoCommentMinIntervalSec: 1800,
+        autoCommentMaxIntervalSec: 7200,
+        autoCommentMaxPerRun: 2,
+        autoCommentTexts: [],
       });
       assert.equal(migrated.getStats().scrollCount, 3);
       assert.equal(migrated.getStats().postCount, 0);

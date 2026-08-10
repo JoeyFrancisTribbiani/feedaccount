@@ -14,6 +14,12 @@ export const TIKTOK_DEFAULT_OPTIONS = Object.freeze({
   commentEnabled: false,
   commentProbability: 0,
   commentTexts: [],
+  searchEnabled: false,
+  searchKeywords: [],
+  searchVideosPerKeyword: 5,
+  searchCommentEnabled: false,
+  searchCommentProbability: 0,
+  searchCommentTexts: [],
 });
 
 function nowIso() {
@@ -50,6 +56,7 @@ export class TiktokJobManager extends EventTarget {
       videoCount: job.videoCount,
       likeCount: job.likeCount,
       commentCount: job.commentCount,
+      searchVideoCount: job.searchVideoCount || 0,
       currentVideo: job.currentVideo,
       options: { ...job.options },
       startedAt: job.startedAt,
@@ -75,7 +82,11 @@ export class TiktokJobManager extends EventTarget {
   }
 
   async start(profileId, profileName, options = {}) {
-    if (this.jobs.has(profileId)) throw new Error("该实例已有运行中的 TikTok 任务");
+    const existing = this.jobs.get(profileId);
+    if (existing && !["completed", "stopped", "error"].includes(existing.status)) {
+      throw new Error("该实例已有运行中的 TikTok 任务");
+    }
+    if (existing) this.jobs.delete(profileId);
     const job = {
       profileId,
       profileName,
@@ -130,6 +141,8 @@ export class TiktokJobManager extends EventTarget {
       return;
     }
     job.currentVideo = this.#videoSummary(feed);
+    job.searchVideoCount = 0;
+    job.videosSinceSearch = 0;
     this.#setStatus(job, "running", "正在浏览 TikTok");
     this.#log(job, `已连接 TikTok，当前视频：${job.currentVideo.author}`, "info", "lifecycle");
     this.#emit();
@@ -177,6 +190,7 @@ export class TiktokJobManager extends EventTarget {
           if (job.cancelled) break;
           if (adv.switched) {
             job.videoCount += 1;
+            job.videosSinceSearch += 1;
             job.currentVideo = this.#videoSummary(adv.feed);
             this.#log(job, `切换到下一个视频：${job.currentVideo.author}（第 ${job.videoCount + 1} 个）`, "info", "advance", { identity: adv.after });
             this.#emit();
@@ -187,6 +201,15 @@ export class TiktokJobManager extends EventTarget {
         } catch (e) {
           this.#log(job, `切换视频失败：${e.message}，5秒后重试`, "warning", "advance_error");
           await this.#sleep(job, 5000);
+        }
+
+        if (job.options.searchEnabled && Array.isArray(job.options.searchKeywords) && job.options.searchKeywords.length > 0) {
+          const searchInterval = randomInteger(3, 8);
+          if (job.videosSinceSearch >= searchInterval) {
+            await this.#runSearchPhase(job);
+            if (job.cancelled) break;
+            job.videosSinceSearch = 0;
+          }
         }
       } catch (e) {
         this.#log(job, `操作异常：${e.message}，10秒后重试`, "warning", "lifecycle");
@@ -282,6 +305,109 @@ export class TiktokJobManager extends EventTarget {
       await job.session.closeComments();
     } catch (e) {
       this.#log(job, `发评论出错：${e.message}`, "warning", "comment_error", { error: e.message });
+      try { await job.session.closeComments(); } catch {}
+    }
+  }
+
+  async #runSearchPhase(job) {
+    const keywords = job.options.searchKeywords.filter((k) => k && k.trim());
+    if (keywords.length === 0) return;
+    const keyword = keywords[randomInteger(0, keywords.length - 1)];
+    const videosPerKeyword = Number(job.options.searchVideosPerKeyword) || 5;
+
+    this.#log(job, `🔍 进入搜索模式，关键词："${keyword}"，计划浏览 ${videosPerKeyword} 个视频`, "info", "search_start", { keyword, videosPerKeyword });
+    this.#setStatus(job, "running", `搜索："${keyword}"`);
+    job.searchKeyword = keyword;
+    this.persistence?.updateTiktokRun(job);
+    this.#emit();
+
+    try {
+      const feed = await job.session.search(keyword);
+      if (job.cancelled) return;
+      job.currentVideo = this.#videoSummary(feed);
+      this.#log(job, `搜索结果首个视频：${job.currentVideo?.author || "未知"}`, "info", "search_result", { keyword });
+      this.#emit();
+
+      for (let i = 0; i < videosPerKeyword; i++) {
+        if (job.cancelled) break;
+
+        const watchMs = randomInteger(job.options.watchMinSec, job.options.watchMaxSec) * 1000;
+        this.#log(job, `[搜索] 停留 ${(watchMs / 1000).toFixed(1)} 秒（第 ${i + 1}/${videosPerKeyword} 个）`, "info", "search_watch", { watchMs, index: i + 1 });
+        await this.#sleep(job, watchMs);
+        if (job.cancelled) break;
+
+        if (job.options.likeEnabled) {
+          await this.#tryLike(job);
+          if (job.cancelled) break;
+        }
+
+        if (job.options.searchCommentEnabled && Array.isArray(job.options.searchCommentTexts) && job.options.searchCommentTexts.length) {
+          await this.#trySearchComment(job);
+          if (job.cancelled) break;
+        }
+
+        job.searchVideoCount += 1;
+
+        if (i < videosPerKeyword - 1) {
+          try {
+            const adv = await job.session.advanceVideo();
+            if (job.cancelled) break;
+            if (adv.switched) {
+              job.currentVideo = this.#videoSummary(adv.feed);
+              this.#log(job, `[搜索] 切换到下一个视频：${job.currentVideo?.author || "未知"}`, "info", "search_advance");
+              this.#emit();
+            } else {
+              this.#log(job, `[搜索] 未能切换视频`, "warning", "search_advance");
+              await this.#sleep(job, 1500);
+            }
+          } catch (e) {
+            this.#log(job, `[搜索] 切换视频失败：${e.message}`, "warning", "search_advance_error");
+            await this.#sleep(job, 3000);
+          }
+        }
+      }
+
+      this.#log(job, `🔍 搜索模式完成，关键词"${keyword}"已浏览 ${Math.min(job.searchVideoCount, videosPerKeyword)} 个视频`, "info", "search_done", { keyword });
+    } catch (e) {
+      this.#log(job, `搜索模式出错：${e.message}`, "warning", "search_error", { keyword, error: e.message });
+    }
+
+    try {
+      await job.session.returnToForyou();
+      const feed2 = await job.session.readFeed();
+      job.currentVideo = this.#videoSummary(feed2);
+      this.#log(job, `已返回 For You 推荐页，当前视频：${job.currentVideo?.author || "未知"}`, "info", "search_return");
+      this.#setStatus(job, "running", "正在浏览 TikTok");
+      this.#emit();
+    } catch (e) {
+      this.#log(job, `返回 For You 失败：${e.message}`, "warning", "search_return_error", { error: e.message });
+    }
+  }
+
+  async #trySearchComment(job) {
+    const probability = Number(job.options.searchCommentProbability || 0);
+    if (probability <= 0) return;
+    const roll = randomInteger(0, 99);
+    if (roll >= probability) {
+      this.#log(job, `[搜索] 发评论概率未命中（${roll + 1}% >= ${probability}%）`, "info", "search_comment_skipped", { roll: roll + 1, threshold: probability });
+      return;
+    }
+    const texts = job.options.searchCommentTexts.filter((t) => t && t.trim());
+    if (texts.length === 0) return;
+    const text = texts[randomInteger(0, texts.length - 1)];
+    this.#log(job, `[搜索] 发评论概率命中，准备评论`, "info", "search_comment_attempt", { roll: roll + 1, threshold: probability });
+    try {
+      await job.session.openComments();
+      const result = await job.session.postComment(text);
+      if (result.ok) {
+        job.commentCount += 1;
+        this.#log(job, `[搜索] 已发表评论`, "info", "search_comment", { text });
+      } else {
+        this.#log(job, `[搜索] 评论发布失败`, "warning", "search_comment_failed");
+      }
+      await job.session.closeComments();
+    } catch (e) {
+      this.#log(job, `[搜索] 发评论出错：${e.message}`, "warning", "search_comment_error", { error: e.message });
       try { await job.session.closeComments(); } catch {}
     }
   }

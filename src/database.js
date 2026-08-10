@@ -251,6 +251,23 @@ export class LocalDatabase {
 
       CREATE INDEX IF NOT EXISTS idx_remix_videos_creator ON remix_videos(creator_id);
       CREATE INDEX IF NOT EXISTS idx_remix_tasks_status ON remix_tasks(status);
+
+      CREATE TABLE IF NOT EXISTS reddit_accounts (
+        id TEXT PRIMARY KEY,
+        profile_id TEXT NOT NULL UNIQUE,
+        reddit_username TEXT,
+        registered_at TEXT,
+        nurture_started_at TEXT,
+        nurture_stage TEXT DEFAULT 'week1',
+        karma_total INTEGER DEFAULT 0,
+        karma_post INTEGER DEFAULT 0,
+        karma_comment INTEGER DEFAULT 0,
+        notes TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_reddit_accounts_profile ON reddit_accounts(profile_id);
     `);
 
     this.#ensureColumn("task_runs", "task_mode", "TEXT NOT NULL DEFAULT 'pixel'");
@@ -280,8 +297,13 @@ export class LocalDatabase {
     this.#ensureColumn("task_runs", "upvoted_comment_ids_json", "TEXT NOT NULL DEFAULT '[]'");
     this.#ensureColumn("task_runs", "auto_upvote_count", "INTEGER NOT NULL DEFAULT 0");
     this.#ensureColumn("task_runs", "auto_comment_upvote_count", "INTEGER NOT NULL DEFAULT 0");
+    this.#ensureColumn("task_runs", "auto_comment_count", "INTEGER NOT NULL DEFAULT 0");
+    this.#ensureColumn("task_runs", "posted_comment_post_ids_json", "TEXT NOT NULL DEFAULT '[]'");
     this.#ensureColumn("task_runs", "joined_subreddits_json", "TEXT NOT NULL DEFAULT '[]'");
     this.#ensureColumn("task_runs", "auto_join_count", "INTEGER NOT NULL DEFAULT 0");
+    this.#ensureColumn("reddit_accounts", "enabled_actions_json", "TEXT NOT NULL DEFAULT '[]'");
+    this.#ensureColumn("reddit_accounts", "action_configs_json", "TEXT NOT NULL DEFAULT '{}'");
+    this.#ensureColumn("tiktok_runs", "search_keyword", "TEXT");
     this.#ensureColumn("remix_tasks", "downloaded", "INTEGER NOT NULL DEFAULT 0");
   }
 
@@ -408,7 +430,8 @@ export class LocalDatabase {
           skipped_promoted_count = ?, detail_post_json = ?, error = ?,
           upvoted_post_ids_json = ?, upvoted_comment_ids_json = ?,
           auto_upvote_count = ?, auto_comment_upvote_count = ?,
-          joined_subreddits_json = ?, auto_join_count = ?
+          joined_subreddits_json = ?, auto_join_count = ?,
+          auto_comment_count = ?, posted_comment_post_ids_json = ?
         WHERE id = ?
       `)
       .run(
@@ -417,7 +440,7 @@ export class LocalDatabase {
         job.updatedAt,
         job.stoppedAt,
         job.nextActionAt,
-        job.postCount,
+        Number(job.scrollCount || 0),
         job.totalPixels,
         job.lastScrollPixels,
         job.currentY,
@@ -444,6 +467,8 @@ export class LocalDatabase {
         Number(job.autoCommentUpvoteCount || 0),
         JSON.stringify([...(job.joinedSubredditIds || [])]),
         Number(job.autoJoinCount || 0),
+        Number(job.autoCommentCount || 0),
+        JSON.stringify([...(job.postedCommentPostIds || [])]),
         job.runId,
       );
   }
@@ -467,7 +492,8 @@ export class LocalDatabase {
     return Number(result.lastInsertRowid);
   }
 
-  saveOptions(options) {
+  saveOptions(options, profileId = null) {
+    const key = profileId ? `task_options:${profileId}` : "task_options";
     const publicValue = {
       waitMinSec: options.waitMinSec,
       waitMaxSec: options.waitMaxSec,
@@ -509,22 +535,35 @@ export class LocalDatabase {
         options.autoJoinIntervalMaxSec ?? DEFAULT_OPTIONS.autoJoinIntervalMaxSec,
       autoJoinMaxPerRun:
         options.autoJoinMaxPerRun ?? DEFAULT_OPTIONS.autoJoinMaxPerRun,
+      autoCommentEnabled:
+        options.autoCommentEnabled === undefined
+          ? DEFAULT_OPTIONS.autoCommentEnabled
+          : Boolean(options.autoCommentEnabled),
+      autoCommentProbability:
+        options.autoCommentProbability ?? DEFAULT_OPTIONS.autoCommentProbability,
+      autoCommentMinIntervalSec:
+        options.autoCommentMinIntervalSec ?? DEFAULT_OPTIONS.autoCommentMinIntervalSec,
+      autoCommentMaxIntervalSec:
+        options.autoCommentMaxIntervalSec ?? DEFAULT_OPTIONS.autoCommentMaxIntervalSec,
+      autoCommentMaxPerRun:
+        options.autoCommentMaxPerRun ?? DEFAULT_OPTIONS.autoCommentMaxPerRun,
+      autoCommentTexts: Array.isArray(options.autoCommentTexts) ? options.autoCommentTexts : [],
     };
     this.db
       .prepare(`
         INSERT INTO app_settings (key, value_json, updated_at)
-        VALUES ('task_options', ?, ?)
+        VALUES (?, ?, ?)
         ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at
       `)
-      .run(JSON.stringify(publicValue), nowIso());
+      .run(key, JSON.stringify(publicValue), nowIso());
     return publicValue;
   }
 
-  getSavedOptions() {
-    const row = this.db.prepare("SELECT value_json FROM app_settings WHERE key = 'task_options'").get();
+  getSavedOptions(profileId = null) {
+    const key = profileId ? `task_options:${profileId}` : "task_options";
+    const row = this.db.prepare("SELECT value_json FROM app_settings WHERE key = ?").get(key);
     const options = parseJson(row?.value_json, null);
-    if (!options) return null;
-    return {
+    if (!options) return null;    return {
       waitMinSec: options.waitMinSec ?? DEFAULT_OPTIONS.waitMinSec,
       waitMaxSec: options.waitMaxSec ?? DEFAULT_OPTIONS.waitMaxSec,
       maxPosts: options.maxPosts ?? options.maxScrolls ?? 0,
@@ -557,6 +596,16 @@ export class LocalDatabase {
         options.autoJoinIntervalMaxSec ?? DEFAULT_OPTIONS.autoJoinIntervalMaxSec,
       autoJoinMaxPerRun:
         options.autoJoinMaxPerRun ?? DEFAULT_OPTIONS.autoJoinMaxPerRun,
+      autoCommentEnabled: Boolean(options.autoCommentEnabled ?? DEFAULT_OPTIONS.autoCommentEnabled),
+      autoCommentProbability:
+        options.autoCommentProbability ?? DEFAULT_OPTIONS.autoCommentProbability,
+      autoCommentMinIntervalSec:
+        options.autoCommentMinIntervalSec ?? DEFAULT_OPTIONS.autoCommentMinIntervalSec,
+      autoCommentMaxIntervalSec:
+        options.autoCommentMaxIntervalSec ?? DEFAULT_OPTIONS.autoCommentMaxIntervalSec,
+      autoCommentMaxPerRun:
+        options.autoCommentMaxPerRun ?? DEFAULT_OPTIONS.autoCommentMaxPerRun,
+      autoCommentTexts: Array.isArray(options.autoCommentTexts) ? options.autoCommentTexts : [],
     };
   }
 
@@ -590,6 +639,8 @@ export class LocalDatabase {
           COALESCE(SUM(skipped_promoted_count), 0) AS skipped_promoted_count,
           COALESCE(SUM(auto_upvote_count), 0) AS auto_upvote_count,
           COALESCE(SUM(auto_comment_upvote_count), 0) AS auto_comment_upvote_count,
+          COALESCE(SUM(auto_comment_count), 0) AS auto_comment_count,
+          COALESCE(SUM(auto_join_count), 0) AS auto_join_count,
           COALESCE(SUM(total_pixels), 0) AS total_pixels,
           SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS completed_count,
           SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) AS error_count
@@ -609,6 +660,8 @@ export class LocalDatabase {
       skippedPromotedCount: Number(runStats.skipped_promoted_count),
       autoUpvoteCount: Number(runStats.auto_upvote_count || 0),
       autoCommentUpvoteCount: Number(runStats.auto_comment_upvote_count || 0),
+      autoCommentCount: Number(runStats.auto_comment_count || 0),
+      autoJoinCount: Number(runStats.auto_join_count || 0),
       totalPixels: Number(runStats.total_pixels),
       completedCount: Number(runStats.completed_count || 0),
       errorCount: Number(runStats.error_count || 0),
@@ -693,11 +746,17 @@ export class LocalDatabase {
   saveJoinTargets(targets) {
     const clean = (Array.isArray(targets) ? targets : [])
       .map((t) => {
-        if (typeof t === "string") return { name: t.trim() };
-        if (t && typeof t.name === "string") return { name: t.name.trim() };
-        return null;
+        let name = typeof t === "string" ? t.trim() : (t && typeof t.name === "string" ? t.name.trim() : "");
+        if (!name) return null;
+        try {
+          const url = new URL(name);
+          const match = url.pathname.match(/^\/r\/([^/]+)/i);
+          if (match) name = match[1];
+        } catch {}
+        name = name.replace(/^\/?r\//i, "").replace(/\/.*$/, "").trim();
+        return name ? { name } : null;
       })
-      .filter((t) => t && t.name);
+      .filter(Boolean);
     this.db
       .prepare(`
         INSERT INTO app_settings (key, value_json, updated_at)
@@ -820,6 +879,8 @@ export class LocalDatabase {
       currentDetailPost: parseJson(row.detail_post_json, null),
       autoUpvoteCount: Number(row.auto_upvote_count || 0),
       autoCommentUpvoteCount: Number(row.auto_comment_upvote_count || 0),
+      autoCommentCount: Number(row.auto_comment_count || 0),
+      autoJoinCount: Number(row.auto_join_count || 0),
       error: row.error,
     };
   }
@@ -835,11 +896,12 @@ export class LocalDatabase {
   updateTiktokRun(job) {
     if (!job.runId) return;
     this.db.prepare(
-      `UPDATE tiktok_runs SET status=?, status_text=?, updated_at=?, video_count=?, like_count=?, comment_count=?, current_video_json=?, error=? WHERE id=?`,
+      `UPDATE tiktok_runs SET status=?, status_text=?, updated_at=?, video_count=?, like_count=?, comment_count=?, current_video_json=?, search_keyword=?, error=? WHERE id=?`,
     ).run(
       job.status, job.statusText || job.status, nowIso(),
       Number(job.videoCount || 0), Number(job.likeCount || 0), Number(job.commentCount || 0),
-      job.currentVideo ? JSON.stringify(job.currentVideo) : null, job.error || null, job.runId,
+      job.currentVideo ? JSON.stringify(job.currentVideo) : null,
+      job.searchKeyword || null, job.error || null, job.runId,
     );
   }
 
@@ -964,6 +1026,111 @@ export class LocalDatabase {
 
   deleteTkAccount(id) {
     return this.db.prepare(`DELETE FROM tk_accounts WHERE id = ? OR profile_id = ?`).run(id, id).changes;
+  }
+
+  // --- Reddit 账号管理 ---
+  upsertRedditAccount(accountData) {
+    const timestamp = nowIso();
+    const id = accountData.id || `rdt_acc_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const enabledActions = Array.isArray(accountData.enabledActions)
+      ? accountData.enabledActions.filter((a) => typeof a === "string" && a.trim())
+      : [];
+    const actionConfigs = accountData.actionConfigs && typeof accountData.actionConfigs === "object"
+      ? accountData.actionConfigs
+      : {};
+    this.db.prepare(`
+      INSERT INTO reddit_accounts (id, profile_id, reddit_username, registered_at, nurture_started_at, nurture_stage, karma_total, karma_post, karma_comment, notes, enabled_actions_json, action_configs_json, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(profile_id) DO UPDATE SET
+        reddit_username = excluded.reddit_username,
+        registered_at = excluded.registered_at,
+        nurture_started_at = excluded.nurture_started_at,
+        nurture_stage = excluded.nurture_stage,
+        karma_total = excluded.karma_total,
+        karma_post = excluded.karma_post,
+        karma_comment = excluded.karma_comment,
+        notes = excluded.notes,
+        enabled_actions_json = excluded.enabled_actions_json,
+        action_configs_json = excluded.action_configs_json,
+        updated_at = excluded.updated_at
+    `).run(
+      id, accountData.profileId, accountData.redditUsername || "",
+      accountData.registeredAt || null, accountData.nurtureStartedAt || null,
+      accountData.nurtureStage || "week1",
+      Number(accountData.karmaTotal ?? 0), Number(accountData.karmaPost ?? 0), Number(accountData.karmaComment ?? 0),
+      accountData.notes || "", JSON.stringify(enabledActions), JSON.stringify(actionConfigs), timestamp, timestamp
+    );
+    return this.getRedditAccountByProfileId(accountData.profileId);
+  }
+
+  deleteProfileOptions(profileId) {
+    return this.db.prepare("DELETE FROM app_settings WHERE key = ?").run(`task_options:${profileId}`).changes;
+  }
+
+  getAiCommentConfig() {
+    const row = this.db.prepare("SELECT value_json FROM app_settings WHERE key = 'ai_comment_config'").get();
+    return parseJson(row?.value_json, null);
+  }
+
+  saveAiCommentConfig(config) {
+    this.db.prepare(`
+      INSERT INTO app_settings (key, value_json, updated_at)
+      VALUES ('ai_comment_config', ?, ?)
+      ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at
+    `).run(JSON.stringify(config || {}), nowIso());
+    return config;
+  }
+
+  listRedditAccounts() {
+    return this.db.prepare(`
+      SELECT a.*, p.name AS profile_name, p.seq AS profile_seq, p.running AS profile_running
+      FROM reddit_accounts a
+      LEFT JOIN profiles p ON a.profile_id = p.id
+      ORDER BY p.seq ASC NULLS LAST, a.updated_at DESC
+    `).all().map(row => ({
+      id: row.id,
+      profileId: row.profile_id,
+      profileSeq: row.profile_seq,
+      profileName: row.profile_name || row.profile_id,
+      profileRunning: Boolean(row.profile_running),
+      redditUsername: row.reddit_username,
+      registeredAt: row.registered_at,
+      nurtureStartedAt: row.nurture_started_at,
+      nurtureStage: row.nurture_stage,
+      karmaTotal: Number(row.karma_total),
+      karmaPost: Number(row.karma_post),
+      karmaComment: Number(row.karma_comment),
+      notes: row.notes,
+      enabledActions: parseJson(row.enabled_actions_json, []),
+      actionConfigs: parseJson(row.action_configs_json, {}),
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    }));
+  }
+
+  getRedditAccountByProfileId(profileId) {
+    const row = this.db.prepare(`SELECT * FROM reddit_accounts WHERE profile_id = ?`).get(profileId);
+    if (!row) return null;
+    return {
+      id: row.id,
+      profileId: row.profile_id,
+      redditUsername: row.reddit_username,
+      registeredAt: row.registered_at,
+      nurtureStartedAt: row.nurture_started_at,
+      nurtureStage: row.nurture_stage,
+      karmaTotal: Number(row.karma_total),
+      karmaPost: Number(row.karma_post),
+      karmaComment: Number(row.karma_comment),
+      notes: row.notes,
+      enabledActions: parseJson(row.enabled_actions_json, []),
+      actionConfigs: parseJson(row.action_configs_json, {}),
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  deleteRedditAccount(id) {
+    return this.db.prepare(`DELETE FROM reddit_accounts WHERE id = ? OR profile_id = ?`).run(id, id).changes;
   }
 
   // --- TK 视频素材库管理 ---
@@ -1173,6 +1340,10 @@ export class LocalDatabase {
 
   deleteRemixVideo(id) {
     return this.db.prepare(`DELETE FROM remix_videos WHERE id = ?`).run(id).changes;
+  }
+
+  updateRemixVideoDuration(id, duration) {
+    this.db.prepare("UPDATE remix_videos SET duration = ? WHERE id = ?").run(duration, id);
   }
 
   // --- Remix 任务管理 ---

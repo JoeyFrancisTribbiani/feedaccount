@@ -188,14 +188,72 @@
       <!-- Main Content Grid (Reddit Active Tab) -->
       <section class="workspace-grid reddit-tab">
         <div class="primary-column">
-          <!-- Control Settings Form Panel -->
-          <article class="panel control-panel">
-            <div class="panel-heading">
+          <!-- Profile Selection Grid Panel -->
+          <article class="panel profiles-panel">
+            <div class="panel-heading profiles-heading">
+              <div>
+                <p class="section-kicker">BitBrowser 实例矩阵</p>
+                <h2>选择目标浏览器实例</h2>
+              </div>
+              <div class="heading-actions">
+                <button id="select-all" class="text-button" type="button">全选实例</button>
+                <button id="refresh-profiles" class="icon-button" type="button" aria-label="刷新实例列表" title="刷新实例列表">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="23 4 23 10 17 10"></polyline>
+                    <polyline points="1 20 1 14 7 14"></polyline>
+                    <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            <div id="profiles-loading" class="empty-state compact">
+              <span class="loading-ring"></span>
+              正在连接并读取 BitBrowser 本地 API 实例...
+            </div>
+            <div id="profiles-grid" class="profiles-grid" aria-live="polite"></div>
+
+            <div class="action-bar">
+              <div>
+                <strong id="selection-count">尚未选择实例</strong>
+                <small>每个实例都拥有独立隔离的 Cookie & 算法节奏</small>
+              </div>
+              <div class="action-buttons">
+                <button id="stop-selected" class="button button-secondary" type="button" disabled>
+                  停止所选
+                </button>
+                <button id="start-selected" class="button button-primary" type="button" disabled>
+                  启动选中任务
+                </button>
+              </div>
+            </div>
+          </article>
+
+          <!-- Control Settings Form Panel (collapsible) -->
+          <article class="panel control-panel" id="options-panel">
+            <div class="panel-heading" id="options-panel-toggle" style="cursor:pointer;user-select:none;">
               <div>
                 <p class="section-kicker">任务参数管理</p>
-                <h2>配置每次运行的拟人化节奏</h2>
+                <h2>配置每次运行的拟人化节奏 <span id="options-scope-badge" class="options-scope-badge">全局</span></h2>
               </div>
-              <button id="reset-options" class="text-button" type="button">恢复默认值</button>
+              <div class="heading-actions">
+                <button id="reset-options" class="text-button" type="button">恢复默认值</button>
+                <span id="options-collapse-icon" class="options-collapse-icon">▶</span>
+              </div>
+            </div>
+
+            <div id="options-panel-body" class="options-panel-body collapsed">
+
+            <div class="options-scope-bar">
+              <label>
+                <span>参数作用域</span>
+                <select id="options-scope-select">
+                  <option value="global">全局设置（所有实例共用）</option>
+                  <option value="profile">指定实例</option>
+                </select>
+              </label>
+              <select id="options-profile-select" class="hidden"></select>
+              <span id="options-scope-hint" class="muted-activity" style="font-size:12px;"></span>
             </div>
 
             <form id="options-form" class="options-form">
@@ -365,11 +423,97 @@
                 </label>
                 <label class="wide-input">
                   <span>预配置群组列表</span>
-                  <textarea id="join-targets-text" rows="5" style="width:100%;font-family:var(--font-mono);font-size:12px;resize:vertical;" placeholder="支持批量粘贴，每行/逗号/空格分隔均可，例如：&#10;AskReddit, worldnews&#10;https://www.reddit.com/r/mildlyinteresting/&#10;gadgets"></textarea>
+                  <textarea id="join-targets-text" rows="5" placeholder="支持批量粘贴，每行/逗号/空格分隔均可，例如：&#10;AskReddit, worldnews&#10;https://www.reddit.com/r/mildlyinteresting/&#10;gadgets"></textarea>
                 </label>
                 <div style="display:flex;gap:8px;align-items:center;">
                   <button type="button" id="join-targets-save" class="btn btn-secondary" style="padding:6px 14px;font-size:12px;">保存群组列表</button>
                   <small id="join-targets-status" style="color:var(--text-muted);"></small>
+                </div>
+              </fieldset>
+
+              <fieldset class="auto-upvote-fieldset comment-fieldset">
+                <legend>自动评论</legend>
+                <div class="comment-fieldset-row1">
+                  <label class="switch-row">
+                    <input id="auto-comment-enabled" type="checkbox" />
+                    <span class="switch" aria-hidden="true"></span>
+                    <span>
+                      <strong>自动发布评论</strong>
+                      <small>进入帖子详情后自动发布评论</small>
+                    </span>
+                  </label>
+                </div>
+                <div class="comment-fieldset-row2">
+                  <label class="wide-input">
+                    <span>评论概率</span>
+                    <span class="input-with-unit">
+                      <input id="auto-comment-probability" type="number" min="0" max="100" required />
+                      <small>%</small>
+                    </span>
+                  </label>
+                  <label class="wide-input">
+                    <span>评论间隔</span>
+                    <span class="input-with-unit">
+                      <input id="auto-comment-min-interval" type="number" min="60" max="86400" required />
+                      <small>～</small>
+                      <input id="auto-comment-max-interval" type="number" min="60" max="86400" required />
+                      <small>秒</small>
+                    </span>
+                  </label>
+                  <label class="wide-input">
+                    <span>每次运行最多</span>
+                    <span class="input-with-unit">
+                      <input id="auto-comment-max-per-run" type="number" min="1" max="20" required />
+                      <small>条</small>
+                    </span>
+                  </label>
+                </div>
+                <label class="wide-input comment-full-width">
+                  <span>评论文本库（每行一条，AI 失败时回退）</span>
+                  <textarea id="auto-comment-texts" rows="4" placeholder="每行一条评论，随机选取发布&#10;如：This is really helpful!&#10;Great point, thanks!"></textarea>
+                </label>
+
+                <div class="comment-ai-section">
+                  <div class="comment-ai-header">
+                    <label class="switch-row">
+                      <input id="ai-comment-use" type="checkbox" />
+                      <span class="switch" aria-hidden="true"></span>
+                      <span>
+                        <strong>使用 AI 生成评论</strong>
+                        <small>优先用 ChatGPT 分析帖子生成评论，失败时回退到文本库</small>
+                      </span>
+                    </label>
+                  </div>
+                  <div class="comment-ai-grid">
+                    <label class="wide-input">
+                      <span>API Base URL</span>
+                      <input id="ai-comment-base-url" type="text" placeholder="https://api.openai.com/v1" />
+                    </label>
+                    <label class="wide-input">
+                      <span>API Key</span>
+                      <input id="ai-comment-api-key" type="password" placeholder="sk-..." />
+                    </label>
+                    <label class="wide-input">
+                      <span>模型名称</span>
+                      <input id="ai-comment-model" type="text" placeholder="gpt-4o-mini" />
+                    </label>
+                    <label class="wide-input">
+                      <span>Max Tokens</span>
+                      <input id="ai-comment-max-tokens" type="number" min="50" max="1000" value="200" />
+                    </label>
+                    <label class="wide-input">
+                      <span>Temperature</span>
+                      <input id="ai-comment-temperature" type="number" min="0" max="2" step="0.1" value="0.8" />
+                    </label>
+                  </div>
+                  <label class="wide-input">
+                    <span>System Prompt（留空用默认）</span>
+                    <textarea id="ai-comment-prompt" rows="3" placeholder="留空使用内置默认 prompt：以真实 Reddit 用户身份写自然评论…"></textarea>
+                  </label>
+                  <div class="comment-ai-actions">
+                    <button type="button" id="ai-comment-save" class="btn btn-secondary">保存 AI 配置</button>
+                    <small id="ai-comment-status" style="color:var(--text-muted);"></small>
+                  </div>
                 </div>
               </fieldset>
 
@@ -389,46 +533,6 @@
                 </label>
               </div>
             </form>
-          </article>
-
-          <!-- Profile Selection Grid Panel -->
-          <article class="panel profiles-panel">
-            <div class="panel-heading profiles-heading">
-              <div>
-                <p class="section-kicker">BitBrowser 实例矩阵</p>
-                <h2>选择目标浏览器实例</h2>
-              </div>
-              <div class="heading-actions">
-                <button id="select-all" class="text-button" type="button">全选实例</button>
-                <button id="refresh-profiles" class="icon-button" type="button" aria-label="刷新实例列表" title="刷新实例列表">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                    <polyline points="23 4 23 10 17 10"></polyline>
-                    <polyline points="1 20 1 14 7 14"></polyline>
-                    <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
-                  </svg>
-                </button>
-              </div>
-            </div>
-
-            <div id="profiles-loading" class="empty-state compact">
-              <span class="loading-ring"></span>
-              正在连接并读取 BitBrowser 本地 API 实例...
-            </div>
-            <div id="profiles-grid" class="profiles-grid" aria-live="polite"></div>
-
-            <div class="action-bar">
-              <div>
-                <strong id="selection-count">尚未选择实例</strong>
-                <small>每个实例都拥有独立隔离的 Cookie & 算法节奏</small>
-              </div>
-              <div class="action-buttons">
-                <button id="stop-selected" class="button button-secondary" type="button" disabled>
-                  停止所选
-                </button>
-                <button id="start-selected" class="button button-primary" type="button" disabled>
-                  启动选中任务
-                </button>
-              </div>
             </div>
           </article>
         </div>
@@ -465,6 +569,80 @@
             </ol>
           </article>
         </aside>
+      </section>
+
+      <!-- Reddit 账号管理 -->
+      <section class="panel reddit-tab" id="reddit-accounts-panel">
+        <div class="panel-heading">
+          <div>
+            <p class="section-kicker">Reddit 账号管理</p>
+            <h2>养号进度跟踪表</h2>
+          </div>
+          <button id="rdt-refresh-accounts" class="button button-secondary" type="button">刷新</button>
+        </div>
+
+        <div class="account-bind-form form-sub-card">
+          <label>
+            <span>BitBrowser 实例</span>
+            <select id="rdt-bind-profile"></select>
+          </label>
+          <label>
+            <span>Reddit 用户名</span>
+            <input id="rdt-username" type="text" placeholder="u/username" />
+          </label>
+          <label>
+            <span>注册日期</span>
+            <input id="rdt-registered-at" type="date" />
+          </label>
+          <label>
+            <span>开始养号日期</span>
+            <input id="rdt-nurture-started-at" type="date" />
+          </label>
+          <label>
+            <span>养号阶段</span>
+            <select id="rdt-stage">
+              <option value="week1">Week 1（仅点赞）</option>
+              <option value="week2">Week 2（开始评论）</option>
+              <option value="week3">Week 3（开始发帖）</option>
+            </select>
+          </label>
+          <div class="rdt-actions-panel" style="grid-column: 1 / -1;">
+            <span style="font-size: 13px; font-weight: 600; color: var(--text-secondary); margin-bottom: 8px; display: block;">养号操作项（按周分组，可多选）</span>
+            <div id="rdt-actions-groups" class="rdt-actions-groups"></div>
+          </div>
+          <label>
+            <span>Karma</span>
+            <input id="rdt-karma" type="number" min="0" value="0" />
+          </label>
+          <label>
+            <span>备注</span>
+            <input id="rdt-notes" type="text" placeholder="可选" />
+          </label>
+          <div style="display: flex; align-items: flex-end;">
+            <button id="btn-save-reddit-account" class="button button-primary" style="width: 100%; height: 38px;" type="button">保存</button>
+          </div>
+        </div>
+
+        <div class="table-scroll" style="padding: 0 24px 24px;">
+          <table class="history-table" style="width: 100%;">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>实例</th>
+                <th>Reddit 用户名</th>
+                <th>注册日期</th>
+                <th>开始养号</th>
+                <th>已启用操作项</th>
+                <th>Karma</th>
+                <th>备注</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="rdt-accounts-table-body">
+              <tr><td colspan="9" style="text-align: center; color: var(--text-muted); padding: 24px;">暂无 Reddit 账号记录</td></tr>
+            </tbody>
+          </table>
+        </div>
       </section>
 
       <!-- Database & History Data Center Section -->
@@ -708,10 +886,17 @@
                 <button id="tk-reset" class="text-button" type="button">恢复默认</button>
               </div>
               <form id="tk-options-form" class="options-form">
-                <label class="wide-input option-row">
-                  <span>选择 BitBrowser 目标实例</span>
-                  <select id="tk-profile"></select>
-                </label>
+                <div class="tk-scope-bar">
+                  <label>
+                    <span>参数作用域</span>
+                    <select id="tk-scope-select">
+                      <option value="global">全局设置（所有实例共用）</option>
+                      <option value="profiles">指定实例（可多选）</option>
+                    </select>
+                  </label>
+                  <div id="tk-profile-checkboxes" class="tk-profile-checkboxes hidden"></div>
+                  <span id="tk-scope-hint" class="muted-activity" style="font-size:12px;"></span>
+                </div>
                 <fieldset>
                   <legend>视频观赏时长</legend>
                   <label>
@@ -768,9 +953,40 @@
                     <textarea id="tk-comment-texts" rows="3" placeholder="好看！&#10;学到了&#10;Amazing content!"></textarea>
                   </label>
                 </fieldset>
+                <fieldset class="auto-upvote-fieldset">
+                  <legend>搜索养号模式</legend>
+                  <label class="switch-row">
+                    <input id="tk-search-enabled" type="checkbox" />
+                    <span class="switch" aria-hidden="true"></span>
+                    <span><strong>启用搜索模式</strong><small>浏览 For You 时穿插搜索指定关键词，浏览搜索结果视频</small></span>
+                  </label>
+                  <label class="wide-input">
+                    <span>搜索关键词（每行一个）</span>
+                    <textarea id="tk-search-keywords" rows="4" placeholder="每行一个关键词，随机选取&#10;例如：&#10;cat videos&#10;cooking tips&#10;travel vlog"></textarea>
+                  </label>
+                  <label class="wide-input">
+                    <span>每次搜索浏览视频数</span>
+                    <span class="input-with-unit"><input id="tk-search-videos" type="number" min="1" max="50" value="5" required /><small>个</small></span>
+                  </label>
+                  <label class="switch-row">
+                    <input id="tk-search-comment-enabled" type="checkbox" />
+                    <span class="switch" aria-hidden="true"></span>
+                    <span><strong>搜索视频评论</strong><small>在搜索结果视频下按概率随机评论</small></span>
+                  </label>
+                  <label class="wide-input">
+                    <span>搜索评论概率</span>
+                    <span class="input-with-unit"><input id="tk-search-comment-prob" type="number" min="0" max="100" value="0" required /><small>%</small></span>
+                  </label>
+                  <label class="wide-input">
+                    <span>搜索评论文案库（每行一条）</span>
+                    <textarea id="tk-search-comment-texts" rows="3" placeholder="每行一条评论，随机选取&#10;例如：&#10;This is so helpful!&#10;Love this content!"></textarea>
+                  </label>
+                </fieldset>
                 <div class="option-row tk-actions">
-                  <button id="tk-start" class="button button-primary" type="button">启动 TikTok 自动化养号</button>
-                  <button id="tk-stop" class="button button-secondary" type="button">停止任务</button>
+                  <button id="tk-start" class="button button-primary" type="button">启动选中实例</button>
+                  <button id="tk-start-all" class="button button-secondary" type="button">启动全部实例</button>
+                  <button id="tk-stop" class="button button-secondary" type="button">停止选中实例</button>
+                  <button id="tk-stop-all" class="danger-button" type="button">全部停止</button>
                 </div>
               </form>
             </article>
