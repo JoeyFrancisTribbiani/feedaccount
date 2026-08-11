@@ -2457,6 +2457,8 @@ for (const btn of document.querySelectorAll(".platform-tab")) {
     document.querySelectorAll(".reddit-tab").forEach((el) => el.classList.toggle("hidden", platform !== "reddit"));
     document.querySelectorAll(".tiktok-tab").forEach((el) => el.classList.toggle("hidden", platform !== "tiktok"));
     document.querySelectorAll(".remix-tab").forEach((el) => el.classList.toggle("hidden", platform !== "remix"));
+    document.querySelectorAll(".cdp-tab").forEach((el) => el.classList.toggle("hidden", platform !== "cdp"));
+    if (platform === "cdp") refreshCdpInstances();
   });
 }
 
@@ -3553,5 +3555,244 @@ if (remix.viewMode === "list") {
   remixEl.viewListBtn?.classList.add("active");
   remixEl.viewGridBtn?.classList.remove("active");
 }
+
+// ==========================================================================
+// Chrome CDP 管理模块
+// ==========================================================================
+const cdpEl = {
+  refreshBtn: document.querySelector("#cdp-refresh"),
+  addBtn: document.querySelector("#cdp-add"),
+  form: document.querySelector("#cdp-form"),
+  editId: document.querySelector("#cdp-edit-id"),
+  name: document.querySelector("#cdp-name"),
+  host: document.querySelector("#cdp-host"),
+  port: document.querySelector("#cdp-port"),
+  daemonPort: document.querySelector("#cdp-daemon-port"),
+  ngrok: document.querySelector("#cdp-ngrok"),
+  notes: document.querySelector("#cdp-notes"),
+  saveBtn: document.querySelector("#cdp-save"),
+  cancelBtn: document.querySelector("#cdp-cancel"),
+  tableBody: document.querySelector("#cdp-instances-body"),
+  actionPanel: document.querySelector("#cdp-action-panel"),
+  actionTitle: document.querySelector("#cdp-action-title"),
+  actionClose: document.querySelector("#cdp-action-close"),
+  healthBtn: document.querySelector("#cdp-health"),
+  statusBtn: document.querySelector("#cdp-status"),
+  screenshotBtn: document.querySelector("#cdp-screenshot"),
+  message: document.querySelector("#cdp-message"),
+  sendBtn: document.querySelector("#cdp-send"),
+  filepath: document.querySelector("#cdp-filepath"),
+  uploadBtn: document.querySelector("#cdp-upload"),
+  analyzePath: document.querySelector("#cdp-analyze-path"),
+  analyzePrompt: document.querySelector("#cdp-analyze-prompt"),
+  analyzeBtn: document.querySelector("#cdp-analyze"),
+  analyzeCheck: document.querySelector("#cdp-analyze-check"),
+  result: document.querySelector("#cdp-result"),
+  logFilter: document.querySelector("#cdp-log-filter"),
+  logsRefresh: document.querySelector("#cdp-logs-refresh"),
+  logsClear: document.querySelector("#cdp-logs-clear"),
+  logsList: document.querySelector("#cdp-logs-list"),
+};
+const cdpState = { instances: [], selectedId: null, analyzeJobId: null };
+
+async function refreshCdpInstances() {
+  try {
+    const res = await request("/api/cdp/instances");
+    cdpState.instances = res.instances || [];
+    renderCdpInstances();
+    refreshCdpLogs();
+  } catch (e) { showToast("CDP 实例加载失败：" + e.message, true); }
+}
+
+function renderCdpInstances() {
+  if (!cdpEl.tableBody) return;
+  const list = cdpState.instances;
+  if (!list.length) {
+    cdpEl.tableBody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:24px;">暂无 Chrome CDP 实例</td></tr>`;
+    return;
+  }
+  cdpEl.tableBody.innerHTML = list.map(inst => {
+    const statusClass = inst.status === "connected" ? "status-success" : inst.status === "error" ? "status-error" : "status-loading";
+    return `<tr>
+      <td><strong>${escapeHtml(inst.name)}</strong>${inst.notes ? `<br><small style="color:var(--text-muted)">${escapeHtml(inst.notes)}</small>` : ""}</td>
+      <td><code>${escapeHtml(inst.cdpHost)}:${inst.cdpPort}</code><br><small style="color:var(--text-muted)">daemon:${inst.daemonPort}</small></td>
+      <td>${inst.ngrokUrl ? `<code style="font-size:11px;">${escapeHtml(inst.ngrokUrl)}</code>` : '<span style="color:var(--text-muted)">—</span>'}</td>
+      <td><span class="status-pill ${statusClass}">${escapeHtml(inst.status)}</span></td>
+      <td>
+        <button class="button button-secondary" style="padding:2px 8px;font-size:11px;" onclick="window.cdpSelect('${escapeHtml(inst.id)}')">操作</button>
+        <button class="button button-secondary" style="padding:2px 8px;font-size:11px;" onclick="window.cdpEdit('${escapeHtml(inst.id)}')">编辑</button>
+        <button class="danger-button" style="padding:2px 8px;font-size:11px;" onclick="window.cdpDelete('${escapeHtml(inst.id)}')">删除</button>
+      </td>
+    </tr>`;
+  }).join("");
+  if (cdpEl.logFilter) {
+    const cur = cdpEl.logFilter.value;
+    cdpEl.logFilter.innerHTML = `<option value="">全部实例</option>` + list.map(i => `<option value="${escapeHtml(i.id)}">${escapeHtml(i.name)}</option>`).join("");
+    cdpEl.logFilter.value = cur;
+  }
+}
+
+window.cdpSelect = function(id) {
+  cdpState.selectedId = id;
+  const inst = cdpState.instances.find(i => i.id === id);
+  if (!inst) return;
+  cdpEl.actionPanel.style.display = "";
+  cdpEl.actionTitle.textContent = `操作 — ${inst.name}`;
+  cdpEl.result.innerHTML = "";
+};
+
+window.cdpEdit = function(id) {
+  const inst = cdpState.instances.find(i => i.id === id);
+  if (!inst) return;
+  cdpEl.form.classList.remove("hidden");
+  cdpEl.editId.value = inst.id;
+  cdpEl.name.value = inst.name;
+  cdpEl.host.value = inst.cdpHost;
+  cdpEl.port.value = inst.cdpPort;
+  cdpEl.daemonPort.value = inst.daemonPort;
+  cdpEl.ngrok.value = inst.ngrokUrl || "";
+  cdpEl.notes.value = inst.notes || "";
+};
+
+window.cdpDelete = async function(id) {
+  if (!confirm("确定删除此 Chrome CDP 实例？")) return;
+  try {
+    await request(`/api/cdp/instances/${encodeURIComponent(id)}`, { method: "DELETE" });
+    showToast("已删除");
+    await refreshCdpInstances();
+  } catch (e) { showToast(e.message, true); }
+};
+
+cdpEl.addBtn?.addEventListener("click", () => {
+  cdpEl.form.classList.remove("hidden");
+  cdpEl.editId.value = "";
+  cdpEl.name.value = "";
+  cdpEl.host.value = "localhost";
+  cdpEl.port.value = "9222";
+  cdpEl.daemonPort.value = "9223";
+  cdpEl.ngrok.value = "";
+  cdpEl.notes.value = "";
+});
+
+cdpEl.cancelBtn?.addEventListener("click", () => { cdpEl.form.classList.add("hidden"); });
+
+cdpEl.saveBtn?.addEventListener("click", async () => {
+  const data = {
+    id: cdpEl.editId.value || undefined,
+    name: cdpEl.name.value.trim() || "未命名实例",
+    cdpHost: cdpEl.host.value.trim() || "localhost",
+    cdpPort: Number(cdpEl.port.value) || 9222,
+    daemonPort: Number(cdpEl.daemonPort.value) || 9223,
+    ngrokUrl: cdpEl.ngrok.value.trim() || null,
+    notes: cdpEl.notes.value.trim(),
+  };
+  try {
+    await request("/api/cdp/instances", { method: "POST", body: JSON.stringify(data) });
+    showToast("已保存");
+    cdpEl.form.classList.add("hidden");
+    await refreshCdpInstances();
+  } catch (e) { showToast(e.message, true); }
+});
+
+cdpEl.refreshBtn?.addEventListener("click", refreshCdpInstances);
+cdpEl.actionClose?.addEventListener("click", () => { cdpEl.actionPanel.style.display = "none"; cdpState.selectedId = null; });
+
+async function cdpProxy(action, method = "POST", body = null) {
+  if (!cdpState.selectedId) { showToast("请先选择实例", true); return null; }
+  try {
+    const opts = { method };
+    if (body) opts.body = JSON.stringify(body);
+    const res = await request(`/api/cdp/instances/${encodeURIComponent(cdpState.selectedId)}/${action}`, opts);
+    return res;
+  } catch (e) { showToast(e.message, true); return null; }
+}
+
+cdpEl.healthBtn?.addEventListener("click", async () => {
+  const res = await cdpProxy("health", "GET");
+  if (res) cdpEl.result.innerHTML = `<pre style="background:var(--bg-subtle);padding:10px;border-radius:var(--radius-sm);font-size:12px;white-space:pre-wrap;">${escapeHtml(JSON.stringify(res, null, 2))}</pre>`;
+  await refreshCdpInstances();
+});
+
+cdpEl.statusBtn?.addEventListener("click", async () => {
+  const res = await cdpProxy("status", "GET");
+  if (res) cdpEl.result.innerHTML = `<pre style="background:var(--bg-subtle);padding:10px;border-radius:var(--radius-sm);font-size:12px;white-space:pre-wrap;">${escapeHtml(JSON.stringify(res, null, 2))}</pre>`;
+});
+
+cdpEl.screenshotBtn?.addEventListener("click", async () => {
+  const res = await cdpProxy("screenshot", "POST", {});
+  if (res?.base64) {
+    cdpEl.result.innerHTML = `<img src="data:image/png;base64,${res.base64}" style="max-width:100%;border-radius:var(--radius-sm);border:1px solid var(--line);" />`;
+  } else { cdpEl.result.innerHTML = `<p style="color:var(--red);">截图失败</p>`; }
+});
+
+cdpEl.sendBtn?.addEventListener("click", async () => {
+  const text = cdpEl.message.value.trim();
+  if (!text) { showToast("请输入消息", true); return; }
+  cdpEl.result.innerHTML = `<p style="color:var(--text-muted);">正在发送…</p>`;
+  const res = await cdpProxy("send-message", "POST", { text });
+  if (res) cdpEl.result.innerHTML = `<p>发送结果：${res.ok ? "成功" : "失败"}</p>`;
+});
+
+cdpEl.uploadBtn?.addEventListener("click", async () => {
+  const filePath = cdpEl.filepath.value.trim();
+  if (!filePath) { showToast("请输入文件路径", true); return; }
+  cdpEl.result.innerHTML = `<p style="color:var(--text-muted);">正在上传…</p>`;
+  const res = await cdpProxy("upload-file", "POST", { filePath });
+  if (res) cdpEl.result.innerHTML = `<p>上传结果：${res.ok ? "成功" : "失败"} ${res.method || ""}</p>`;
+});
+
+cdpEl.analyzeBtn?.addEventListener("click", async () => {
+  const videoPath = cdpEl.analyzePath.value.trim();
+  const prompt = cdpEl.analyzePrompt.value.trim();
+  if (!videoPath) { showToast("请输入视频路径", true); return; }
+  cdpEl.result.innerHTML = `<p style="color:var(--text-muted);">正在提交分析任务…</p>`;
+  const res = await cdpProxy("analyze-video", "POST", { videoPath, prompt });
+  if (res?.jobId) {
+    cdpState.analyzeJobId = res.jobId;
+    cdpEl.result.innerHTML = `<p>分析任务已启动，JobID: ${res.jobId}</p>`;
+  }
+});
+
+cdpEl.analyzeCheck?.addEventListener("click", async () => {
+  if (!cdpState.analyzeJobId) { showToast("没有正在进行的分析任务", true); return; }
+  const res = await cdpProxy(`analysis-status?jobId=${cdpState.analyzeJobId}`, "GET");
+  if (res) {
+    const status = res.status || "unknown";
+    const text = res.response ? res.response.substring(0, 500) + (res.response.length > 500 ? "…" : "") : "";
+    cdpEl.result.innerHTML = `<pre style="background:var(--bg-subtle);padding:10px;border-radius:var(--radius-sm);font-size:12px;white-space:pre-wrap;">状态: ${status}\n${text}</pre>`;
+  }
+});
+
+async function refreshCdpLogs() {
+  try {
+    const instanceId = cdpEl.logFilter?.value || null;
+    const res = await request(`/api/cdp/logs${instanceId ? `?instanceId=${encodeURIComponent(instanceId)}` : ""}`);
+    const logs = res.logs || [];
+    if (!logs.length) {
+      cdpEl.logsList.innerHTML = `<li class="muted-activity">暂无日志</li>`;
+      return;
+    }
+    cdpEl.logsList.innerHTML = logs.map(l => {
+      const inst = cdpState.instances.find(i => i.id === l.instanceId);
+      const instName = inst?.name || l.instanceId?.substring(0, 8) || "系统";
+      return `<li class="cdp-log-item cdp-log-${escapeHtml(l.level)}">
+        <span class="cdp-log-time">${formatDateTime(l.createdAt)}</span>
+        <span class="cdp-log-inst">${escapeHtml(instName)}</span>
+        <span class="cdp-log-level">${escapeHtml(l.level)}</span>
+        <span class="cdp-log-msg">${escapeHtml(l.message)}</span>
+      </li>`;
+    }).join("");
+  } catch {}
+}
+
+cdpEl.logsRefresh?.addEventListener("click", refreshCdpLogs);
+cdpEl.logFilter?.addEventListener("change", refreshCdpLogs);
+cdpEl.logsClear?.addEventListener("click", async () => {
+  try {
+    await request("/api/cdp/logs", { method: "DELETE" });
+    showToast("日志已清空");
+    refreshCdpLogs();
+  } catch (e) { showToast(e.message, true); }
+});
 fetchRemixCreators();
 fetchRemixTasks();

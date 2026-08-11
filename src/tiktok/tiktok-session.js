@@ -27,16 +27,13 @@ export class TiktokSession {
   async connect(wsUrl) {
     await this.client.connect(wsUrl);
     const targets = await this.client.call("Target.getTargets");
-    const tk = (targets.targetInfos || []).find(
-      (t) => t.type === "page" && /tiktok\.com/.test(t.url),
-    );
+    const allPages = (targets.targetInfos || []).filter((t) => t.type === "page");
+    const tk = allPages.find((t) => /tiktok\.com/.test(t.url));
 
     if (tk) {
+      // Found a TikTok tab — use it, navigate to /foryou if needed
       this.targetId = tk.targetId;
-      const attached = await this.client.call("Target.attachToTarget", {
-        targetId: this.targetId,
-        flatten: true,
-      });
+      const attached = await this.client.call("Target.attachToTarget", { targetId: this.targetId, flatten: true });
       this.sessionId = attached.sessionId;
       await this.client.call("Page.enable", {}, this.sessionId);
       if (!isTiktokForyou(tk.url)) {
@@ -44,16 +41,27 @@ export class TiktokSession {
         await this.#waitForReady();
       }
     } else {
-      // No TikTok tab — create a new one
-      const created = await this.client.call("Target.createTarget", { url: this.targetUrl });
-      this.targetId = created.targetId;
-      const attached = await this.client.call("Target.attachToTarget", {
-        targetId: this.targetId,
-        flatten: true,
-      });
-      this.sessionId = attached.sessionId;
-      await this.client.call("Page.enable", {}, this.sessionId);
-      await this.#waitForReady();
+      // No TikTok tab — try creating a new one
+      let created = false;
+      try {
+        const newTarget = await this.client.call("Target.createTarget", { url: this.targetUrl });
+        this.targetId = newTarget.targetId;
+        const attached = await this.client.call("Target.attachToTarget", { targetId: this.targetId, flatten: true });
+        this.sessionId = attached.sessionId;
+        await this.client.call("Page.enable", {}, this.sessionId);
+        await this.#waitForReady();
+        created = true;
+      } catch {
+        // Target.createTarget not supported — fall back to navigating an existing tab
+      }
+      if (!created && allPages.length > 0) {
+        this.targetId = allPages[0].targetId;
+        const attached = await this.client.call("Target.attachToTarget", { targetId: this.targetId, flatten: true });
+        this.sessionId = attached.sessionId;
+        await this.client.call("Page.enable", {}, this.sessionId);
+        await this.client.call("Page.navigate", { url: this.targetUrl }, this.sessionId, 30000);
+        await this.#waitForReady();
+      }
     }
 
     await this.#waitStable();

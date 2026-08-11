@@ -3477,3 +3477,69 @@ footer span {
   padding: 8px 16px;
 }
 
+/* Chrome CDP 管理面板 */
+.cdp-panel { padding: 24px 0; }
+
+.cdp-form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+}
+
+.cdp-form-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.cdp-form-grid input {
+  font-size: 13px;
+}
+
+.cdp-action-grid {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.cdp-result pre {
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.cdp-logs-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.cdp-log-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.cdp-log-time { color: var(--text-muted); font-family: var(--font-mono); white-space: nowrap; font-size: 11px; }
+.cdp-log-inst { color: var(--indigo); font-weight: 600; white-space: nowrap; min-width: 60px; }
+.cdp-log-level { font-weight: 700; text-transform: uppercase; font-size: 10px; min-width: 50px; }
+.cdp-log-msg { color: var(--text-secondary); flex: 1; word-break: break-all; }
+
+.cdp-log-info .cdp-log-level { color: var(--text-muted); }
+.cdp-log-warning .cdp-log-level { color: var(--amber-dark); }
+.cdp-log-error .cdp-log-level { color: var(--red-dark); }
+
+.platform-tab.active[data-platform="cdp"] {
+  border-bottom-color: var(--text-primary);
+  color: var(--text-primary);
+  font-weight: 700;
+}
+

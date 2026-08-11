@@ -1,0 +1,13 @@
+{
+  "name": "chatgpt-cdp-daemon",
+  "version": "1.0.0",
+  "description": "CDP daemon that exposes ChatGPT web interface as a microservice API",
+  "type": "module",
+  "scripts": {
+    "start": "node server.mjs",
+    "dev": "node server.mjs --debug"
+  },
+  "dependencies": {
+    "playwright": "^1.62.1"
+  }
+}

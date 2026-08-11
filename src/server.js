@@ -312,6 +312,91 @@ export function createMonitorServer({
         return;
       }
 
+      // --- Chrome CDP 实例管理 ---
+      if (request.method === "GET" && pathname === "/api/cdp/instances") {
+        sendJson(response, 200, { instances: store.listChromeInstances() });
+        return;
+      }
+      if (request.method === "POST" && pathname === "/api/cdp/instances") {
+        const body = await readJson(request);
+        const inst = store.upsertChromeInstance(body);
+        store.logCdpEvent(inst.id, "info", `实例「${inst.name}」已${body.id ? "更新" : "创建"}`);
+        sendJson(response, 200, { instance: inst });
+        return;
+      }
+      const cdpInstanceMatch = pathname.match(/^\/api\/cdp\/instances\/([^/]+)$/);
+      if (cdpInstanceMatch) {
+        const instId = decodeURIComponent(cdpInstanceMatch[1]);
+        if (request.method === "DELETE") {
+          store.deleteChromeInstance(instId);
+          sendJson(response, 200, { deleted: true });
+          return;
+        }
+        if (request.method === "PUT") {
+          const body = await readJson(request);
+          const inst = store.upsertChromeInstance({ ...body, id: instId });
+          store.logCdpEvent(instId, "info", `实例「${inst.name}」已更新`);
+          sendJson(response, 200, { instance: inst });
+          return;
+        }
+      }
+
+      // --- Chrome CDP 代理请求 → 转发到 daemon ---
+      const cdpProxyMatch = pathname.match(/^\/api\/cdp\/instances\/([^/]+)\/(health|status|send-message|upload-file|analyze-video|analysis-status|screenshot|execute)$/);
+      if (cdpProxyMatch) {
+        const instId = decodeURIComponent(cdpProxyMatch[1]);
+        const action = cdpProxyMatch[2];
+        const inst = store.getChromeInstance(instId);
+        if (!inst) { sendJson(response, 404, { error: "实例不存在" }); return; }
+        const daemonUrl = inst.ngrokUrl || `http://${inst.cdpHost}:${inst.daemonPort}`;
+        const proxyPath = action === "health" ? "/health"
+          : action === "status" ? "/api/chatgpt/status"
+          : action === "send-message" ? "/api/chatgpt/send-message"
+          : action === "upload-file" ? "/api/chatgpt/upload-file"
+          : action === "analyze-video" ? "/api/chatgpt/analyze-video"
+          : action === "analysis-status" ? "/api/chatgpt/analysis-status"
+          : action === "screenshot" ? "/api/screenshot"
+          : action === "execute" ? "/api/execute"
+          : null;
+        if (!proxyPath) { sendJson(response, 400, { error: "未知操作" }); return; }
+        try {
+          const proxyUrl = `${daemonUrl}${proxyPath}${action === "analysis-status" ? `?jobId=${url.searchParams.get("jobId") || ""}` : ""}`;
+          const fetchOpts = { method: request.method, headers: { "Content-Type": "application/json" } };
+          if (request.method === "POST") {
+            const body = await readJson(request);
+            fetchOpts.body = JSON.stringify(body);
+            store.logCdpEvent(instId, "info", `→ ${action}: ${JSON.stringify(body).substring(0, 100)}`);
+          }
+          const proxyRes = await fetch(proxyUrl, fetchOpts);
+          const proxyData = await proxyRes.json();
+          if (action === "health") {
+            store.updateChromeInstanceStatus(instId, proxyData.cdpConnected ? "connected" : "disconnected");
+          }
+          store.logCdpEvent(instId, proxyData.ok === false ? "warning" : "info", `← ${action}: ${JSON.stringify(proxyData).substring(0, 150)}`);
+          sendJson(response, proxyRes.ok ? 200 : 502, proxyData);
+        } catch (e) {
+          store.logCdpEvent(instId, "error", `代理请求失败 (${action}): ${e.message}`);
+          store.updateChromeInstanceStatus(instId, "error");
+          sendJson(response, 502, { error: `无法连接守护进程 (${daemonUrl}): ${e.message}` });
+        }
+        return;
+      }
+
+      // --- Chrome CDP 日志 ---
+      if (request.method === "GET" && pathname === "/api/cdp/logs") {
+        const instanceId = url.searchParams.get("instanceId") || null;
+        const level = url.searchParams.get("level") || null;
+        const limit = url.searchParams.get("limit") || 100;
+        sendJson(response, 200, { logs: store.listCdpLogs({ instanceId, level, limit }) });
+        return;
+      }
+      if (request.method === "DELETE" && pathname === "/api/cdp/logs") {
+        const instanceId = url.searchParams.get("instanceId") || null;
+        const deleted = store.clearCdpLogs(instanceId);
+        sendJson(response, 200, { deleted });
+        return;
+      }
+
       if (request.method === "GET" && pathname === "/api/reddit/join-targets") {
         sendJson(response, 200, { targets: store.getJoinTargets() });
         return;

@@ -268,6 +268,30 @@ export class LocalDatabase {
       );
 
       CREATE INDEX IF NOT EXISTS idx_reddit_accounts_profile ON reddit_accounts(profile_id);
+
+      CREATE TABLE IF NOT EXISTS chrome_instances (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        cdp_host TEXT NOT NULL DEFAULT 'localhost',
+        cdp_port INTEGER NOT NULL DEFAULT 9222,
+        ngrok_url TEXT,
+        daemon_port INTEGER DEFAULT 9223,
+        status TEXT DEFAULT 'stopped',
+        notes TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS cdp_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        instance_id TEXT,
+        created_at TEXT NOT NULL,
+        level TEXT NOT NULL DEFAULT 'info',
+        message TEXT NOT NULL,
+        data_json TEXT
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_cdp_logs_instance ON cdp_logs(instance_id, created_at DESC);
     `);
 
     this.#ensureColumn("task_runs", "task_mode", "TEXT NOT NULL DEFAULT 'pixel'");
@@ -1131,6 +1155,73 @@ export class LocalDatabase {
 
   deleteRedditAccount(id) {
     return this.db.prepare(`DELETE FROM reddit_accounts WHERE id = ? OR profile_id = ?`).run(id, id).changes;
+  }
+
+  // --- Chrome CDP 实例管理 ---
+  upsertChromeInstance(data) {
+    const ts = nowIso();
+    const id = data.id || `chrome_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    this.db.prepare(`
+      INSERT INTO chrome_instances (id, name, cdp_host, cdp_port, ngrok_url, daemon_port, status, notes, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        name = excluded.name, cdp_host = excluded.cdp_host, cdp_port = excluded.cdp_port,
+        ngrok_url = excluded.ngrok_url, daemon_port = excluded.daemon_port,
+        status = excluded.status, notes = excluded.notes, updated_at = excluded.updated_at
+    `).run(id, data.name || "", data.cdpHost || "localhost", Number(data.cdpPort || 9222),
+      data.ngrokUrl || null, Number(data.daemonPort || 9223), data.status || "stopped",
+      data.notes || "", ts, ts);
+    return this.getChromeInstance(id);
+  }
+
+  listChromeInstances() {
+    return this.db.prepare(`SELECT * FROM chrome_instances ORDER BY created_at DESC`).all().map(r => ({
+      id: r.id, name: r.name, cdpHost: r.cdp_host, cdpPort: r.cdp_port,
+      ngrokUrl: r.ngrok_url, daemonPort: r.daemon_port, status: r.status,
+      notes: r.notes, createdAt: r.created_at, updatedAt: r.updated_at,
+    }));
+  }
+
+  getChromeInstance(id) {
+    const r = this.db.prepare(`SELECT * FROM chrome_instances WHERE id = ?`).get(id);
+    if (!r) return null;
+    return {
+      id: r.id, name: r.name, cdpHost: r.cdp_host, cdpPort: r.cdp_port,
+      ngrokUrl: r.ngrok_url, daemonPort: r.daemon_port, status: r.status,
+      notes: r.notes, createdAt: r.created_at, updatedAt: r.updated_at,
+    };
+  }
+
+  deleteChromeInstance(id) {
+    this.db.prepare(`DELETE FROM cdp_logs WHERE instance_id = ?`).run(id);
+    return this.db.prepare(`DELETE FROM chrome_instances WHERE id = ?`).run(id).changes;
+  }
+
+  updateChromeInstanceStatus(id, status) {
+    this.db.prepare(`UPDATE chrome_instances SET status = ?, updated_at = ? WHERE id = ?`).run(status, nowIso(), id);
+  }
+
+  logCdpEvent(instanceId, level, message, data = null) {
+    this.db.prepare(`INSERT INTO cdp_logs (instance_id, created_at, level, message, data_json) VALUES (?, ?, ?, ?, ?)`)
+      .run(instanceId, nowIso(), level, message, data ? JSON.stringify(data) : null);
+  }
+
+  listCdpLogs({ instanceId = null, limit = 100, level = null } = {}) {
+    const clauses = [];
+    const params = [];
+    if (instanceId) { clauses.push("instance_id = ?"); params.push(instanceId); }
+    if (level) { clauses.push("level = ?"); params.push(level); }
+    const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+    params.push(Math.min(Number(limit) || 100, 500));
+    return this.db.prepare(`SELECT * FROM cdp_logs ${where} ORDER BY created_at DESC, id DESC LIMIT ?`).all(...params).map(r => ({
+      id: r.id, instanceId: r.instance_id, createdAt: r.created_at,
+      level: r.level, message: r.message, data: parseJson(r.data_json, null),
+    }));
+  }
+
+  clearCdpLogs(instanceId = null) {
+    if (instanceId) return this.db.prepare(`DELETE FROM cdp_logs WHERE instance_id = ?`).run(instanceId).changes;
+    return this.db.prepare(`DELETE FROM cdp_logs`).run().changes;
   }
 
   // --- TK 视频素材库管理 ---
