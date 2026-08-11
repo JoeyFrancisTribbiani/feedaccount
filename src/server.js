@@ -3,7 +3,7 @@ import { stat, readFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { spawn } from "node:child_process";
+import { spawn, execSync } from "node:child_process";
 
 import { BitBrowserApi } from "./bitbrowser-api.js";
 import {
@@ -19,9 +19,162 @@ import { TiktokJobManager, TIKTOK_DEFAULT_OPTIONS } from "./tiktok/tiktok-job-ma
 import { TiktokPublishManager } from "./tiktok/tiktok-publish-manager.js";
 import { RotationScheduler, SCHEDULER_DEFAULTS } from "./scheduler.js";
 import { checkIpGeoViaSocks5 } from "./socks5-check.js";
-import { dedupVideo, stitchVideos, probeVideo, OUTPUT_DIR as REMIX_OUTPUT_DIR, DEDUP_PRESETS } from "./video-remix.js";
 
 const THIS_DIR = path.dirname(fileURLToPath(import.meta.url));
+const CDP_DAEMON_DIR = path.resolve(THIS_DIR, "chrome-cdp-daemon");
+const CDP_DAEMON_SCRIPT = path.join(CDP_DAEMON_DIR, "server.mjs");
+
+// ngrok 进程管理
+let ngrokProc = null;
+let ngrokConfig = null;
+let ngrokStore = null; // 在 createMonitorServer 中赋值
+
+function loadNgrokConfig() {
+  try {
+    const db = ngrokStore?.db || globalThis.__ngrokDb;
+    if (!db) return null;
+    const row = db.prepare("SELECT value_json FROM app_settings WHERE key = 'ngrok_config'").get();
+    ngrokConfig = row ? JSON.parse(row.value_json) : null;
+  } catch { ngrokConfig = null; }
+  return ngrokConfig;
+}
+
+function saveNgrokConfig(config) {
+  const db = ngrokStore?.db || globalThis.__ngrokDb;
+  if (!db) return config;
+  db.prepare(`
+    INSERT INTO app_settings (key, value_json, updated_at)
+    VALUES ('ngrok_config', ?, ?)
+    ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at
+  `).run(JSON.stringify(config || {}), new Date().toISOString());
+  ngrokConfig = config;
+  return config;
+}
+
+function startNgrok(port) {
+  if (ngrokProc && !ngrokProc.killed) throw new Error("ngrok 已在运行");
+  const args = ["http", String(port)];
+  ngrokProc = spawn("ngrok", args, { stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+  const logs = [];
+  const pushLog = (level, msg) => {
+    const line = msg.trim();
+    if (!line) return;
+    logs.push({ at: new Date().toISOString(), level, message: line });
+    if (logs.length > 100) logs.shift();
+  };
+  ngrokProc.stdout.on("data", (d) => pushLog("info", d.toString()));
+  ngrokProc.stderr.on("data", (d) => pushLog("warning", d.toString()));
+  ngrokProc.on("exit", (code) => {
+    pushLog("info", `ngrok 进程退出 (code=${code})`);
+    ngrokProc = null;
+  });
+  ngrokProc.on("error", (err) => {
+    pushLog("error", `ngrok 启动失败: ${err.message}`);
+    ngrokProc = null;
+  });
+  ngrokProc._logs = logs;
+  return { pid: ngrokProc.pid, port };
+}
+
+function stopNgrok() {
+  if (!ngrokProc) throw new Error("ngrok 未运行");
+  ngrokProc.kill("SIGTERM");
+  setTimeout(() => { if (ngrokProc && !ngrokProc.killed) ngrokProc.kill("SIGKILL"); }, 3000);
+  ngrokProc = null;
+  return { stopped: true };
+}
+
+function getNgrokStatus() {
+  if (!ngrokProc) return { running: false };
+  return {
+    running: true,
+    pid: ngrokProc.pid,
+    port: ngrokConfig?.port || 9223,
+    config: ngrokConfig,
+    recentLogs: ngrokProc._logs ? ngrokProc._logs.slice(-20) : [],
+  };
+}
+// Chrome CDP daemon 进程管理
+const cdpDaemonProcesses = new Map();
+
+function startCdpDaemon(instance) {
+  const existing = cdpDaemonProcesses.get(instance.id);
+  if (existing && existing.proc && !existing.proc.killed) {
+    throw new Error("守护进程已在运行");
+  }
+
+  const env = {
+    ...process.env,
+    CDP_TARGET_URL: `http://${instance.cdpHost}:${instance.cdpPort}`,
+    DAEMON_PORT: String(instance.daemonPort),
+    DAEMON_HOST: "127.0.0.1",
+  };
+
+  const proc = spawn("node", ["--no-warnings", CDP_DAEMON_SCRIPT], {
+    cwd: CDP_DAEMON_DIR,
+    env,
+    stdio: ["pipe", "pipe", "pipe"],
+    windowsHide: true,
+  });
+
+  const procInfo = { proc, startedAt: new Date().toISOString(), logs: [] };
+  cdpDaemonProcesses.set(instance.id, procInfo);
+
+  const pushLog = (level, msg) => {
+    const line = msg.trim();
+    if (!line) return;
+    procInfo.logs.push({ at: new Date().toISOString(), level, message: line });
+    if (procInfo.logs.length > 200) procInfo.logs.shift();
+    store.logCdpEvent(instance.id, level, line);
+  };
+
+  proc.stdout.on("data", (d) => pushLog("info", d.toString()));
+  proc.stderr.on("data", (d) => pushLog("warning", d.toString()));
+
+  proc.on("exit", (code) => {
+    pushLog("info", `守护进程退出 (code=${code})`);
+    store.updateChromeInstanceStatus(instance.id, "stopped");
+    cdpDaemonProcesses.delete(instance.id);
+  });
+
+  proc.on("error", (err) => {
+    pushLog("error", `守护进程启动失败: ${err.message}`);
+    store.updateChromeInstanceStatus(instance.id, "error");
+    cdpDaemonProcesses.delete(instance.id);
+  });
+
+  store.updateChromeInstanceStatus(instance.id, "running");
+  return { pid: proc.pid, startedAt: procInfo.startedAt };
+}
+
+function stopCdpDaemon(instanceId) {
+  const procInfo = cdpDaemonProcesses.get(instanceId);
+  if (!procInfo || !procInfo.proc) {
+    throw new Error("守护进程未运行");
+  }
+  procInfo.proc.kill("SIGTERM");
+  setTimeout(() => {
+    if (procInfo.proc && !procInfo.proc.killed) {
+      procInfo.proc.kill("SIGKILL");
+    }
+  }, 3000);
+  store.updateChromeInstanceStatus(instanceId, "stopped");
+  cdpDaemonProcesses.delete(instanceId);
+  return { stopped: true };
+}
+
+function getCdpDaemonStatus(instanceId) {
+  const procInfo = cdpDaemonProcesses.get(instanceId);
+  if (!procInfo || !procInfo.proc) return { running: false };
+  return {
+    running: true,
+    pid: procInfo.proc.pid,
+    startedAt: procInfo.startedAt,
+    uptime: Date.now() - new Date(procInfo.startedAt).getTime(),
+    recentLogs: procInfo.logs.slice(-20),
+  };
+}
+
 const DEFAULT_PUBLIC_DIR = path.resolve(THIS_DIR, "../public");
 const DEFAULT_DATABASE_PATH = path.resolve(THIS_DIR, "../data/reddit-flow.db");
 const MIME_TYPES = {
@@ -185,6 +338,8 @@ export function createMonitorServer({
 } = {}) {
   const api = bitBrowserApi || new BitBrowserApi(bitBrowserApiUrl);
   const store = database || new LocalDatabase(databasePath);
+  ngrokStore = store;
+  globalThis.__ngrokDb = store.db;
   const jobs = jobManager || new JobManager({ bitBrowserApi: api, persistence: store });
   const tiktokJobs = new TiktokJobManager({ bitBrowserApi: api, persistence: store });
   const tiktokPublisherManager = new TiktokPublishManager({ bitBrowserApi: api, persistence: store });
@@ -394,6 +549,84 @@ export function createMonitorServer({
         const instanceId = url.searchParams.get("instanceId") || null;
         const deleted = store.clearCdpLogs(instanceId);
         sendJson(response, 200, { deleted });
+        return;
+      }
+
+      // --- Chrome CDP 守护进程管理 ---
+      const cdpDaemonMatch = pathname.match(/^\/api\/cdp\/instances\/([^/]+)\/(daemon-start|daemon-stop|daemon-status)$/);
+      if (cdpDaemonMatch) {
+        const instId = decodeURIComponent(cdpDaemonMatch[1]);
+        const action = cdpDaemonMatch[2];
+        const inst = store.getChromeInstance(instId);
+        if (!inst) { sendJson(response, 404, { error: "实例不存在" }); return; }
+        try {
+          if (action === "daemon-start") {
+            const result = startCdpDaemon(inst);
+            store.logCdpEvent(instId, "info", `守护进程已启动 (PID=${result.pid})`);
+            sendJson(response, 200, { ok: true, ...result });
+          } else if (action === "daemon-stop") {
+            const result = stopCdpDaemon(instId);
+            store.logCdpEvent(instId, "info", "守护进程已停止");
+            sendJson(response, 200, { ok: true, ...result });
+          } else if (action === "daemon-status") {
+            const status = getCdpDaemonStatus(instId);
+            sendJson(response, 200, { ok: true, ...status });
+          }
+        } catch (e) {
+          store.logCdpEvent(instId, "error", `守护进程操作失败 (${action}): ${e.message}`);
+          sendJson(response, 400, { error: e.message });
+        }
+        return;
+      }
+
+      // --- ngrok 管理 ---
+      if (request.method === "GET" && pathname === "/api/cdp/ngrok") {
+        sendJson(response, 200, { status: getNgrokStatus(), config: ngrokConfig || loadNgrokConfig() });
+        return;
+      }
+      if (request.method === "PUT" && pathname === "/api/cdp/ngrok") {
+        const body = await readJson(request);
+        const config = { url: body.url || "", port: Number(body.port) || 9223, autoStart: Boolean(body.autoStart) };
+        saveNgrokConfig(config);
+        sendJson(response, 200, { config });
+        return;
+      }
+      if (request.method === "POST" && pathname === "/api/cdp/ngrok/start") {
+        const cfg = ngrokConfig || loadNgrokConfig();
+        const port = cfg?.port || 9223;
+        try {
+          const result = startNgrok(port);
+          sendJson(response, 200, { ok: true, ...result });
+        } catch (e) { sendJson(response, 400, { error: e.message }); }
+        return;
+      }
+      if (request.method === "POST" && pathname === "/api/cdp/ngrok/stop") {
+        try {
+          const result = stopNgrok();
+          sendJson(response, 200, { ok: true, ...result });
+        } catch (e) { sendJson(response, 400, { error: e.message }); }
+        return;
+      }
+
+      if (request.method === "POST" && pathname === "/api/cdp/scan") {
+        const body = await readJson(request);
+        const host = body.host || "localhost";
+        const portStart = Number(body.portStart) || 9222;
+        const portEnd = Number(body.portEnd) || 9232;
+        const results = [];
+        const probes = [];
+        for (let port = portStart; port <= portEnd; port++) {
+          probes.push(
+            fetch(`http://${host}:${port}/json/version`, { signal: AbortSignal.timeout(2000) })
+              .then(async (r) => {
+                const data = await r.json().catch(() => null);
+                if (data) results.push({ host, port, chromeInfo: data });
+              })
+              .catch(() => {})
+          );
+        }
+        await Promise.all(probes);
+        sendJson(response, 200, { instances: results });
         return;
       }
 
@@ -1132,6 +1365,17 @@ if (isMain) {
     : DEFAULT_DATABASE_PATH;
   const { server, jobs } = createMonitorServer({ bitBrowserApiUrl, databasePath });
 
+  // 自动启动 ngrok
+  const ngrokCfg = loadNgrokConfig();
+  if (ngrokCfg?.autoStart && ngrokCfg?.url) {
+    try {
+      startNgrok(ngrokCfg.port || 9223);
+      console.log(`ngrok 已自动启动 (端口 ${ngrokCfg.port || 9223})`);
+    } catch (e) {
+      console.log(`ngrok 自动启动失败: ${e.message}`);
+    }
+  }
+
   server.listen(port, host, () => {
     const url = `http://${host}:${port}`;
     console.log(`BitBrowser Reddit 监控面板已启动：${url}`);
@@ -1142,6 +1386,7 @@ if (isMain) {
   });
 
   const shutdown = async () => {
+    if (ngrokProc) { ngrokProc.kill("SIGTERM"); ngrokProc = null; }
     await jobs.stopAll().catch(() => {});
     server.close(() => process.exit(0));
     setTimeout(() => process.exit(1), 3000).unref();

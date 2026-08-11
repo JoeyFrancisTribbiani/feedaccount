@@ -1115,6 +1115,7 @@
               <h2>ChatGPT CDP 实例管理</h2>
             </div>
             <div class="heading-actions">
+              <button id="cdp-scan" class="button button-secondary" type="button">扫描 Chrome</button>
               <button id="cdp-refresh" class="button button-secondary" type="button">刷新</button>
               <button id="cdp-add" class="button button-primary" type="button">添加实例</button>
             </div>
@@ -1128,12 +1129,46 @@
               <label><span>CDP 主机</span><input id="cdp-host" type="text" placeholder="localhost" value="localhost" /></label>
               <label><span>CDP 端口</span><input id="cdp-port" type="number" min="1" max="65535" value="9222" /></label>
               <label><span>守护进程端口</span><input id="cdp-daemon-port" type="number" min="1" max="65535" value="9223" /></label>
-              <label><span>ngrok URL（可选）</span><input id="cdp-ngrok" type="text" placeholder="https://xxx.ngrok.io" /></label>
+              <label><span>ngrok URL（指向 daemon 端口 9223，非 Chrome 9222）</span><input id="cdp-ngrok" type="text" placeholder="https://xxx.ngrok.io" /></label>
               <label><span>备注</span><input id="cdp-notes" type="text" placeholder="可选" /></label>
             </div>
             <div style="display:flex;gap:8px;margin-top:12px;">
               <button id="cdp-save" class="button button-primary" type="button">保存</button>
               <button id="cdp-cancel" class="button button-secondary" type="button">取消</button>
+            </div>
+          </div>
+
+          <!-- 扫描结果 -->
+          <div id="cdp-scan-results" class="cdp-scan-results hidden" style="padding: 0 24px 16px;">
+            <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;">
+              <h3 style="font-size:14px;font-weight:700;">扫描结果</h3>
+              <span id="cdp-scan-hint" class="muted-activity" style="font-size:12px;"></span>
+            </div>
+            <div id="cdp-scan-list" class="cdp-scan-list"></div>
+          </div>
+
+          <!-- ngrok 管理面板 -->
+          <div class="cdp-ngrok-panel" style="padding: 0 24px 16px;">
+            <div style="border:1px solid var(--line);border-radius:var(--radius-md);padding:14px 16px;background:var(--bg-subtle);">
+              <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+                <strong style="font-size:13px;">ngrok 隧道管理</strong>
+                <span id="cdp-ngrok-status" class="status-pill status-loading">未运行</span>
+              </div>
+              <div class="cdp-form-grid" style="margin-bottom:10px;">
+                <label><span>ngrok 专属 URL（填入后持久化保存）</span><input id="cdp-ngrok-url" type="text" placeholder="https://xxxx.ngrok-free.app" /></label>
+                <label><span>监听端口（daemon 端口）</span><input id="cdp-ngrok-port" type="number" min="1" max="65535" value="9223" /></label>
+                <label style="display:flex;align-items:center;gap:8px;flex-direction:row;padding-top:20px;">
+                  <input id="cdp-ngrok-autostart" type="checkbox" style="width:16px;height:16px;" />
+                  <span style="font-size:12px;font-weight:600;color:var(--text-secondary);">开机自动启动 ngrok</span>
+                </label>
+              </div>
+              <div style="display:flex;gap:8px;">
+                <button id="cdp-ngrok-save" class="button button-secondary" type="button">保存配置</button>
+                <button id="cdp-ngrok-start" class="button button-primary" type="button">启动 ngrok</button>
+                <button id="cdp-ngrok-stop" class="danger-button" type="button">停止 ngrok</button>
+                <button id="cdp-ngrok-check" class="button button-secondary" type="button">刷新状态</button>
+              </div>
+              <div id="cdp-ngrok-logs" style="margin-top:10px;max-height:120px;overflow-y:auto;font-family:var(--font-mono);font-size:11px;line-height:1.5;color:var(--text-muted);background:#fff;border-radius:var(--radius-xs);padding:8px 10px;border:1px solid var(--line);"></div>
             </div>
           </div>
 
@@ -1146,8 +1181,13 @@
                 chrome.exe --remote-debugging-port=9222 --user-data-dir="C:\chrome-cdp-profile"<br/><br/>
                 <strong>带代理:</strong><br/>
                 chrome.exe --remote-debugging-port=9222 --user-data-dir="C:\chrome-cdp-profile" --proxy-server="socks5://127.0.0.1:1080"<br/><br/>
-                <strong>ngrok 暴露:</strong><br/>
-                ngrok http 9222
+                <strong>ngrok 暴露守护进程（远程访问）:</strong><br/>
+                ngrok http 9223 &nbsp;&nbsp;<small style="color:var(--text-muted);">← 暴露 daemon 端口，不是 Chrome 调试端口</small><br/><br/>
+                <strong>远程机器完整流程:</strong><br/>
+                1. Chrome: chrome.exe --remote-debugging-port=9222 --user-data-dir="C:\chrome-cdp"<br/>
+                2. Daemon: node server.mjs &nbsp;&nbsp;<small style="color:var(--text-muted);">(CDP_TARGET_URL=http://localhost:9222 DAEMON_PORT=9223)</small><br/>
+                3. ngrok: ngrok http 9223<br/>
+                4. 将 ngrok URL 填入实例配置的 ngrok 字段
               </div>
             </details>
           </div>
@@ -1160,12 +1200,13 @@
                   <th>名称</th>
                   <th>CDP 地址</th>
                   <th>ngrok</th>
+                  <th>守护进程</th>
                   <th>状态</th>
                   <th>操作</th>
                 </tr>
               </thead>
               <tbody id="cdp-instances-body">
-                <tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:24px;">暂无 Chrome CDP 实例</td></tr>
+                <tr><td colspan="6" style="text-align:center;color:var(--text-muted);padding:24px;">暂无 Chrome CDP 实例</td></tr>
               </tbody>
             </table>
           </div>

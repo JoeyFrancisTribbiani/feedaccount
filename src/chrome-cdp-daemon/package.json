@@ -1,7 +1,7 @@
 {
-  "name": "chatgpt-cdp-daemon",
-  "version": "1.0.0",
-  "description": "CDP daemon that exposes ChatGPT web interface as a microservice API",
+  "name": "chrome-cdp-daemon",
+  "version": "2.0.0",
+  "description": "CDP daemon that exposes web browser automation as a unified task API",
   "type": "module",
   "scripts": {
     "start": "node server.mjs",

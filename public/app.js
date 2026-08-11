@@ -2458,7 +2458,7 @@ for (const btn of document.querySelectorAll(".platform-tab")) {
     document.querySelectorAll(".tiktok-tab").forEach((el) => el.classList.toggle("hidden", platform !== "tiktok"));
     document.querySelectorAll(".remix-tab").forEach((el) => el.classList.toggle("hidden", platform !== "remix"));
     document.querySelectorAll(".cdp-tab").forEach((el) => el.classList.toggle("hidden", platform !== "cdp"));
-    if (platform === "cdp") refreshCdpInstances();
+    if (platform === "cdp") { refreshCdpInstances(); refreshNgrokStatus(); }
   });
 }
 
@@ -3562,6 +3562,19 @@ if (remix.viewMode === "list") {
 const cdpEl = {
   refreshBtn: document.querySelector("#cdp-refresh"),
   addBtn: document.querySelector("#cdp-add"),
+  scanBtn: document.querySelector("#cdp-scan"),
+  scanResults: document.querySelector("#cdp-scan-results"),
+  scanHint: document.querySelector("#cdp-scan-hint"),
+  scanList: document.querySelector("#cdp-scan-list"),
+  ngrokUrl: document.querySelector("#cdp-ngrok-url"),
+  ngrokPort: document.querySelector("#cdp-ngrok-port"),
+  ngrokAutostart: document.querySelector("#cdp-ngrok-autostart"),
+  ngrokSave: document.querySelector("#cdp-ngrok-save"),
+  ngrokStart: document.querySelector("#cdp-ngrok-start"),
+  ngrokStop: document.querySelector("#cdp-ngrok-stop"),
+  ngrokCheck: document.querySelector("#cdp-ngrok-check"),
+  ngrokStatus: document.querySelector("#cdp-ngrok-status"),
+  ngrokLogs: document.querySelector("#cdp-ngrok-logs"),
   form: document.querySelector("#cdp-form"),
   editId: document.querySelector("#cdp-edit-id"),
   name: document.querySelector("#cdp-name"),
@@ -3608,15 +3621,23 @@ function renderCdpInstances() {
   if (!cdpEl.tableBody) return;
   const list = cdpState.instances;
   if (!list.length) {
-    cdpEl.tableBody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:24px;">暂无 Chrome CDP 实例</td></tr>`;
+    cdpEl.tableBody.innerHTML = `<tr><td colspan="6" style="text-align:center;color:var(--text-muted);padding:24px;">暂无 Chrome CDP 实例</td></tr>`;
     return;
   }
   cdpEl.tableBody.innerHTML = list.map(inst => {
-    const statusClass = inst.status === "connected" ? "status-success" : inst.status === "error" ? "status-error" : "status-loading";
+    const statusClass = inst.status === "connected" ? "status-success" : inst.status === "error" ? "status-error" : inst.status === "running" ? "status-loading" : "status-loading";
+    const daemonRunning = inst.status === "running" || inst.status === "connected";
     return `<tr>
       <td><strong>${escapeHtml(inst.name)}</strong>${inst.notes ? `<br><small style="color:var(--text-muted)">${escapeHtml(inst.notes)}</small>` : ""}</td>
-      <td><code>${escapeHtml(inst.cdpHost)}:${inst.cdpPort}</code><br><small style="color:var(--text-muted)">daemon:${inst.daemonPort}</small></td>
+      <td><code>${escapeHtml(inst.cdpHost)}:${inst.cdpPort}</code></td>
       <td>${inst.ngrokUrl ? `<code style="font-size:11px;">${escapeHtml(inst.ngrokUrl)}</code>` : '<span style="color:var(--text-muted)">—</span>'}</td>
+      <td>
+        ${daemonRunning
+          ? `<button class="danger-button" style="padding:2px 8px;font-size:11px;" onclick="window.cdpDaemonStop('${escapeHtml(inst.id)}')">停止守护</button>`
+          : `<button class="button button-primary" style="padding:2px 8px;font-size:11px;" onclick="window.cdpDaemonStart('${escapeHtml(inst.id)}')">启动守护</button>`
+        }
+        <button class="button button-secondary" style="padding:2px 8px;font-size:11px;" onclick="window.cdpDaemonStatus('${escapeHtml(inst.id)}')">状态</button>
+      </td>
       <td><span class="status-pill ${statusClass}">${escapeHtml(inst.status)}</span></td>
       <td>
         <button class="button button-secondary" style="padding:2px 8px;font-size:11px;" onclick="window.cdpSelect('${escapeHtml(inst.id)}')">操作</button>
@@ -3631,6 +3652,39 @@ function renderCdpInstances() {
     cdpEl.logFilter.value = cur;
   }
 }
+
+window.cdpDaemonStart = async function(id) {
+  try {
+    await request(`/api/cdp/instances/${encodeURIComponent(id)}/daemon-start`, { method: "POST", body: "{}" });
+    showToast("守护进程已启动");
+    await refreshCdpInstances();
+  } catch (e) { showToast(e.message, true); }
+};
+
+window.cdpDaemonStop = async function(id) {
+  try {
+    await request(`/api/cdp/instances/${encodeURIComponent(id)}/daemon-stop`, { method: "POST", body: "{}" });
+    showToast("守护进程已停止");
+    await refreshCdpInstances();
+  } catch (e) { showToast(e.message, true); }
+};
+
+window.cdpDaemonStatus = async function(id) {
+  try {
+    const res = await request(`/api/cdp/instances/${encodeURIComponent(id)}/daemon-status`);
+    const inst = cdpState.instances.find(i => i.id === id);
+    const name = inst?.name || id.substring(0, 8);
+    if (res.running) {
+      const uptime = Math.round(res.uptime / 1000);
+      const min = Math.floor(uptime / 60);
+      const sec = uptime % 60;
+      showToast(`${name} 守护进程运行中 (PID=${res.pid}, ${min}分${sec}秒)`);
+    } else {
+      showToast(`${name} 守护进程未运行`);
+    }
+    await refreshCdpInstances();
+  } catch (e) { showToast(e.message, true); }
+};
 
 window.cdpSelect = function(id) {
   cdpState.selectedId = id;
@@ -3696,6 +3750,109 @@ cdpEl.saveBtn?.addEventListener("click", async () => {
 
 cdpEl.refreshBtn?.addEventListener("click", refreshCdpInstances);
 cdpEl.actionClose?.addEventListener("click", () => { cdpEl.actionPanel.style.display = "none"; cdpState.selectedId = null; });
+
+// --- ngrok 管理 ---
+async function refreshNgrokStatus() {
+  try {
+    const res = await request("/api/cdp/ngrok");
+    const cfg = res.config || {};
+    cdpEl.ngrokUrl.value = cfg.url || "";
+    cdpEl.ngrokPort.value = cfg.port || 9223;
+    cdpEl.ngrokAutostart.checked = Boolean(cfg.autoStart);
+    const st = res.status || {};
+    if (st.running) {
+      cdpEl.ngrokStatus.textContent = `运行中 (PID=${st.pid})`;
+      cdpEl.ngrokStatus.className = "status-pill status-success";
+      cdpEl.ngrokStart.disabled = true;
+      cdpEl.ngrokStop.disabled = false;
+    } else {
+      cdpEl.ngrokStatus.textContent = "未运行";
+      cdpEl.ngrokStatus.className = "status-pill status-loading";
+      cdpEl.ngrokStart.disabled = false;
+      cdpEl.ngrokStop.disabled = true;
+    }
+    const logs = st.recentLogs || [];
+    cdpEl.ngrokLogs.innerHTML = logs.length ? logs.map(l => `[${l.at.substring(11, 19)}] ${l.message}`).join("\n") : "暂无日志";
+  } catch {}
+}
+
+cdpEl.ngrokSave?.addEventListener("click", async () => {
+  const config = {
+    url: cdpEl.ngrokUrl.value.trim(),
+    port: Number(cdpEl.ngrokPort.value) || 9223,
+    autoStart: cdpEl.ngrokAutostart.checked,
+  };
+  try {
+    await request("/api/cdp/ngrok", { method: "PUT", body: JSON.stringify(config) });
+    showToast("ngrok 配置已保存" + (config.autoStart ? "，下次启动系统将自动启动 ngrok" : ""));
+  } catch (e) { showToast(e.message, true); }
+});
+
+cdpEl.ngrokStart?.addEventListener("click", async () => {
+  try {
+    await request("/api/cdp/ngrok/start", { method: "POST", body: "{}" });
+    showToast("ngrok 已启动");
+    await refreshNgrokStatus();
+  } catch (e) { showToast(e.message, true); }
+});
+
+cdpEl.ngrokStop?.addEventListener("click", async () => {
+  try {
+    await request("/api/cdp/ngrok/stop", { method: "POST", body: "{}" });
+    showToast("ngrok 已停止");
+    await refreshNgrokStatus();
+  } catch (e) { showToast(e.message, true); }
+});
+
+cdpEl.ngrokCheck?.addEventListener("click", refreshNgrokStatus);
+
+cdpEl.scanBtn?.addEventListener("click", async () => {
+  cdpEl.scanResults.classList.remove("hidden");
+  cdpEl.scanHint.textContent = "正在扫描 localhost:9222-9232…";
+  cdpEl.scanList.innerHTML = `<div class="muted-activity" style="padding:8px;">扫描中…</div>`;
+  try {
+    const res = await request("/api/cdp/scan", { method: "POST", body: JSON.stringify({ host: "localhost", portStart: 9222, portEnd: 9232 }) });
+    const found = res.instances || [];
+    if (found.length === 0) {
+      cdpEl.scanHint.textContent = "未发现 Chrome 调试实例";
+      cdpEl.scanList.innerHTML = `<div style="padding:8px;color:var(--text-muted);font-size:13px;">
+        未扫描到 Chrome 远程调试实例。请确认已用以下命令启动 Chrome：<br/>
+        <code style="font-size:11px;">chrome.exe --remote-debugging-port=9222 --user-data-dir="C:\chrome-cdp"</code>
+      </div>`;
+      return;
+    }
+    cdpEl.scanHint.textContent = `发现 ${found.length} 个 Chrome 实例`;
+    cdpEl.scanList.innerHTML = found.map(item => {
+      const info = item.chromeInfo || {};
+      const browser = info.Browser || "未知";
+      const alreadyAdded = cdpState.instances.some(i => i.cdpHost === item.host && i.cdpPort === item.port);
+      return `<div class="cdp-scan-item">
+        <div class="cdp-scan-info">
+          <strong>${escapeHtml(item.host)}:${item.port}</strong>
+          <span>${escapeHtml(browser)}</span>
+          ${info["User-Agent"] ? `<small>${escapeHtml(info["User-Agent"].substring(0, 60))}</small>` : ""}
+        </div>
+        <button class="button ${alreadyAdded ? "button-secondary" : "button-primary"}" style="padding:4px 12px;font-size:12px;"
+          ${alreadyAdded ? "disabled" : `onclick="window.cdpAddScanned('${escapeHtml(item.host)}', ${item.port}, '${escapeHtml(browser)}')"`}>
+          ${alreadyAdded ? "已添加" : "添加"}
+        </button>
+      </div>`;
+    }).join("");
+  } catch (e) {
+    cdpEl.scanHint.textContent = "扫描失败：" + e.message;
+    cdpEl.scanList.innerHTML = "";
+  }
+});
+
+window.cdpAddScanned = async function(host, port, browser) {
+  const name = `Chrome ${port}`;
+  try {
+    await request("/api/cdp/instances", { method: "POST", body: JSON.stringify({ name, cdpHost: host, cdpPort: port }) });
+    showToast(`已添加 ${name}`);
+    await refreshCdpInstances();
+    cdpEl.scanBtn.click();
+  } catch (e) { showToast(e.message, true); }
+};
 
 async function cdpProxy(action, method = "POST", body = null) {
   if (!cdpState.selectedId) { showToast("请先选择实例", true); return null; }
