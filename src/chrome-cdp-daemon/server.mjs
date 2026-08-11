@@ -21,7 +21,7 @@
 
 import http from 'http'
 import { chromium } from 'playwright'
-import { readFileSync, existsSync, writeFileSync, mkdirSync, unlinkSync, createReadStream } from 'fs'
+import { existsSync, writeFileSync, mkdirSync, unlinkSync, createReadStream } from 'fs'
 import { resolve, dirname, join } from 'path'
 import { fileURLToPath } from 'url'
 
@@ -77,7 +77,7 @@ function readBody(req) {
 function readMultipart(req) {
   return new Promise((resolve, reject) => {
     const contentType = req.headers['content-type'] || ''
-    const boundaryMatch = contentType.match(/boundary=(.+)/)
+    const boundaryMatch = contentType.match(/boundary=([^\s;]+)/)
     if (!boundaryMatch) { reject(new Error('No boundary in content-type')); return }
     const boundary = Buffer.from('--' + boundaryMatch[1])
     const chunks = []
@@ -169,6 +169,48 @@ setInterval(() => {
 // ===== 任务存储 =====
 const taskStore = new Map() // taskNo → { status, outputs, error, progress, startedAt, completedAt }
 
+setInterval(() => {
+  const now = Date.now()
+  for (const [taskNo, task] of taskStore) {
+    // 清理已完成且超过 2 小时的任务
+    if (task.completedAt && now - task.completedAt > 7200000) {
+      taskStore.delete(taskNo)
+      if (DEBUG) log('清理过期任务:', taskNo)
+    }
+  }
+}, 600000)
+
+// ===== 并发控制（单浏览器同一时间只能处理一个任务）=====
+let taskRunning = false
+const taskQueue = []
+
+function enqueueTask(taskNo, type, params) {
+  taskQueue.push({ taskNo, type, params })
+  processQueue()
+}
+
+async function processQueue() {
+  if (taskRunning || taskQueue.length === 0) return
+  taskRunning = true
+  const { taskNo, type, params } = taskQueue.shift()
+  const handler = taskHandlers[type]
+  if (!handler) {
+    taskStore.set(taskNo, { status: 'failed', outputs: [], error: `Unknown task type: ${type}`, completedAt: Date.now() })
+    taskRunning = false
+    processQueue()
+    return
+  }
+  handler(taskNo, params)
+    .catch(err => {
+      logErr(`任务 ${taskNo} 异常:`, err.message)
+      taskStore.set(taskNo, { status: 'failed', outputs: [], error: err.message, completedAt: Date.now() })
+    })
+    .finally(() => {
+      taskRunning = false
+      processQueue()
+    })
+}
+
 // ===== 任务处理器注册 =====
 const taskHandlers = {}
 
@@ -181,11 +223,7 @@ async function submitTask(type, params) {
   if (!handler) throw new Error(`Unknown task type: ${type}`)
   const taskNo = `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
   taskStore.set(taskNo, { status: 'pending', outputs: [], error: null, progress: '0%', startedAt: Date.now() })
-  // 后台执行（不 await）
-  handler(taskNo, params).catch(err => {
-    logErr(`任务 ${taskNo} 异常:`, err.message)
-    taskStore.set(taskNo, { status: 'failed', outputs: [], error: err.message, completedAt: Date.now() })
-  })
+  enqueueTask(taskNo, type, params)
   return taskNo
 }
 
@@ -581,6 +619,9 @@ async function handleChatGptAnalyzeVideo(taskNo, params) {
   taskStore.set(taskNo, { status: 'running', outputs: [], error: null, progress: '10%', startedAt: Date.now() })
 
   log(`=== 开始 ChatGPT 视频分析 (taskNo=${taskNo}) ===`)
+
+  // 确保浏览器连接
+  await ensureConnection()
 
   // Step 0: 导航到新对话
   log('Step 0: 导航到新对话...')
