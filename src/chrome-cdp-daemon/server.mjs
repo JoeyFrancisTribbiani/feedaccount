@@ -608,7 +608,7 @@ async function chatgptSendMessageWithFile(text) {
  */
 async function handleChatGptAnalyzeVideo(taskNo, params) {
   const { prompt, fileIds = [], options = {} } = params
-  const responseTimeout = options.responseTimeout || 600000
+  const responseTimeout = options.responseTimeout || 1800000
 
   // 从 fileIds 解析本地文件路径
   if (!fileIds.length) throw new Error('fileIds is required')

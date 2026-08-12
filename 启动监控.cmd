@@ -30,6 +30,22 @@ goto launch_failed
 
 :node_ready
 
+REM ===== 启动 Chrome CDP Daemon（后台）=====
+set "DAEMON_DIR=%~dp0src\chrome-cdp-daemon"
+if exist "%DAEMON_DIR%\server.mjs" (
+  if not exist "%DAEMON_DIR%\node_modules" (
+    echo [CDP Daemon] 首次运行，正在安装依赖...
+    pushd "%DAEMON_DIR%"
+    call npm install
+    popd
+  )
+  echo [CDP Daemon] 正在后台启动...
+  start "Chrome CDP Daemon" /min "%NODE_EXE%" "%DAEMON_DIR%\server.mjs"
+  timeout /t 2 /nobreak >nul
+) else (
+  echo [CDP Daemon] 未找到 src\chrome-cdp-daemon\server.mjs，跳过
+)
+
 where ffmpeg >nul 2>nul
 if errorlevel 1 (
   echo [检测到未安装 FFmpeg] 正在通过 winget 自动安装...
