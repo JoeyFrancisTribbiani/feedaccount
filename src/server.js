@@ -1,5 +1,5 @@
 import { createReadStream, mkdirSync, writeFileSync, existsSync } from "node:fs";
-import { stat, readFile } from "node:fs/promises";
+import { stat, readFile, unlink } from "node:fs/promises";
 import { createServer } from "node:http";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -19,6 +19,7 @@ import { TiktokJobManager, TIKTOK_DEFAULT_OPTIONS } from "./tiktok/tiktok-job-ma
 import { TiktokPublishManager } from "./tiktok/tiktok-publish-manager.js";
 import { RotationScheduler, SCHEDULER_DEFAULTS } from "./scheduler.js";
 import { checkIpGeoViaSocks5 } from "./socks5-check.js";
+import { DEDUP_PRESETS, dedupVideo, stitchVideos, probeVideo, remixVideoWithResources, OUTPUT_DIR as REMIX_OUTPUT_DIR } from "./video-remix.js";
 
 const THIS_DIR = path.dirname(fileURLToPath(import.meta.url));
 const CDP_DAEMON_DIR = path.resolve(THIS_DIR, "chrome-cdp-daemon");
@@ -352,11 +353,30 @@ export function createMonitorServer({
     if (remixProcessing) return;
     remixProcessing = true;
     while (remixQueue.length > 0) {
-      const { taskId, localPaths, mode, ratio, preset } = remixQueue.shift();
+      const { taskId, localPaths, mode, ratio, preset, matrixIds, creatorId, sourceVideoId, videoTitle, introPath, outroPath, musicPath } = remixQueue.shift();
       store.updateRemixTask(taskId, { status: "PROCESSING" });
       try {
         const opts = preset ? { preset: DEDUP_PRESETS[preset] || DEDUP_PRESETS.medium } : {};
-        if (mode === "stitch") {
+
+        if (mode === "matrix-remix") {
+          // 新混剪流程：去重 → 拼接 intro+dedup+outro → 叠加背景音乐
+          const out = await remixVideoWithResources(localPaths[0], { introPath, outroPath, musicPath }, ratio, opts);
+          const outputUrl = `/data/remix-output/${path.basename(out)}`;
+          store.updateRemixTask(taskId, { status: "DONE", outputUrl, completedAt: nowIso() });
+
+          // 将成品视频链接到每个选中的社媒矩阵
+          if (matrixIds && matrixIds.length) {
+            for (const matrixId of matrixIds) {
+              store.createMatrixVideo({
+                matrixId,
+                sourceVideoId,
+                creatorId,
+                filePath: outputUrl,
+                title: videoTitle || null,
+              });
+            }
+          }
+        } else if (mode === "stitch") {
           const out = await stitchVideos(localPaths, ratio, opts);
           store.updateRemixTask(taskId, { status: "DONE", outputUrl: `/data/remix-output/${path.basename(out)}`, completedAt: nowIso() });
         } else {
@@ -372,6 +392,102 @@ export function createMonitorServer({
       }
     }
     remixProcessing = false;
+  }
+
+  // AI 混剪队列
+  const aiRemixQueue = [];
+  let aiRemixProcessing = false;
+  async function processAiRemixQueue() {
+    if (aiRemixProcessing) return;
+    aiRemixProcessing = true;
+    while (aiRemixQueue.length > 0) {
+      const { taskId, daemonUrl, filesToUpload, prompt, matrixIds, creatorId, sourceVideoId, videoTitle } = aiRemixQueue.shift();
+      store.updateRemixTask(taskId, { status: "PROCESSING" });
+      try {
+        // Step 1: 上传文件到 daemon
+        const fileIds = [];
+        for (const filePath of filesToUpload) {
+          if (!filePath || !existsSync(filePath)) {
+            store.logCdpEvent(null, "warning", `AI混剪: 文件不存在，跳过: ${filePath}`);
+            continue;
+          }
+          const fileBuffer = await readFile(filePath);
+          const formData = new FormData();
+          formData.append("file", new Blob([fileBuffer]), path.basename(filePath));
+          const uploadRes = await fetch(`${daemonUrl}/api/files`, { method: "POST", body: formData });
+          const uploadData = await uploadRes.json();
+          if (!uploadRes.ok || !uploadData.fileId) throw new Error(`上传文件失败: ${uploadData.error || path.basename(filePath)}`);
+          fileIds.push(uploadData.fileId);
+        }
+
+        if (!fileIds.length) throw new Error("没有可上传的文件");
+
+        // Step 2: 提交 AI 混剪任务
+        const taskRes = await fetch(`${daemonUrl}/api/tasks`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ type: "chatgpt-ai-remix", params: { prompt, fileIds, options: { responseTimeout: 1800000 } } }),
+        });
+        const taskData = await taskRes.json();
+        if (!taskRes.ok || !taskData.taskNo) throw new Error(`提交 AI 混剪任务失败: ${taskData.error}`);
+        const daemonTaskNo = taskData.taskNo;
+
+        // Step 3: 轮询任务状态
+        let completed = false;
+        let daemonTask = null;
+        const pollStart = Date.now();
+        while (Date.now() - pollStart < 1800000) {
+          await new Promise((r) => setTimeout(r, 5000));
+          const statusRes = await fetch(`${daemonUrl}/api/tasks/${daemonTaskNo}`);
+          daemonTask = await statusRes.json();
+          if (daemonTask.status === "completed" || daemonTask.status === "failed") {
+            completed = daemonTask.status === "completed";
+            break;
+          }
+        }
+
+        if (!completed || !daemonTask) {
+          store.updateRemixTask(taskId, { status: "FAILED", errorMessage: "AI 混剪任务超时或失败", completedAt: nowIso() });
+          continue;
+        }
+
+        // Step 4: 从 daemon 输出中找到视频文件并下载到本地
+        const fileOutputs = (daemonTask.outputs || []).filter((o) => o.type === "file");
+        let outputUrl = null;
+        if (fileOutputs.length > 0) {
+          const fileOutput = fileOutputs[0];
+          // 下载到 remix-output 目录
+          const downloadRes = await fetch(`${daemonUrl}${fileOutput.url}`);
+          if (downloadRes.ok) {
+            const buffer = Buffer.from(await downloadRes.arrayBuffer());
+            const outputFileName = `ai_remix_${Date.now()}_${path.basename(fileOutput.filename)}`;
+            const outputPath = path.join(REMIX_OUTPUT_DIR, outputFileName);
+            writeFileSync(outputPath, buffer);
+            outputUrl = `/data/remix-output/${outputFileName}`;
+          }
+        }
+
+        store.updateRemixTask(taskId, {
+          status: outputUrl ? "DONE" : "FAILED",
+          outputUrl,
+          errorMessage: outputUrl ? null : "AI 混剪完成但未获取到视频文件",
+          completedAt: nowIso(),
+        });
+
+        // Step 5: 链接到矩阵
+        if (outputUrl && matrixIds?.length) {
+          for (const matrixId of matrixIds) {
+            store.createMatrixVideo({
+              matrixId, sourceVideoId, creatorId,
+              filePath: outputUrl, title: videoTitle || null,
+            });
+          }
+        }
+      } catch (e) {
+        store.updateRemixTask(taskId, { status: "FAILED", errorMessage: e.message, completedAt: nowIso() });
+      }
+    }
+    aiRemixProcessing = false;
   }
 
   const broadcast = (jobList) => {
@@ -627,6 +743,45 @@ export function createMonitorServer({
         }
         await Promise.all(probes);
         sendJson(response, 200, { instances: results });
+        return;
+      }
+
+      // 一键启动 Chrome 调试实例
+      if (request.method === "POST" && pathname === "/api/cdp/launch-chrome") {
+        const body = await readJson(request);
+        const { profilePath, port, proxy } = body;
+        if (!profilePath) { sendJson(response, 400, { error: "请填写 Chrome profile 路径" }); return; }
+        const cdpPort = Number(port) || 9222;
+
+        // 查找 Chrome 可执行文件
+        let chromePath = null;
+        const candidates = [
+          "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+          "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+        ];
+        // 也尝试通过注册表查找
+        try {
+          const regResult = execSync('reg query "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\chrome.exe" /ve', { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] });
+          const match = regResult.match(/REG_SZ\s+(.+)/);
+          if (match) candidates.unshift(match[1].trim());
+        } catch {}
+        for (const c of candidates) {
+          if (existsSync(c)) { chromePath = c; break; }
+        }
+        if (!chromePath) { sendJson(response, 400, { error: "未找到 Chrome 可执行文件，请确认 Chrome 已安装" }); return; }
+
+        const args = [
+          `--remote-debugging-port=${cdpPort}`,
+          `--user-data-dir=${profilePath}`,
+        ];
+        if (proxy) {
+          args.push(`--proxy-server=${proxy}`);
+        }
+
+        const child = spawn(chromePath, args, { detached: true, stdio: "ignore", windowsHide: false });
+        child.unref();
+
+        sendJson(response, 200, { ok: true, pid: child.pid, chromePath, cdpPort, profilePath });
         return;
       }
 
@@ -1154,6 +1309,7 @@ export function createMonitorServer({
             const videos = store.listRemixVideos(creatorId).map((v) => ({
               ...v,
               url: normalizeRemixUrl(v.url),
+              matrixLinks: store.getMatrixLinksForVideo(v.id),
             }));
             sendJson(response, 200, videos);
             return;
@@ -1230,6 +1386,232 @@ export function createMonitorServer({
           return;
         }
 
+        // ---- Remix: AI 自动视频混剪任务 ----
+        if (request.method === "POST" && pathname === "/api/remix/ai-remix-task") {
+          const body = await readJson(request);
+          const { matrixIds, creatorId, videoIds, cdpInstanceId, prompt, ratio } = body;
+          if (!matrixIds?.length) { sendJson(response, 400, { error: "请选择至少一个社媒矩阵" }); return; }
+          if (!creatorId) { sendJson(response, 400, { error: "请选择达人" }); return; }
+          if (!videoIds?.length) { sendJson(response, 400, { error: "请选择至少一个视频" }); return; }
+          if (!cdpInstanceId) { sendJson(response, 400, { error: "请选择 CDP 实例" }); return; }
+
+          // 获取 CDP 实例
+          const inst = store.getChromeInstance(cdpInstanceId);
+          if (!inst) { sendJson(response, 404, { error: "CDP 实例不存在" }); return; }
+          const daemonUrl = inst.ngrokUrl || `http://${inst.cdpHost}:${inst.daemonPort}`;
+
+          // 获取达人资源
+          const resources = store.listRemixResources(creatorId);
+          const intros = resources.filter((r) => r.type === "intro");
+          const outros = resources.filter((r) => r.type === "outro");
+          const musics = resources.filter((r) => r.type === "music");
+
+          // 获取视频信息
+          const videos = store.listRemixVideos(creatorId);
+          const selectedVideos = videoIds.map((vid) => videos.find((v) => v.id === vid)).filter(Boolean);
+          if (!selectedVideos.length) { sendJson(response, 400, { error: "未找到选中的视频" }); return; }
+
+          const resolveLocal = (url) => {
+            if (url.startsWith("/data/remix-videos/")) {
+              return path.resolve(THIS_DIR, "..", "data", "remix-videos", path.basename(url));
+            }
+            if (url.startsWith("/data/remix-output/")) {
+              return path.resolve(THIS_DIR, "..", "data", "remix-output", path.basename(url));
+            }
+            return url;
+          };
+          const resolveResource = (fp) => {
+            if (!fp) return null;
+            return path.resolve(THIS_DIR, "..", fp.replace(/^\//, ""));
+          };
+
+          // 为每个视频创建 remix task
+          const tasks = [];
+          for (const video of selectedVideos) {
+            const title = `AI混剪 · ${video.title || "未命名"} → ${matrixIds.length}个矩阵`;
+            const task = store.createRemixTask({
+              title, mode: "ai-remix", videoUrls: [video.url],
+              sourceVideos: [{ url: video.url, title: video.title, creatorName: store.getRemixCreator(creatorId)?.name || "" }],
+              ratio: ratio || "9:16",
+            });
+
+            // 收集要上传的文件路径
+          const filesToUpload = [resolveLocal(video.url)];
+          // 随机选取资源
+          if (intros.length) filesToUpload.push(resolveResource(intros[Math.floor(Math.random() * intros.length)].filePath));
+          if (outros.length) filesToUpload.push(resolveResource(outros[Math.floor(Math.random() * outros.length)].filePath));
+          if (musics.length) filesToUpload.push(resolveResource(musics[Math.floor(Math.random() * musics.length)].filePath));
+
+          // 提交到 AI 混剪队列（异步处理）
+          aiRemixQueue.push({
+            taskId: task.id, daemonUrl, filesToUpload, prompt: prompt || "",
+            matrixIds, creatorId, sourceVideoId: video.id, videoTitle: video.title,
+          });
+          processAiRemixQueue();
+
+          tasks.push(task);
+          }
+
+          sendJson(response, 200, { tasks, count: tasks.length });
+          return;
+        }
+
+        // ---- Remix: 新混剪任务（社媒矩阵 + 达人资源） ----
+        if (request.method === "POST" && pathname === "/api/remix/matrix-task") {
+          const body = await readJson(request);
+          const { matrixIds, creatorId, videoIds, ratio, preset } = body;
+          if (!matrixIds?.length) { sendJson(response, 400, { error: "请选择至少一个社媒矩阵" }); return; }
+          if (!creatorId) { sendJson(response, 400, { error: "请选择达人" }); return; }
+          if (!videoIds?.length) { sendJson(response, 400, { error: "请选择至少一个视频" }); return; }
+
+          // 获取达人资源
+          const resources = store.listRemixResources(creatorId);
+          const intros = resources.filter((r) => r.type === "intro");
+          const outros = resources.filter((r) => r.type === "outro");
+          const musics = resources.filter((r) => r.type === "music");
+
+          // 获取视频信息
+          const videos = store.listRemixVideos(creatorId);
+          const selectedVideos = videoIds.map((vid) => videos.find((v) => v.id === vid)).filter(Boolean);
+          if (!selectedVideos.length) { sendJson(response, 400, { error: "未找到选中的视频" }); return; }
+
+          // 为每个视频创建任务
+          const tasks = [];
+          for (const video of selectedVideos) {
+            const title = `混剪 · ${video.title || "未命名"} → ${matrixIds.length}个矩阵`;
+            const task = store.createRemixTask({
+              title, mode: "matrix-remix", videoUrls: [video.url],
+              sourceVideos: [{ url: video.url, title: video.title, creatorName: store.getRemixCreator(creatorId)?.name || "" }],
+              ratio: ratio || "9:16",
+            });
+            // 解析本地文件路径
+            const resolveLocal = (url) => {
+              if (url.startsWith("/data/remix-videos/")) {
+                return path.resolve(THIS_DIR, "..", "data", "remix-videos", path.basename(url));
+              }
+              if (url.startsWith("/data/remix-output/")) {
+                return path.resolve(THIS_DIR, "..", "data", "remix-output", path.basename(url));
+              }
+              return url;
+            };
+            const resolveResource = (fp) => {
+              if (!fp) return null;
+              return path.resolve(THIS_DIR, "..", fp.replace(/^\//, ""));
+            };
+
+            // 随机选取资源
+            const introPath = intros.length ? resolveResource(intros[Math.floor(Math.random() * intros.length)].filePath) : null;
+            const outroPath = outros.length ? resolveResource(outros[Math.floor(Math.random() * outros.length)].filePath) : null;
+            const musicPath = musics.length ? resolveResource(musics[Math.floor(Math.random() * musics.length)].filePath) : null;
+
+            remixQueue.push({
+              taskId: task.id, localPaths: [resolveLocal(video.url)], mode: "matrix-remix",
+              ratio: ratio || "9:16", preset: preset || "medium",
+              matrixIds, creatorId, sourceVideoId: video.id, videoTitle: video.title,
+              introPath, outroPath, musicPath,
+            });
+            tasks.push(task);
+          }
+
+          processRemixQueue();
+          sendJson(response, 200, { tasks, count: tasks.length });
+          return;
+        }
+
+        // ---- Remix: 达人资源管理 ----
+        const remixResourcesMatch = pathname.match(/^\/api\/remix\/creators\/([^/]+)\/resources$/);
+        if (remixResourcesMatch) {
+          const creatorId = decodeURIComponent(remixResourcesMatch[1]);
+
+          if (request.method === "GET") {
+            const type = url.searchParams.get("type") || null;
+            sendJson(response, 200, store.listRemixResources(creatorId, type));
+            return;
+          }
+
+          if (request.method === "POST") {
+            const contentType = request.headers["content-type"] || "";
+            const boundaryMatch = contentType.match(/boundary=([^;\s]+)/);
+            if (!boundaryMatch) { sendJson(response, 400, { error: "无效的上传请求" }); return; }
+            const boundaryBuf = Buffer.from("--" + boundaryMatch[1]);
+            const chunks = [];
+            for await (const chunk of request) chunks.push(chunk);
+            const buf = Buffer.concat(chunks);
+
+            const fields = {};
+            let fileContent = null;
+            let filename = null;
+            let searchStart = 0;
+            while (true) {
+              const pos = buf.indexOf(boundaryBuf, searchStart);
+              if (pos === -1) break;
+              const afterBoundary = pos + boundaryBuf.length;
+              if (buf[afterBoundary] === 0x2d && buf[afterBoundary + 1] === 0x2d) break;
+              const partStart = afterBoundary + 2;
+              const nextPos = buf.indexOf(boundaryBuf, partStart);
+              if (nextPos === -1) break;
+              const part = buf.subarray(partStart, nextPos - 2);
+              const headerEnd = part.indexOf(Buffer.from("\r\n\r\n"));
+              if (headerEnd !== -1) {
+                const headerStr = part.subarray(0, headerEnd).toString("latin1");
+                const nameMatch = headerStr.match(/name="([^"]*)"/);
+                const fnMatch = headerStr.match(/filename="([^"]*)"/);
+                if (nameMatch) {
+                  if (fnMatch) {
+                    filename = fnMatch[1];
+                    fileContent = part.subarray(headerEnd + 4);
+                  } else {
+                    fields[nameMatch[1]] = part.subarray(headerEnd + 4).toString("utf8");
+                  }
+                }
+              }
+              searchStart = nextPos;
+            }
+
+            const type = fields.type;
+            if (!["intro", "outro", "music"].includes(type)) {
+              sendJson(response, 400, { error: "资源类型无效，应为 intro / outro / music" });
+              return;
+            }
+            if (!filename || !fileContent) { sendJson(response, 400, { error: "未找到文件" }); return; }
+
+            const resourceDir = path.resolve(THIS_DIR, "..", "data", "remix-resources", type);
+            mkdirSync(resourceDir, { recursive: true });
+            const safeName = `${Date.now()}_${filename.replace(/[^\w.-]/g, "_")}`;
+            const filePath = path.join(resourceDir, safeName);
+            writeFileSync(filePath, fileContent);
+
+            let duration = null;
+            if (type === "intro" || type === "outro") {
+              const meta = await probeVideo(filePath).catch(() => null);
+              duration = meta?.duration ?? null;
+            }
+
+            const resource = store.createRemixResource({
+              creatorId,
+              type,
+              filePath: `/data/remix-resources/${type}/${safeName}`,
+              filename: safeName,
+              fileSize: fileContent.length,
+              duration,
+            });
+            sendJson(response, 200, resource);
+            return;
+          }
+        }
+
+        const remixResourceDeleteMatch = pathname.match(/^\/api\/remix\/creators\/([^/]+)\/resources\/([^/]+)$/);
+        if (request.method === "DELETE" && remixResourceDeleteMatch) {
+          const resourceId = decodeURIComponent(remixResourceDeleteMatch[2]);
+          const resource = store.deleteRemixResource(resourceId);
+          if (resource?.filePath) {
+            const absPath = path.resolve(THIS_DIR, "..", resource.filePath.replace(/^\//, ""));
+            try { await unlink(absPath); } catch {}
+          }
+          sendJson(response, 200, { ok: true });
+          return;
+        }
+
         // ---- Remix: 任务管理 ----
         if (request.method === "GET" && pathname === "/api/remix/tasks") {
           sendJson(response, 200, store.listRemixTasks());
@@ -1289,6 +1671,137 @@ export function createMonitorServer({
         return;
       }
 
+      // ---- 社媒矩阵管理 ----
+      if (pathname.startsWith("/api/matrices")) {
+        // 矩阵列表
+        if (request.method === "GET" && pathname === "/api/matrices") {
+          sendJson(response, 200, store.listMatrices());
+          return;
+        }
+        // 创建矩阵
+        if (request.method === "POST" && pathname === "/api/matrices") {
+          const body = await readJson(request);
+          if (!body.name) { sendJson(response, 400, { error: "缺少矩阵名称" }); return; }
+          sendJson(response, 200, store.createMatrix({ name: body.name, notes: body.notes || null }));
+          return;
+        }
+
+        const matrixMatch = pathname.match(/^\/api\/matrices\/([^/]+)$/);
+        if (matrixMatch) {
+          const matrixId = decodeURIComponent(matrixMatch[1]);
+          if (request.method === "DELETE") {
+            store.deleteMatrix(matrixId);
+            sendJson(response, 200, { ok: true });
+            return;
+          }
+        }
+
+        // 矩阵账号管理
+        const matrixAccountsMatch = pathname.match(/^\/api\/matrices\/([^/]+)\/accounts$/);
+        if (matrixAccountsMatch) {
+          const matrixId = decodeURIComponent(matrixAccountsMatch[1]);
+          if (request.method === "GET") {
+            sendJson(response, 200, store.listMatrixAccounts(matrixId));
+            return;
+          }
+          if (request.method === "POST") {
+            const body = await readJson(request);
+            if (!body.platform || !body.accountName) { sendJson(response, 400, { error: "缺少平台或账号名称" }); return; }
+            if (!["tiktok", "instagram", "youtube"].includes(body.platform)) {
+              sendJson(response, 400, { error: "不支持的平台，仅支持 tiktok / instagram / youtube" });
+              return;
+            }
+            try {
+              const account = store.createMatrixAccount({ matrixId, platform: body.platform, accountName: body.accountName });
+              sendJson(response, 200, account);
+            } catch (e) {
+              sendJson(response, 400, { error: e.message.includes("UNIQUE") ? "该矩阵中此平台已有账号" : e.message });
+            }
+            return;
+          }
+        }
+        const matrixAccountDeleteMatch = pathname.match(/^\/api\/matrices\/([^/]+)\/accounts\/([^/]+)$/);
+        if (request.method === "DELETE" && matrixAccountDeleteMatch) {
+          store.deleteMatrixAccount(decodeURIComponent(matrixAccountDeleteMatch[2]));
+          sendJson(response, 200, { ok: true });
+          return;
+        }
+
+        // 矩阵-实例绑定管理
+        const matrixProfilesMatch = pathname.match(/^\/api\/matrices\/([^/]+)\/profiles$/);
+        if (matrixProfilesMatch) {
+          const matrixId = decodeURIComponent(matrixProfilesMatch[1]);
+          if (request.method === "GET") {
+            const bindings = store.getMatrixProfiles(matrixId);
+            // 合并 BitBrowser profile 信息
+            const profiles = await api.listProfiles().catch(() => []);
+            const result = bindings.map((b) => {
+              const profile = profiles.find((p) => p.id === b.profileId);
+              return {
+                ...b,
+                profileName: profile?.name || null,
+                profileSeq: profile?.seq || null,
+                profileStatus: profile?.status || null,
+                profileRunning: profile?.running || false,
+              };
+            });
+            sendJson(response, 200, result);
+            return;
+          }
+          if (request.method === "POST") {
+            const body = await readJson(request);
+            if (!body.profileId) { sendJson(response, 400, { error: "缺少 profileId" }); return; }
+            const bindings = store.bindMatrixProfile({ matrixId, profileId: body.profileId });
+            sendJson(response, 200, bindings);
+            return;
+          }
+        }
+        const matrixProfileDeleteMatch = pathname.match(/^\/api\/matrices\/([^/]+)\/profiles\/([^/]+)$/);
+        if (request.method === "DELETE" && matrixProfileDeleteMatch) {
+          const matrixId = decodeURIComponent(matrixProfileDeleteMatch[1]);
+          const profileId = decodeURIComponent(matrixProfileDeleteMatch[2]);
+          const bindings = store.unbindMatrixProfile(matrixId, profileId);
+          sendJson(response, 200, bindings);
+          return;
+        }
+
+        // 矩阵成品视频库
+        const matrixVideosMatch = pathname.match(/^\/api\/matrices\/([^/]+)\/videos$/);
+        if (matrixVideosMatch) {
+          const matrixId = decodeURIComponent(matrixVideosMatch[1]);
+          if (request.method === "GET") {
+            const videos = store.listMatrixVideos(matrixId).map((v) => ({
+              ...v,
+              filePath: normalizeRemixUrl(v.filePath),
+            }));
+            sendJson(response, 200, videos);
+            return;
+          }
+          if (request.method === "DELETE") {
+            const body = await readJson(request);
+            if (body.videoId) {
+              store.deleteMatrixVideo(body.videoId);
+              sendJson(response, 200, { ok: true });
+            } else {
+              sendJson(response, 400, { error: "缺少 videoId" });
+            }
+            return;
+          }
+        }
+
+        // 标记矩阵视频已下载
+        const matrixVideoDownloadedMatch = pathname.match(/^\/api\/matrices\/([^/]+)\/videos\/([^/]+)\/downloaded$/);
+        if (request.method === "POST" && matrixVideoDownloadedMatch) {
+          const videoId = decodeURIComponent(matrixVideoDownloadedMatch[2]);
+          const video = store.markMatrixVideoDownloaded(videoId);
+          sendJson(response, 200, video);
+          return;
+        }
+
+        sendJson(response, 404, { error: "矩阵接口不存在" });
+        return;
+      }
+
       // ---- 静态文件: remix 输出 ----
       if (pathname.startsWith("/data/remix-output/")) {
         const filename = path.basename(pathname);
@@ -1306,6 +1819,20 @@ export function createMonitorServer({
         if (!existsSync(filePath)) { sendJson(response, 404, { error: "文件不存在" }); return; }
         const statResult = await stat(filePath);
         response.writeHead(200, { "Content-Type": "video/mp4", "Content-Length": statResult.size, "Cache-Control": "public, max-age=3600" });
+        createReadStream(filePath).pipe(response);
+        return;
+      }
+
+      if (pathname.startsWith("/data/remix-resources/")) {
+        const subPath = pathname.slice("/data/remix-resources/".length);
+        const filePath = path.resolve(THIS_DIR, "..", "data", "remix-resources", subPath);
+        const resourceBase = path.resolve(THIS_DIR, "..", "data", "remix-resources");
+        if (!filePath.startsWith(resourceBase)) { sendJson(response, 403, { error: "禁止访问" }); return; }
+        if (!existsSync(filePath)) { sendJson(response, 404, { error: "文件不存在" }); return; }
+        const statResult = await stat(filePath);
+        const ext = path.extname(filePath).toLowerCase();
+        const mime = ext === ".mp4" ? "video/mp4" : ext === ".mp3" ? "audio/mpeg" : "application/octet-stream";
+        response.writeHead(200, { "Content-Type": mime, "Content-Length": statResult.size, "Cache-Control": "public, max-age=3600" });
         createReadStream(filePath).pipe(response);
         return;
       }

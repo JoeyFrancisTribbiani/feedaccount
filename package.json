@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node --no-warnings src/server.js",
     "dev": "node --no-warnings --watch src/server.js",
-    "test": "node --no-warnings --test"
+    "test": "node --no-warnings --test \"test/**/*.test.js\""
   },
   "engines": {
     "node": ">=22.5"

@@ -1435,7 +1435,7 @@ async function initialize() {
     ]);
     state.config = config;
     state.jobs = jobsPayload.jobs;
-    elements.targetUrl.textContent = config.targetUrl;
+    if (elements.targetUrl) elements.targetUrl.textContent = config.targetUrl;
     elements.apiEndpoint.textContent = config.bitBrowserApiUrl;
     elements.databaseFile.textContent = config.databaseFile;
     let localOptions = null;
@@ -2458,7 +2458,10 @@ for (const btn of document.querySelectorAll(".platform-tab")) {
     document.querySelectorAll(".tiktok-tab").forEach((el) => el.classList.toggle("hidden", platform !== "tiktok"));
     document.querySelectorAll(".remix-tab").forEach((el) => el.classList.toggle("hidden", platform !== "remix"));
     document.querySelectorAll(".cdp-tab").forEach((el) => el.classList.toggle("hidden", platform !== "cdp"));
+    document.querySelectorAll(".matrix-tab").forEach((el) => el.classList.toggle("hidden", platform !== "matrix"));
+    document.querySelectorAll(".scheduler-tab").forEach((el) => el.classList.toggle("hidden", platform !== "scheduler"));
     if (platform === "cdp") { refreshCdpInstances(); refreshNgrokStatus(); }
+    if (platform === "matrix") { fetchMatrices(); }
   });
 }
 
@@ -3030,6 +3033,7 @@ const remix = {
   creators: [],
   videos: [],
   tasks: [],
+  resources: [],
   selectedCreatorId: null,
   selectedVideos: [],
   pollTimer: null,
@@ -3066,6 +3070,18 @@ const remixEl = {
   pagination: document.querySelector("#remix-pagination"),
   viewGridBtn: document.querySelector("#remix-view-grid"),
   viewListBtn: document.querySelector("#remix-view-list"),
+  resourcesHint: document.querySelector("#remix-resources-hint"),
+  uploadBtns: document.querySelectorAll(".remix-upload-btn"),
+  uploadInputs: {
+    intro: document.querySelector("#remix-upload-intro"),
+    outro: document.querySelector("#remix-upload-outro"),
+    music: document.querySelector("#remix-upload-music"),
+  },
+  resourceLists: {
+    intro: document.querySelector("#remix-resource-list-intro"),
+    outro: document.querySelector("#remix-resource-list-outro"),
+    music: document.querySelector("#remix-resource-list-music"),
+  },
 };
 
 async function fetchRemixCreators() {
@@ -3093,6 +3109,77 @@ async function fetchRemixTasks() {
   } catch { }
 }
 
+async function fetchRemixResources(creatorId) {
+  try {
+    const data = await request(`/api/remix/creators/${encodeURIComponent(creatorId)}/resources`);
+    remix.resources = Array.isArray(data) ? data : [];
+    renderRemixResources();
+  } catch { remix.resources = []; renderRemixResources(); }
+}
+
+function formatFileSize(bytes) {
+  if (!bytes) return "—";
+  if (bytes < 1024) return bytes + " B";
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
+  return (bytes / 1024 / 1024).toFixed(1) + " MB";
+}
+
+function formatResourceDuration(sec) {
+  if (!sec) return "—";
+  const m = Math.floor(sec / 60);
+  const s = Math.round(sec % 60);
+  return m > 0 ? `${m}:${String(s).padStart(2, "0")}` : `${s}s`;
+}
+
+const RESOURCE_TYPE_LABELS = { intro: "开头片段", outro: "结尾片段", music: "背景音乐" };
+
+function renderRemixResources() {
+  const types = ["intro", "outro", "music"];
+  for (const type of types) {
+    const list = remix.resources.filter((r) => r.type === type);
+    const container = remixEl.resourceLists[type];
+    if (!container) continue;
+    if (!list.length) {
+      container.innerHTML = `<div class="remix-resource-empty">暂无${RESOURCE_TYPE_LABELS[type]}</div>`;
+      continue;
+    }
+    container.innerHTML = list.map((r) => {
+      const isVideo = type === "intro" || type === "outro";
+      const preview = isVideo
+        ? `<video src="${escapeHtml(r.filePath)}" muted preload="metadata" class="remix-resource-preview"></video>`
+        : `<audio src="${escapeHtml(r.filePath)}" preload="metadata" class="remix-resource-audio"></audio>`;
+      const dur = r.duration ? formatResourceDuration(r.duration) : "";
+      const size = formatFileSize(r.fileSize);
+      return `<div class="remix-resource-item">
+        ${isVideo ? preview : ""}
+        <div class="remix-resource-info">
+          <span class="remix-resource-name">${escapeHtml(r.filename)}</span>
+          <span class="remix-resource-meta">${dur ? `${dur} · ` : ""}${size}</span>
+        </div>
+        ${!isVideo ? `<button class="remix-resource-play" data-play-url="${escapeHtml(r.filePath)}" type="button">▶</button>` : ""}
+        <button class="remix-resource-del" data-del-resource="${escapeHtml(r.id)}" type="button">×</button>
+      </div>`;
+    }).join("");
+    container.querySelectorAll("[data-del-resource]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        if (!confirm("删除此资源？")) return;
+        try {
+          await request(`/api/remix/creators/${encodeURIComponent(remix.selectedCreatorId)}/resources/${encodeURIComponent(btn.dataset.delResource)}`, { method: "DELETE" });
+          await fetchRemixResources(remix.selectedCreatorId);
+          await fetchRemixCreators();
+        } catch (e) { showToast(e.message, true); }
+      });
+    });
+    container.querySelectorAll("[data-play-url]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const url = btn.dataset.playUrl;
+        const audio = new Audio(url);
+        audio.play().catch(() => {});
+      });
+    });
+  }
+}
+
 function updateRemixPolling() {
   const hasActive = remix.tasks.some((t) => t.status === "PENDING" || t.status === "PROCESSING");
   if (hasActive && !remix.pollTimer) {
@@ -3112,7 +3199,7 @@ function renderRemixCreators() {
     <div class="remix-creator-item ${remix.selectedCreatorId === c.id ? "active" : ""}" data-id="${escapeHtml(c.id)}">
       <div class="remix-creator-info">
         <strong>${escapeHtml(c.name)}</strong>
-        <span>${escapeHtml(c.platform || "")} ${c._count?.videos || 0}视频</span>
+        <span>${escapeHtml(c.platform || "")} ${c._count?.videos || 0}视频 · ${c._count?.resources || 0}资源</span>
       </div>
       <button class="remix-del-btn" data-del-creator="${escapeHtml(c.id)}" title="删除">×</button>
     </div>
@@ -3124,8 +3211,11 @@ function renderRemixCreators() {
       remix.selectedVideos = [];
       remix.page = 1;
       fetchRemixVideos(remix.selectedCreatorId);
+      fetchRemixResources(remix.selectedCreatorId);
       renderRemixCreators();
       remixEl.addVideoBtn.disabled = false;
+      remixEl.uploadBtns.forEach((btn) => { btn.disabled = false; });
+      remixEl.resourcesHint.textContent = "正在加载资源…";
       const c = remix.creators.find((x) => x.id === remix.selectedCreatorId);
       remixEl.currentCreator.textContent = c ? `${c.name} 的视频` : "";
     });
@@ -3138,10 +3228,14 @@ function renderRemixCreators() {
       if (remix.selectedCreatorId === btn.dataset.delCreator) {
         remix.selectedCreatorId = null;
         remix.videos = [];
+        remix.resources = [];
         remixEl.addVideoBtn.disabled = true;
+        remixEl.uploadBtns.forEach((btn) => { btn.disabled = true; });
+        remixEl.resourcesHint.textContent = "选择达人后可上传开头/结尾片段和背景音乐";
         remixEl.currentCreator.textContent = "视频去重与混剪工作台";
         remixEl.videoCount.textContent = "在左侧选择达人查看视频";
         renderRemixVideos();
+        renderRemixResources();
       }
       await fetchRemixCreators();
     });
@@ -3226,6 +3320,7 @@ function renderRemixVideos() {
           ${remixBadgeHtml(taskInfo)}
         </div>
         <p class="remix-video-title">${escapeHtml(v.title || "未命名")}</p>
+        ${v.matrixLinks?.length ? `<div class="remix-video-matrix-links">${v.matrixLinks.map((ml) => `<span class="remix-matrix-tag" title="${escapeHtml(ml.matrixName)}">${escapeHtml(ml.matrixName)}</span>`).join("")}</div>` : ""}
       </div>
     `;
   }).join("");
@@ -3362,7 +3457,7 @@ function renderRemixSelected() {
     ? remix.selectedVideos.map((v) => `<span class="remix-chip" data-url="${escapeHtml(v.url)}">${escapeHtml(v.title)} ×</span>`).join("")
     : '<span class="muted-activity" style="font-size: 12px;">勾选视频加入去重或混剪</span>';
   remixEl.dedupBtn.disabled = remix.selectedVideos.length < 1;
-  remixEl.stitchBtn.disabled = remix.selectedVideos.length < 2;
+  remixEl.stitchBtn.disabled = false;
   remixEl.selectedList.querySelectorAll("[data-url]").forEach((chip) => {
     chip.addEventListener("click", () => {
       remix.selectedVideos = remix.selectedVideos.filter((sv) => sv.url !== chip.dataset.url);
@@ -3393,6 +3488,9 @@ function renderRemixTasks() {
   }
   remixEl.tasksList.innerHTML = remix.tasks.map((t) => {
     const isDedup = t.mode === "dedup";
+    const isMatrixRemix = t.mode === "matrix-remix";
+    const isAiRemix = t.mode === "ai-remix";
+    const modeLabel = isDedup ? "去重" : isAiRemix ? "AI混剪" : isMatrixRemix ? "矩阵混剪" : "混剪";
     const statusBadge = {
       DONE: '<span class="badge-done">完成</span>',
       PROCESSING: '<span class="badge-processing"><span class="badge-spinner"></span>处理中</span>',
@@ -3402,7 +3500,7 @@ function renderRemixTasks() {
     return `
       <div class="remix-task-item">
         <div class="remix-task-info">
-          <span class="remix-task-mode ${isDedup ? "mode-dedup" : "mode-stitch"}">${isDedup ? "去重" : "混剪"}</span>
+          <span class="remix-task-mode ${isDedup ? "mode-dedup" : "mode-stitch"}">${modeLabel}</span>
           <strong>${escapeHtml(t.title)}</strong>
           ${statusBadge}
           <span class="muted-activity" style="font-size: 11px;">${t.videoCount}视频 · ${escapeHtml(t.ratio)} · ${formatDateTime(t.createdAt)}</span>
@@ -3438,8 +3536,11 @@ remixEl.confirmCreator.addEventListener("click", async () => {
     await fetchRemixCreators();
     remix.selectedCreatorId = data.id;
     await fetchRemixVideos(data.id);
+    fetchRemixResources(data.id);
     renderRemixCreators();
     remixEl.addVideoBtn.disabled = false;
+    remixEl.uploadBtns.forEach((btn) => { btn.disabled = false; });
+    remixEl.resourcesHint.textContent = `${data.name} 的专属资源`;
     remixEl.currentCreator.textContent = `${data.name} 的视频`;
   } catch (e) { showToast(e.message, true); }
 });
@@ -3529,26 +3630,55 @@ remixEl.dedupBtn.addEventListener("click", async () => {
   showToast("去重任务已创建");
 });
 
-// 混剪
-remixEl.stitchBtn.addEventListener("click", async () => {
-  if (remix.selectedVideos.length < 2) return;
-  const ratio = remixEl.ratio.value;
-  const names = Array.from(new Set(remix.selectedVideos.map((v) => v.creatorName)));
-  const title = `混剪 · ${names.join("、")} (${remix.selectedVideos.length}个视频)`;
-  try {
-    await request("/api/remix/tasks", {
-      method: "POST",
-      body: JSON.stringify({ videoUrls: remix.selectedVideos.map((v) => v.url), sourceVideos: remix.selectedVideos.map((v) => ({ url: v.url, title: v.title, creatorName: v.creatorName })), title, ratio, mode: "stitch" }),
-    });
-    remix.selectedVideos = [];
-    renderRemixVideos();
-    renderRemixSelected();
-    await fetchRemixTasks();
-    showToast("混剪任务已创建");
-  } catch (e) { showToast(e.message, true); }
+// 混剪 — 改为打开新建混剪任务弹框
+remixEl.stitchBtn.addEventListener("click", () => {
+  openRemixTaskModal();
 });
 
 remixEl.refreshTasks.addEventListener("click", fetchRemixTasks);
+
+// 达人资源上传
+remixEl.uploadBtns.forEach((btn) => {
+  btn.addEventListener("click", () => {
+    const type = btn.dataset.type;
+    remixEl.uploadInputs[type]?.click();
+  });
+});
+
+Object.entries(remixEl.uploadInputs).forEach(([type, input]) => {
+  if (!input) return;
+  input.addEventListener("change", async () => {
+    const files = [...input.files];
+    if (!files.length) return;
+    input.value = "";
+    const creatorId = remix.selectedCreatorId;
+    if (!creatorId) { showToast("请先选择达人", true); return; }
+
+    const btn = document.querySelector(`.remix-upload-btn[data-type="${type}"]`);
+    const origText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = `上传中 (0/${files.length})...`;
+    let ok = 0;
+    let fail = 0;
+    for (let i = 0; i < files.length; i++) {
+      btn.textContent = `上传中 (${i + 1}/${files.length})...`;
+      try {
+        const formData = new FormData();
+        formData.append("file", files[i]);
+        formData.append("type", type);
+        const res = await fetch(`/api/remix/creators/${encodeURIComponent(creatorId)}/resources`, { method: "POST", body: formData });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "上传失败");
+        ok++;
+      } catch { fail++; }
+    }
+    btn.disabled = false;
+    btn.textContent = origText;
+    await fetchRemixResources(creatorId);
+    await fetchRemixCreators();
+    showToast(`上传完成：成功 ${ok} 个${fail ? `，失败 ${fail} 个` : ""}`, fail > 0);
+  });
+});
 
 // 初始化
 if (remix.viewMode === "list") {
@@ -3605,6 +3735,11 @@ const cdpEl = {
   logsRefresh: document.querySelector("#cdp-logs-refresh"),
   logsClear: document.querySelector("#cdp-logs-clear"),
   logsList: document.querySelector("#cdp-logs-list"),
+  launchBtn: document.querySelector("#cdp-launch-btn"),
+  launchPath: document.querySelector("#cdp-launch-path"),
+  launchPort: document.querySelector("#cdp-launch-port"),
+  launchProxy: document.querySelector("#cdp-launch-proxy"),
+  launchResult: document.querySelector("#cdp-launch-result"),
 };
 const cdpState = { instances: [], selectedId: null, analyzeJobId: null };
 
@@ -3806,6 +3941,32 @@ cdpEl.ngrokStop?.addEventListener("click", async () => {
 
 cdpEl.ngrokCheck?.addEventListener("click", refreshNgrokStatus);
 
+cdpEl.launchBtn?.addEventListener("click", async () => {
+  const profilePath = cdpEl.launchPath.value.trim();
+  if (!profilePath) { showToast("请填写 Chrome profile 路径", true); return; }
+  const port = cdpEl.launchPort.value || "9222";
+  const proxy = cdpEl.launchProxy.value.trim() || null;
+  cdpEl.launchBtn.disabled = true;
+  cdpEl.launchBtn.textContent = "启动中…";
+  cdpEl.launchResult.textContent = "";
+  cdpEl.launchResult.className = "cdp-launch-result";
+  try {
+    const res = await request("/api/cdp/launch-chrome", { method: "POST", body: JSON.stringify({ profilePath, port, proxy }) });
+    cdpEl.launchResult.textContent = `✓ Chrome 已启动 (PID=${res.pid}, CDP 端口 ${res.cdpPort})`;
+    cdpEl.launchResult.className = "cdp-launch-result success";
+    showToast(`Chrome 调试实例已启动，PID=${res.pid}`);
+    // 自动扫描该端口
+    setTimeout(() => cdpEl.scanBtn?.click(), 2000);
+  } catch (e) {
+    cdpEl.launchResult.textContent = `✗ ${e.message}`;
+    cdpEl.launchResult.className = "cdp-launch-result error";
+    showToast(e.message, true);
+  } finally {
+    cdpEl.launchBtn.disabled = false;
+    cdpEl.launchBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="margin-right:6px;vertical-align:-2px;"><polygon points="5 3 19 12 5 21 5 3"/></svg>启动调试 Chrome';
+  }
+});
+
 cdpEl.scanBtn?.addEventListener("click", async () => {
   cdpEl.scanResults.classList.remove("hidden");
   cdpEl.scanHint.textContent = "正在扫描 localhost:9222-9232…";
@@ -3949,6 +4110,516 @@ cdpEl.logsClear?.addEventListener("click", async () => {
     await request("/api/cdp/logs", { method: "DELETE" });
     showToast("日志已清空");
     refreshCdpLogs();
+  } catch (e) { showToast(e.message, true); }
+});
+
+// ==========================================================================
+// 社媒矩阵管理模块
+// ==========================================================================
+const mxState = {
+  matrices: [],
+  accounts: [],
+  videos: [],
+  profiles: [],
+  selectedId: null,
+};
+
+const mxEl = {
+  list: document.querySelector("#mx-list"),
+  addBtn: document.querySelector("#mx-add-btn"),
+  addForm: document.querySelector("#mx-add-form"),
+  name: document.querySelector("#mx-name"),
+  notes: document.querySelector("#mx-notes"),
+  confirm: document.querySelector("#mx-confirm"),
+  cancel: document.querySelector("#mx-cancel"),
+  currentName: document.querySelector("#mx-current-name"),
+  currentInfo: document.querySelector("#mx-current-info"),
+  addAccountBtn: document.querySelector("#mx-add-account-btn"),
+  addAccountForm: document.querySelector("#mx-add-account-form"),
+  accountPlatform: document.querySelector("#mx-account-platform"),
+  accountName: document.querySelector("#mx-account-name"),
+  confirmAccount: document.querySelector("#mx-confirm-account"),
+  cancelAccount: document.querySelector("#mx-cancel-account"),
+  accountsList: document.querySelector("#mx-accounts-list"),
+  refreshVideos: document.querySelector("#mx-refresh-videos"),
+  videosList: document.querySelector("#mx-videos-list"),
+  bindProfileBtn: document.querySelector("#mx-bind-profile-btn"),
+  bindProfileForm: document.querySelector("#mx-bind-profile-form"),
+  profileSelect: document.querySelector("#mx-profile-select"),
+  confirmBind: document.querySelector("#mx-confirm-bind"),
+  cancelBind: document.querySelector("#mx-cancel-bind"),
+  profilesList: document.querySelector("#mx-profiles-list"),
+};
+
+const PLATFORM_LABELS = { tiktok: "TikTok", instagram: "Instagram", youtube: "YouTube" };
+
+async function fetchMatrices() {
+  try {
+    const data = await request("/api/matrices");
+    mxState.matrices = Array.isArray(data) ? data : [];
+    renderMatrices();
+  } catch {}
+}
+
+function renderMatrices() {
+  if (!mxState.matrices.length) {
+    mxEl.list.innerHTML = '<div class="empty-state compact" style="padding: 16px;">点击 + 新建矩阵</div>';
+    return;
+  }
+  mxEl.list.innerHTML = mxState.matrices.map((m) => `
+    <div class="remix-creator-item ${mxState.selectedId === m.id ? "active" : ""}" data-id="${escapeHtml(m.id)}">
+      <div class="remix-creator-info">
+        <strong>${escapeHtml(m.name)}</strong>
+        <span>${m._count?.profiles || 0}实例 · ${m._count?.accounts || 0}账号 · ${m._count?.videos || 0}视频</span>
+      </div>
+      <button class="remix-del-btn" data-del-mx="${escapeHtml(m.id)}" title="删除">×</button>
+    </div>
+  `).join("");
+  mxEl.list.querySelectorAll("[data-id]").forEach((el) => {
+    el.addEventListener("click", (e) => {
+      if (e.target.dataset.delMx) return;
+      mxState.selectedId = el.dataset.id;
+      renderMatrices();
+      const m = mxState.matrices.find((x) => x.id === mxState.selectedId);
+      mxEl.currentName.textContent = m ? m.name : "";
+      mxEl.currentInfo.textContent = m ? `${m._count?.profiles || 0}实例 · ${m._count?.accounts || 0}账号 · ${m._count?.videos || 0}视频` : "";
+      mxEl.addAccountBtn.disabled = false;
+      mxEl.bindProfileBtn.disabled = false;
+      fetchMatrixProfiles(mxState.selectedId);
+      fetchMatrixAccounts(mxState.selectedId);
+      fetchMatrixVideos(mxState.selectedId);
+    });
+  });
+  mxEl.list.querySelectorAll("[data-del-mx]").forEach((btn) => {
+    btn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      if (!confirm("删除矩阵将同时删除其所有账号和成品视频，确认？")) return;
+      await request(`/api/matrices/${encodeURIComponent(btn.dataset.delMx)}`, { method: "DELETE" });
+      if (mxState.selectedId === btn.dataset.delMx) {
+        mxState.selectedId = null;
+        mxEl.currentName.textContent = "选择左侧矩阵查看详情";
+        mxEl.currentInfo.textContent = "";
+        mxEl.addAccountBtn.disabled = true;
+        mxEl.bindProfileBtn.disabled = true;
+        mxEl.accountsList.innerHTML = "";
+        mxEl.videosList.innerHTML = "";
+        mxEl.profilesList.innerHTML = "";
+      }
+      await fetchMatrices();
+    });
+  });
+}
+
+async function fetchMatrixProfiles(matrixId) {
+  try {
+    const data = await request(`/api/matrices/${encodeURIComponent(matrixId)}/profiles`);
+    mxState.profiles = Array.isArray(data) ? data : [];
+    renderMatrixProfiles();
+  } catch { mxState.profiles = []; renderMatrixProfiles(); }
+}
+
+function renderMatrixProfiles() {
+  if (!mxState.profiles.length) {
+    mxEl.profilesList.innerHTML = '<div class="empty-state compact">暂无绑定实例，点击"绑定实例"添加</div>';
+    return;
+  }
+  mxEl.profilesList.innerHTML = mxState.profiles.map((p) => `
+    <div class="matrix-profile-item">
+      <span class="matrix-profile-seq">#${escapeHtml(String(p.profileSeq ?? "?"))}</span>
+      <span class="matrix-profile-name">${escapeHtml(p.profileName || p.profileId)}</span>
+      <span class="matrix-profile-status ${p.profileRunning ? "status-running" : "status-stopped"}">${p.profileRunning ? "运行中" : "已停止"}</span>
+      <button class="remix-del-btn" data-unbind-profile="${escapeHtml(p.profileId)}" title="解绑">×</button>
+    </div>
+  `).join("");
+  mxEl.profilesList.querySelectorAll("[data-unbind-profile]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      await request(`/api/matrices/${encodeURIComponent(mxState.selectedId)}/profiles/${encodeURIComponent(btn.dataset.unbindProfile)}`, { method: "DELETE" });
+      await fetchMatrixProfiles(mxState.selectedId);
+      await fetchMatrices();
+      const m = mxState.matrices.find((x) => x.id === mxState.selectedId);
+      if (m) mxEl.currentInfo.textContent = `${m._count?.profiles || 0}实例 · ${m._count?.accounts || 0}账号 · ${m._count?.videos || 0}视频`;
+    });
+  });
+}
+
+async function fetchMatrixAccounts(matrixId) {
+  try {
+    const data = await request(`/api/matrices/${encodeURIComponent(matrixId)}/accounts`);
+    mxState.accounts = Array.isArray(data) ? data : [];
+    renderMatrixAccounts();
+  } catch { mxState.accounts = []; renderMatrixAccounts(); }
+}
+
+function renderMatrixAccounts() {
+  if (!mxState.accounts.length) {
+    mxEl.accountsList.innerHTML = '<div class="empty-state compact">暂无账号，点击"添加账号"</div>';
+    return;
+  }
+  mxEl.accountsList.innerHTML = mxState.accounts.map((a) => `
+    <div class="matrix-account-item">
+      <span class="matrix-account-platform platform-${escapeHtml(a.platform)}">${escapeHtml(PLATFORM_LABELS[a.platform] || a.platform)}</span>
+      <span class="matrix-account-name">${escapeHtml(a.accountName)}</span>
+      <button class="remix-del-btn" data-del-acc="${escapeHtml(a.id)}" title="删除">×</button>
+    </div>
+  `).join("");
+  mxEl.accountsList.querySelectorAll("[data-del-acc]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      await request(`/api/matrices/${encodeURIComponent(mxState.selectedId)}/accounts/${encodeURIComponent(btn.dataset.delAcc)}`, { method: "DELETE" });
+      await fetchMatrixAccounts(mxState.selectedId);
+      await fetchMatrices();
+    });
+  });
+}
+
+async function fetchMatrixVideos(matrixId) {
+  try {
+    const data = await request(`/api/matrices/${encodeURIComponent(matrixId)}/videos`);
+    mxState.videos = Array.isArray(data) ? data : [];
+    renderMatrixVideos();
+  } catch { mxState.videos = []; renderMatrixVideos(); }
+}
+
+function renderMatrixVideos() {
+  if (!mxState.videos.length) {
+    mxEl.videosList.innerHTML = '<div class="empty-state compact">暂无成品视频</div>';
+    return;
+  }
+  mxEl.videosList.innerHTML = mxState.videos.map((v) => `
+    <div class="matrix-video-item">
+      <div class="matrix-video-thumb">
+        <video src="${escapeHtml(v.filePath)}" muted preload="metadata"></video>
+      </div>
+      <div class="matrix-video-info">
+        <span class="matrix-video-title">${escapeHtml(v.title || v.filePath)}</span>
+        <span class="matrix-video-meta">${escapeHtml(v.creatorName || "—")} · ${formatDateTime(v.createdAt)}</span>
+      </div>
+      <div class="matrix-video-actions">
+        ${v.filePath ? `<a href="${escapeHtml(v.filePath)}" download class="button ${v.downloaded ? "button-secondary" : "button-primary"}" style="font-size:11px;padding:2px 8px;" data-mv-id="${escapeHtml(v.id)}">${v.downloaded ? "已下载 ✓" : "下载"}</a>` : ""}
+        <button class="remix-del-btn" data-del-mv="${escapeHtml(v.id)}" title="删除">×</button>
+      </div>
+    </div>
+  `).join("");
+  mxEl.videosList.querySelectorAll("[data-del-mv]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      await request(`/api/matrices/${encodeURIComponent(mxState.selectedId)}/videos`, { method: "DELETE", body: JSON.stringify({ videoId: btn.dataset.delMv }) });
+      await fetchMatrixVideos(mxState.selectedId);
+      await fetchMatrices();
+    });
+  });
+  mxEl.videosList.querySelectorAll("a[data-mv-id]").forEach((a) => {
+    a.addEventListener("click", async (e) => {
+      if (!a.dataset.mvId) return;
+      try {
+        await request(`/api/matrices/${encodeURIComponent(mxState.selectedId)}/videos/${encodeURIComponent(a.dataset.mvId)}/downloaded`, { method: "POST", body: "{}" });
+        const vid = mxState.videos.find((x) => x.id === a.dataset.mvId);
+        if (vid) vid.downloaded = true;
+        renderMatrixVideos();
+      } catch {}
+    });
+  });
+}
+
+mxEl.addBtn?.addEventListener("click", () => mxEl.addForm.classList.toggle("hidden"));
+mxEl.cancel?.addEventListener("click", () => { mxEl.addForm.classList.add("hidden"); mxEl.name.value = ""; mxEl.notes.value = ""; });
+mxEl.confirm?.addEventListener("click", async () => {
+  const name = mxEl.name.value.trim();
+  if (!name) return;
+  try {
+    const data = await request("/api/matrices", { method: "POST", body: JSON.stringify({ name, notes: mxEl.notes.value.trim() || null }) });
+    mxEl.addForm.classList.add("hidden");
+    mxEl.name.value = ""; mxEl.notes.value = "";
+    await fetchMatrices();
+    mxState.selectedId = data.id;
+    renderMatrices();
+    mxEl.currentName.textContent = data.name;
+    mxEl.currentInfo.textContent = "0实例 · 0账号 · 0视频";
+    mxEl.addAccountBtn.disabled = false;
+    mxEl.bindProfileBtn.disabled = false;
+    fetchMatrixProfiles(data.id);
+    fetchMatrixAccounts(data.id);
+    fetchMatrixVideos(data.id);
+  } catch (e) { showToast(e.message, true); }
+});
+
+mxEl.addAccountBtn?.addEventListener("click", () => mxEl.addAccountForm.classList.toggle("hidden"));
+mxEl.cancelAccount?.addEventListener("click", () => { mxEl.addAccountForm.classList.add("hidden"); mxEl.accountName.value = ""; });
+mxEl.confirmAccount?.addEventListener("click", async () => {
+  const platform = mxEl.accountPlatform.value;
+  const accountName = mxEl.accountName.value.trim();
+  if (!accountName || !mxState.selectedId) return;
+  try {
+    await request(`/api/matrices/${encodeURIComponent(mxState.selectedId)}/accounts`, {
+      method: "POST", body: JSON.stringify({ platform, accountName }),
+    });
+    mxEl.addAccountForm.classList.add("hidden");
+    mxEl.accountName.value = "";
+    await fetchMatrixAccounts(mxState.selectedId);
+    await fetchMatrices();
+    const m = mxState.matrices.find((x) => x.id === mxState.selectedId);
+    if (m) mxEl.currentInfo.textContent = `${m._count?.profiles || 0}实例 · ${m._count?.accounts || 0}账号 · ${m._count?.videos || 0}视频`;
+  } catch (e) { showToast(e.message, true); }
+});
+
+mxEl.refreshVideos?.addEventListener("click", () => {
+  if (mxState.selectedId) fetchMatrixVideos(mxState.selectedId);
+});
+
+// 实例绑定
+mxEl.bindProfileBtn?.addEventListener("click", async () => {
+  mxEl.bindProfileForm.classList.toggle("hidden");
+  if (!mxEl.bindProfileForm.classList.contains("hidden")) {
+    // 加载可用实例列表
+    try {
+      const res = await request("/api/profiles");
+      const allProfiles = res.profiles || [];
+      const boundIds = new Set(mxState.profiles.map((p) => p.profileId));
+      const available = allProfiles.filter((p) => !boundIds.has(p.id));
+      if (!available.length) {
+        mxEl.profileSelect.innerHTML = '<option value="">无可用实例</option>';
+      } else {
+        mxEl.profileSelect.innerHTML = available
+          .map((p) => `<option value="${escapeHtml(p.id)}">#${escapeHtml(String(p.seq))} ${escapeHtml(p.name)}</option>`)
+          .join("");
+      }
+    } catch { mxEl.profileSelect.innerHTML = '<option value="">加载失败</option>'; }
+  }
+});
+mxEl.cancelBind?.addEventListener("click", () => mxEl.bindProfileForm.classList.add("hidden"));
+mxEl.confirmBind?.addEventListener("click", async () => {
+  const profileId = mxEl.profileSelect.value;
+  if (!profileId || !mxState.selectedId) return;
+  try {
+    await request(`/api/matrices/${encodeURIComponent(mxState.selectedId)}/profiles`, {
+      method: "POST", body: JSON.stringify({ profileId }),
+    });
+    mxEl.bindProfileForm.classList.add("hidden");
+    await fetchMatrixProfiles(mxState.selectedId);
+    await fetchMatrices();
+    const m = mxState.matrices.find((x) => x.id === mxState.selectedId);
+    if (m) mxEl.currentInfo.textContent = `${m._count?.profiles || 0}实例 · ${m._count?.accounts || 0}账号 · ${m._count?.videos || 0}视频`;
+  } catch (e) { showToast(e.message, true); }
+});
+
+// ==========================================================================
+// 新建混剪任务弹框
+// ==========================================================================
+const modalState = {
+  matrices: [],
+  creators: [],
+  videos: [],
+  selectedMatrixIds: new Set(),
+  selectedCreatorId: null,
+  selectedVideoIds: new Set(),
+  mode: "stitch",
+};
+
+const modalEl = {
+  overlay: document.querySelector("#remix-task-modal"),
+  close: document.querySelector("#remix-task-modal-close"),
+  cancel: document.querySelector("#remix-task-cancel"),
+  start: document.querySelector("#remix-task-start"),
+  matrixList: document.querySelector("#modal-matrix-list"),
+  creatorList: document.querySelector("#modal-creator-list"),
+  videoList: document.querySelector("#modal-video-list"),
+  ratio: document.querySelector("#modal-ratio"),
+  aiConfig: document.querySelector("#modal-ai-config"),
+  cdpInstance: document.querySelector("#modal-cdp-instance"),
+  aiPrompt: document.querySelector("#modal-ai-prompt"),
+  modeStitchLabel: document.querySelector("#modal-mode-stitch-label"),
+  modeAiLabel: document.querySelector("#modal-mode-ai-label"),
+};
+
+async function openRemixTaskModal() {
+  modalEl.overlay.classList.remove("hidden");
+  modalState.selectedMatrixIds.clear();
+  modalState.selectedCreatorId = null;
+  modalState.selectedVideoIds.clear();
+  modalState.mode = "stitch";
+
+  // 重置模式选择为默认
+  document.querySelector('input[name="modal-mode"][value="stitch"]').checked = true;
+  modalEl.modeStitchLabel.classList.add("checked");
+  modalEl.modeAiLabel.classList.remove("checked");
+  modalEl.aiConfig.classList.add("hidden");
+
+  // 加载矩阵列表
+  try {
+    const data = await request("/api/matrices");
+    modalState.matrices = Array.isArray(data) ? data : [];
+  } catch { modalState.matrices = []; }
+  renderModalMatrices();
+
+  // 加载达人列表
+  try {
+    const data = await request("/api/remix/creators");
+    modalState.creators = Array.isArray(data) ? data : [];
+  } catch { modalState.creators = []; }
+  renderModalCreators();
+
+  // 加载 CDP 实例列表（用于 AI 模式）
+  try {
+    const res = await request("/api/cdp/instances");
+    const instances = res.instances || [];
+    modalEl.cdpInstance.innerHTML = instances.length
+      ? instances.map((i) => `<option value="${escapeHtml(i.id)}">${escapeHtml(i.name)} (${escapeHtml(i.cdpHost)}:${i.cdpPort})</option>`).join("")
+      : '<option value="">无可用实例</option>';
+  } catch {
+    modalEl.cdpInstance.innerHTML = '<option value="">加载失败</option>';
+  }
+
+  modalEl.videoList.innerHTML = '<div class="empty-state compact">请先选择达人</div>';
+  modalEl.start.disabled = true;
+}
+
+function renderModalMatrices() {
+  if (!modalState.matrices.length) {
+    modalEl.matrixList.innerHTML = '<div class="empty-state compact">暂无矩阵，请先创建</div>';
+    return;
+  }
+  modalEl.matrixList.innerHTML = modalState.matrices.map((m) => `
+    <label class="modal-check-item ${modalState.selectedMatrixIds.has(m.id) ? "checked" : ""}">
+      <input type="checkbox" value="${escapeHtml(m.id)}" ${modalState.selectedMatrixIds.has(m.id) ? "checked" : ""} />
+      <span>${escapeHtml(m.name)}</span>
+      <span class="muted-activity" style="font-size: 11px;">${m._count?.accounts || 0}账号</span>
+    </label>
+  `).join("");
+  modalEl.matrixList.querySelectorAll("input[type=checkbox]").forEach((cb) => {
+    cb.addEventListener("change", () => {
+      if (cb.checked) modalState.selectedMatrixIds.add(cb.value);
+      else modalState.selectedMatrixIds.delete(cb.value);
+      cb.closest("label").classList.toggle("checked", cb.checked);
+      updateModalStartBtn();
+    });
+  });
+}
+
+function renderModalCreators() {
+  if (!modalState.creators.length) {
+    modalEl.creatorList.innerHTML = '<div class="empty-state compact">暂无达人</div>';
+    return;
+  }
+  modalEl.creatorList.innerHTML = modalState.creators.map((c) => `
+    <label class="modal-radio-item ${modalState.selectedCreatorId === c.id ? "checked" : ""}">
+      <input type="radio" name="modal-creator" value="${escapeHtml(c.id)}" ${modalState.selectedCreatorId === c.id ? "checked" : ""} />
+      <span>${escapeHtml(c.name)}</span>
+      <span class="muted-activity" style="font-size: 11px;">${c._count?.videos || 0}视频 · ${c._count?.resources || 0}资源</span>
+    </label>
+  `).join("");
+  modalEl.creatorList.querySelectorAll("input[type=radio]").forEach((rb) => {
+    rb.addEventListener("change", async () => {
+      modalState.selectedCreatorId = rb.value;
+      modalState.selectedVideoIds.clear();
+      rb.closest("label").classList.add("checked");
+      modalEl.creatorList.querySelectorAll("label").forEach((l) => {
+        if (l !== rb.closest("label")) l.classList.remove("checked");
+      });
+      // 加载该达人的视频
+      try {
+        const data = await request(`/api/remix/creators/${encodeURIComponent(rb.value)}/videos`);
+        modalState.videos = Array.isArray(data) ? data : [];
+      } catch { modalState.videos = []; }
+      renderModalVideos();
+      updateModalStartBtn();
+    });
+  });
+}
+
+function renderModalVideos() {
+  if (!modalState.videos.length) {
+    modalEl.videoList.innerHTML = '<div class="empty-state compact">该达人暂无视频</div>';
+    return;
+  }
+  modalEl.videoList.innerHTML = modalState.videos.map((v) => {
+    const checked = modalState.selectedVideoIds.has(v.id);
+    return `
+      <label class="modal-check-item ${checked ? "checked" : ""}">
+        <input type="checkbox" value="${escapeHtml(v.id)}" ${checked ? "checked" : ""} />
+        <video src="${escapeHtml(v.url)}" muted preload="metadata" class="modal-video-thumb"></video>
+        <span>${escapeHtml(v.title || "未命名")}</span>
+        ${v.matrixLinks?.length ? `<span class="muted-activity" style="font-size: 10px;">已链接${v.matrixLinks.length}个矩阵</span>` : ""}
+      </label>
+    `;
+  }).join("");
+  modalEl.videoList.querySelectorAll("input[type=checkbox]").forEach((cb) => {
+    cb.addEventListener("change", () => {
+      if (cb.checked) modalState.selectedVideoIds.add(cb.value);
+      else modalState.selectedVideoIds.delete(cb.value);
+      cb.closest("label").classList.toggle("checked", cb.checked);
+      updateModalStartBtn();
+    });
+  });
+}
+
+function updateModalStartBtn() {
+  const baseReady = modalState.selectedMatrixIds.size > 0 && modalState.selectedCreatorId && modalState.selectedVideoIds.size > 0;
+  let aiReady = true;
+  if (modalState.mode === "ai") {
+    aiReady = !!modalEl.cdpInstance.value;
+  }
+  modalEl.start.disabled = !(baseReady && aiReady);
+}
+
+// 模式切换
+document.querySelectorAll('input[name="modal-mode"]').forEach((rb) => {
+  rb.addEventListener("change", () => {
+    modalState.mode = rb.value;
+    modalEl.modeStitchLabel.classList.toggle("checked", rb.value === "stitch");
+    modalEl.modeAiLabel.classList.toggle("checked", rb.value === "ai");
+    modalEl.aiConfig.classList.toggle("hidden", rb.value !== "ai");
+    updateModalStartBtn();
+  });
+});
+
+modalEl.cdpInstance?.addEventListener("change", updateModalStartBtn);
+
+modalEl.close?.addEventListener("click", () => modalEl.overlay.classList.add("hidden"));
+modalEl.cancel?.addEventListener("click", () => modalEl.overlay.classList.add("hidden"));
+
+modalEl.start?.addEventListener("click", async () => {
+  if (modalEl.start.disabled) return;
+  const matrixIds = [...modalState.selectedMatrixIds];
+  const creatorId = modalState.selectedCreatorId;
+  const videoIds = [...modalState.selectedVideoIds];
+  const ratio = modalEl.ratio.value;
+  const mode = modalState.mode;
+
+  try {
+    if (mode === "ai") {
+      // AI 混剪
+      const cdpInstanceId = modalEl.cdpInstance.value;
+      const prompt = modalEl.aiPrompt.value.trim();
+      if (!cdpInstanceId) { showToast("请选择 CDP 实例", true); return; }
+
+      // 检查 CDP 实例守护进程是否已启动
+      let daemonStatus = null;
+      try {
+        daemonStatus = await request(`/api/cdp/instances/${encodeURIComponent(cdpInstanceId)}/daemon-status`);
+      } catch {}
+      if (!daemonStatus?.running) {
+        showToast("该 CDP 实例的守护进程未启动，请先到「Chrome CDP」标签页启动守护进程", true);
+        return;
+      }
+
+      const res = await request("/api/remix/ai-remix-task", {
+        method: "POST",
+        body: JSON.stringify({ matrixIds, creatorId, videoIds, cdpInstanceId, prompt, ratio }),
+      });
+      modalEl.overlay.classList.add("hidden");
+      showToast(`已创建 ${res.count} 个 AI 混剪任务，正在处理…（预计需要较长时间）`);
+    } else {
+      // 素材直接拼接
+      const res = await request("/api/remix/matrix-task", {
+        method: "POST",
+        body: JSON.stringify({ matrixIds, creatorId, videoIds, ratio }),
+      });
+      modalEl.overlay.classList.add("hidden");
+      showToast(`已创建 ${res.count} 个混剪任务，正在处理…`);
+    }
+    await fetchRemixTasks();
+    if (remix.selectedCreatorId) {
+      await fetchRemixVideos(remix.selectedCreatorId);
+      await fetchRemixCreators();
+    }
   } catch (e) { showToast(e.message, true); }
 });
 fetchRemixCreators();

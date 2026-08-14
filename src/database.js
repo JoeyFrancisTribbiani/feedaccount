@@ -249,8 +249,70 @@ export class LocalDatabase {
         completed_at TEXT
       );
 
+      -- 达人专属资源表（开头片段 / 结尾片段 / 背景音乐）
+      CREATE TABLE IF NOT EXISTS remix_resources (
+        id TEXT PRIMARY KEY,
+        creator_id TEXT NOT NULL,
+        type TEXT NOT NULL,
+        file_path TEXT NOT NULL,
+        filename TEXT NOT NULL,
+        file_size INTEGER DEFAULT 0,
+        duration REAL,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (creator_id) REFERENCES remix_creators(id) ON DELETE CASCADE
+      );
+
       CREATE INDEX IF NOT EXISTS idx_remix_videos_creator ON remix_videos(creator_id);
       CREATE INDEX IF NOT EXISTS idx_remix_tasks_status ON remix_tasks(status);
+      CREATE INDEX IF NOT EXISTS idx_remix_resources_creator ON remix_resources(creator_id, type);
+
+      -- 社媒矩阵
+      CREATE TABLE IF NOT EXISTS media_matrices (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        notes TEXT,
+        created_at TEXT NOT NULL
+      );
+
+      -- 矩阵中的平台账号（每个矩阵每个平台只能有一个）
+      CREATE TABLE IF NOT EXISTS matrix_accounts (
+        id TEXT PRIMARY KEY,
+        matrix_id TEXT NOT NULL,
+        platform TEXT NOT NULL,
+        account_name TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (matrix_id) REFERENCES media_matrices(id) ON DELETE CASCADE,
+        UNIQUE (matrix_id, platform)
+      );
+
+      -- 矩阵成品视频库
+      CREATE TABLE IF NOT EXISTS matrix_videos (
+        id TEXT PRIMARY KEY,
+        matrix_id TEXT NOT NULL,
+        source_video_id TEXT,
+        creator_id TEXT,
+        file_path TEXT NOT NULL,
+        title TEXT,
+        duration REAL,
+        downloaded INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (matrix_id) REFERENCES media_matrices(id) ON DELETE CASCADE
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_matrix_accounts_matrix ON matrix_accounts(matrix_id);
+      CREATE INDEX IF NOT EXISTS idx_matrix_videos_matrix ON matrix_videos(matrix_id);
+
+      -- 矩阵与指纹浏览器实例绑定（每个矩阵可绑定多个实例）
+      CREATE TABLE IF NOT EXISTS matrix_profiles (
+        id TEXT PRIMARY KEY,
+        matrix_id TEXT NOT NULL,
+        profile_id TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (matrix_id) REFERENCES media_matrices(id) ON DELETE CASCADE,
+        UNIQUE (matrix_id, profile_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_matrix_profiles_matrix ON matrix_profiles(matrix_id);
 
       CREATE TABLE IF NOT EXISTS reddit_accounts (
         id TEXT PRIMARY KEY,
@@ -1386,12 +1448,15 @@ export class LocalDatabase {
 
   listRemixCreators() {
     const rows = this.db.prepare(`
-      SELECT c.*, (SELECT COUNT(*) FROM remix_videos v WHERE v.creator_id = c.id) AS video_count
+      SELECT c.*,
+        (SELECT COUNT(*) FROM remix_videos v WHERE v.creator_id = c.id) AS video_count,
+        (SELECT COUNT(*) FROM remix_resources r WHERE r.creator_id = c.id) AS resource_count
       FROM remix_creators c ORDER BY c.created_at DESC
     `).all();
     return rows.map((r) => ({
       id: r.id, name: r.name, platform: r.platform, avatar: r.avatar,
-      createdAt: r.created_at, _count: { videos: Number(r.video_count || 0) },
+      createdAt: r.created_at,
+      _count: { videos: Number(r.video_count || 0), resources: Number(r.resource_count || 0) },
     }));
   }
 
@@ -1402,7 +1467,175 @@ export class LocalDatabase {
 
   deleteRemixCreator(id) {
     this.db.prepare(`DELETE FROM remix_videos WHERE creator_id = ?`).run(id);
+    this.db.prepare(`DELETE FROM remix_resources WHERE creator_id = ?`).run(id);
     return this.db.prepare(`DELETE FROM remix_creators WHERE id = ?`).run(id).changes;
+  }
+
+  // --- Remix 达人资源管理 ---
+  createRemixResource({ creatorId, type, filePath, filename, fileSize = 0, duration = null }) {
+    const id = `rr_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const ts = nowIso();
+    this.db.prepare(`
+      INSERT INTO remix_resources (id, creator_id, type, file_path, filename, file_size, duration, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, creatorId, type, filePath, filename, fileSize, duration, ts);
+    return this.getRemixResource(id);
+  }
+
+  listRemixResources(creatorId, type = null) {
+    const rows = type
+      ? this.db.prepare(`SELECT * FROM remix_resources WHERE creator_id = ? AND type = ? ORDER BY created_at DESC`).all(creatorId, type)
+      : this.db.prepare(`SELECT * FROM remix_resources WHERE creator_id = ? ORDER BY created_at DESC`).all(creatorId);
+    return rows.map((r) => ({
+      id: r.id, creatorId: r.creator_id, type: r.type,
+      filePath: r.file_path, filename: r.filename,
+      fileSize: r.file_size, duration: r.duration, createdAt: r.created_at,
+    }));
+  }
+
+  getRemixResource(id) {
+    const row = this.db.prepare(`SELECT * FROM remix_resources WHERE id = ?`).get(id);
+    return row ? {
+      id: row.id, creatorId: row.creator_id, type: row.type,
+      filePath: row.file_path, filename: row.filename,
+      fileSize: row.file_size, duration: row.duration, createdAt: row.created_at,
+    } : null;
+  }
+
+  deleteRemixResource(id) {
+    const row = this.getRemixResource(id);
+    this.db.prepare(`DELETE FROM remix_resources WHERE id = ?`).run(id);
+    return row;
+  }
+
+  // --- 社媒矩阵管理 ---
+  createMatrix({ name, notes = null }) {
+    const id = `mx_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const ts = nowIso();
+    this.db.prepare(`INSERT INTO media_matrices (id, name, notes, created_at) VALUES (?, ?, ?, ?)`).run(id, name, notes, ts);
+    return this.getMatrix(id);
+  }
+
+  listMatrices() {
+    const rows = this.db.prepare(`
+      SELECT m.*,
+        (SELECT COUNT(*) FROM matrix_accounts a WHERE a.matrix_id = m.id) AS account_count,
+        (SELECT COUNT(*) FROM matrix_videos v WHERE v.matrix_id = m.id) AS video_count,
+        (SELECT COUNT(*) FROM matrix_profiles p WHERE p.matrix_id = m.id) AS profile_count
+      FROM media_matrices m ORDER BY m.created_at DESC
+    `).all();
+    return rows.map((r) => ({
+      id: r.id, name: r.name, notes: r.notes, createdAt: r.created_at,
+      _count: { accounts: Number(r.account_count || 0), videos: Number(r.video_count || 0), profiles: Number(r.profile_count || 0) },
+    }));
+  }
+
+  getMatrix(id) {
+    const row = this.db.prepare(`SELECT * FROM media_matrices WHERE id = ?`).get(id);
+    return row ? { id: row.id, name: row.name, notes: row.notes, createdAt: row.created_at } : null;
+  }
+
+  deleteMatrix(id) {
+    this.db.prepare(`DELETE FROM matrix_accounts WHERE matrix_id = ?`).run(id);
+    this.db.prepare(`DELETE FROM matrix_videos WHERE matrix_id = ?`).run(id);
+    this.db.prepare(`DELETE FROM matrix_profiles WHERE matrix_id = ?`).run(id);
+    return this.db.prepare(`DELETE FROM media_matrices WHERE id = ?`).run(id).changes;
+  }
+
+  // --- 矩阵-实例绑定管理 ---
+  bindMatrixProfile({ matrixId, profileId }) {
+    const id = `mp_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const ts = nowIso();
+    this.db.prepare(`INSERT OR IGNORE INTO matrix_profiles (id, matrix_id, profile_id, created_at) VALUES (?, ?, ?, ?)`).run(id, matrixId, profileId, ts);
+    return this.getMatrixProfiles(matrixId);
+  }
+
+  unbindMatrixProfile(matrixId, profileId) {
+    this.db.prepare(`DELETE FROM matrix_profiles WHERE matrix_id = ? AND profile_id = ?`).run(matrixId, profileId);
+    return this.getMatrixProfiles(matrixId);
+  }
+
+  getMatrixProfiles(matrixId) {
+    const rows = this.db.prepare(`SELECT * FROM matrix_profiles WHERE matrix_id = ? ORDER BY created_at ASC`).all(matrixId);
+    return rows.map((r) => ({
+      id: r.id, matrixId: r.matrix_id, profileId: r.profile_id, createdAt: r.created_at,
+    }));
+  }
+
+  // --- 矩阵账号管理 ---
+  createMatrixAccount({ matrixId, platform, accountName }) {
+    const id = `ma_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const ts = nowIso();
+    this.db.prepare(`INSERT INTO matrix_accounts (id, matrix_id, platform, account_name, created_at) VALUES (?, ?, ?, ?, ?)`).run(id, matrixId, platform, accountName, ts);
+    return this.getMatrixAccount(id);
+  }
+
+  listMatrixAccounts(matrixId) {
+    const rows = this.db.prepare(`SELECT * FROM matrix_accounts WHERE matrix_id = ? ORDER BY created_at ASC`).all(matrixId);
+    return rows.map((r) => ({
+      id: r.id, matrixId: r.matrix_id, platform: r.platform,
+      accountName: r.account_name, createdAt: r.created_at,
+    }));
+  }
+
+  deleteMatrixAccount(id) {
+    return this.db.prepare(`DELETE FROM matrix_accounts WHERE id = ?`).run(id).changes;
+  }
+
+  // --- 矩阵成品视频管理 ---
+  createMatrixVideo({ matrixId, sourceVideoId = null, creatorId = null, filePath, title = null, duration = null }) {
+    const id = `mv_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const ts = nowIso();
+    this.db.prepare(`
+      INSERT INTO matrix_videos (id, matrix_id, source_video_id, creator_id, file_path, title, duration, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, matrixId, sourceVideoId, creatorId, filePath, title, duration, ts);
+    return this.getMatrixVideo(id);
+  }
+
+  listMatrixVideos(matrixId) {
+    const rows = this.db.prepare(`
+      SELECT v.*, c.name AS creator_name
+      FROM matrix_videos v
+      LEFT JOIN remix_creators c ON c.id = v.creator_id
+      WHERE v.matrix_id = ?
+      ORDER BY v.created_at DESC
+    `).all(matrixId);
+    return rows.map((r) => ({
+      id: r.id, matrixId: r.matrix_id, sourceVideoId: r.source_video_id,
+      creatorId: r.creator_id, creatorName: r.creator_name,
+      filePath: r.file_path, title: r.title, duration: r.duration,
+      downloaded: Boolean(r.downloaded), createdAt: r.created_at,
+    }));
+  }
+
+  getMatrixVideo(id) {
+    const row = this.db.prepare(`SELECT * FROM matrix_videos WHERE id = ?`).get(id);
+    return row ? {
+      id: row.id, matrixId: row.matrix_id, sourceVideoId: row.source_video_id,
+      creatorId: row.creator_id, filePath: row.file_path, title: row.title,
+      duration: row.duration, downloaded: Boolean(row.downloaded), createdAt: row.created_at,
+    } : null;
+  }
+
+  markMatrixVideoDownloaded(id) {
+    this.db.prepare(`UPDATE matrix_videos SET downloaded = 1 WHERE id = ?`).run(id);
+    return this.getMatrixVideo(id);
+  }
+
+  deleteMatrixVideo(id) {
+    return this.db.prepare(`DELETE FROM matrix_videos WHERE id = ?`).run(id).changes;
+  }
+
+  // 查询某个达人视频被链接到了哪些矩阵
+  getMatrixLinksForVideo(videoId) {
+    const rows = this.db.prepare(`
+      SELECT v.matrix_id, m.name AS matrix_name
+      FROM matrix_videos v
+      JOIN media_matrices m ON m.id = v.matrix_id
+      WHERE v.source_video_id = ?
+    `).all(videoId);
+    return rows.map((r) => ({ matrixId: r.matrix_id, matrixName: r.matrix_name }));
   }
 
   // --- Remix 视频管理 ---

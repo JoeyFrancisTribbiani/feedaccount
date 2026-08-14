@@ -1269,6 +1269,7 @@ export class JobManager extends EventEmitter {
         "auto_join_error",
         { subreddit: target, error: error.message },
       );
+      job.joinTargetIndex += 1;
       job.lastJoinAt = Date.now();
       job.nextJoinDelay = this.randomInteger(
         job.options.autoJoinIntervalMinMs,

@@ -390,12 +390,6 @@ async function chatgptUploadFile(filePath, opts = {}) {
   if (!existsSync(filePath)) throw new Error(`文件不存在: ${filePath}`)
 
   await dismissModal()
-  const alreadyAttached = await page.evaluate(() => document.querySelectorAll('[class*="file-tile"]').length > 0)
-  if (alreadyAttached) {
-    log('文件已挂载在 composer 中，跳过上传')
-    await dismissModal()
-    return { ok: true, method: 'already-attached' }
-  }
 
   const plusBtnSelectors = [
     'button[data-testid="composer-plus-btn"]',
@@ -694,9 +688,165 @@ async function handleChatGptChat(taskNo, params) {
   })
 }
 
+/**
+ * ChatGPT AI 视频混剪任务
+ * 上传多个文件（原视频+开头音频+结尾音频+提示词txt）→ 发送 → 等待 → 提取视频链接 → 下载
+ */
+async function handleChatGptAiRemix(taskNo, params) {
+  const { prompt, fileIds = [], options = {} } = params
+  const responseTimeout = options.responseTimeout || 1800000
+
+  if (!fileIds.length) throw new Error('fileIds is required')
+
+  // 解析所有文件路径
+  const filePaths = []
+  for (const fileId of fileIds) {
+    const record = fileStore.get(fileId)
+    if (!record) throw new Error(`File not found: ${fileId}`)
+    filePaths.push(record.localPath)
+  }
+
+  taskStore.set(taskNo, { status: 'running', outputs: [], error: null, progress: '5%', startedAt: Date.now() })
+
+  log(`=== 开始 ChatGPT AI 视频混剪 (taskNo=${taskNo}) ===`)
+  log(`文件数: ${filePaths.length}`)
+
+  await ensureConnection()
+
+  // Step 0: 导航到新对话
+  log('Step 0: 导航到新对话...')
+  await dismissModal()
+  await page.goto(CHATGPT_URL, { waitUntil: 'domcontentloaded', timeout: 15000 })
+  await page.waitForTimeout(3000)
+  for (let i = 0; i < 3; i++) { await dismissModal(); await page.waitForTimeout(1000) }
+
+  taskStore.set(taskNo, { status: 'running', outputs: [], error: null, progress: '15%', startedAt: taskStore.get(taskNo).startedAt })
+
+  // Step 1: 依次上传所有文件
+  for (let i = 0; i < filePaths.length; i++) {
+    log(`Step 1.${i + 1}: 上传文件 ${i + 1}/${filePaths.length}: ${filePaths[i]}`)
+    await chatgptUploadFile(filePaths[i])
+    await dismissModal()
+    await page.waitForTimeout(2000)
+    // 重置 already-attached 检测——上传后 file-tile 会增加，下一个文件需要重新触发上传
+    // chatgptUploadFile 内部会检查 file-tile 数量，如果已有附件会跳过
+    // 所以这里需要在每次上传后清除已有的 file-tile 标记，让下次上传继续
+    // 实际上 ChatGPT 的 file-tile 计数会增加，alreadyAttached 检测会误判
+    // 修改：通过 page.evaluate 检查当前 file-tile 数量是否等于已上传数量
+  }
+
+  taskStore.set(taskNo, { status: 'running', outputs: [], error: null, progress: '40%', startedAt: taskStore.get(taskNo).startedAt })
+
+  // Step 2: 发送提示词
+  log('Step 2: 发送提示词...')
+  const promptText = prompt || '请根据上传的文件生成混剪视频'
+  await chatgptSendMessageWithFile(promptText)
+
+  taskStore.set(taskNo, { status: 'running', outputs: [], error: null, progress: '50%', startedAt: taskStore.get(taskNo).startedAt })
+
+  // Step 3: 等待回复
+  log('Step 3: 等待 ChatGPT 回复...')
+  const response = await chatgptWaitForResponse({
+    timeout: responseTimeout,
+    pollInterval: 3000,
+    stableCount: 5,
+    minResponseLength: 50,
+  })
+
+  taskStore.set(taskNo, { status: 'running', outputs: [], error: null, progress: '80%', startedAt: taskStore.get(taskNo).startedAt })
+
+  if (!response.ok) {
+    taskStore.set(taskNo, {
+      status: 'failed', outputs: [], error: 'ChatGPT 回复超时或失败',
+      progress: '100%', startedAt: taskStore.get(taskNo).startedAt, completedAt: Date.now(),
+    })
+    return
+  }
+
+  log(`回复长度: ${response.text.length} 字符`)
+
+  // Step 4: 从回复中提取视频下载链接
+  log('Step 4: 提取视频下载链接...')
+  const videoLinks = extractVideoLinks(response.text)
+
+  if (!videoLinks.length) {
+    log('未找到视频下载链接，保存回复文本')
+    taskStore.set(taskNo, {
+      status: 'completed', outputs: [{ type: 'text', content: response.text }],
+      error: null, progress: '100%',
+      startedAt: taskStore.get(taskNo).startedAt, completedAt: Date.now(),
+    })
+    return
+  }
+
+  log(`找到 ${videoLinks.length} 个视频链接: ${videoLinks.join(', ')}`)
+
+  // Step 5: 下载视频文件
+  const outputs = [{ type: 'text', content: response.text }]
+  for (let i = 0; i < videoLinks.length; i++) {
+    const link = videoLinks[i]
+    log(`Step 5.${i + 1}: 下载视频 ${i + 1}/${videoLinks.length}: ${link}`)
+    try {
+      const downloadResult = await downloadFile(link, OUTPUTS_DIR, `ai-remix-${taskNo}-${i + 1}.mp4`)
+      outputs.push({ type: 'file', filename: downloadResult.filename, url: `/outputs/${downloadResult.filename}`, originalUrl: link })
+      log(`视频已下载: ${downloadResult.filename} (${downloadResult.size} bytes)`)
+    } catch (err) {
+      logErr(`下载视频失败: ${link} - ${err.message}`)
+      outputs.push({ type: 'error', url: link, error: err.message })
+    }
+  }
+
+  taskStore.set(taskNo, {
+    status: 'completed', outputs, error: null, progress: '100%',
+    startedAt: taskStore.get(taskNo).startedAt, completedAt: Date.now(),
+  })
+  log('=== AI 视频混剪完成 ===')
+}
+
+/**
+ * 从文本中提取视频下载链接
+ */
+function extractVideoLinks(text) {
+  const links = []
+  // 匹配沙盒下载链接（oaiusercontent.com, chatgpt.com/ddm/files 等）
+  const patterns = [
+    /https?:\/\/[^\s"'<>]+\.mp4/gi,
+    /https?:\/\/oaiusercontent\.com[^\s"'<>]+/gi,
+    /https?:\/\/[^\s"'<>]*sandbox[^\s"'<>]+/gi,
+    /https?:\/\/[^\s"'<>]*chatgpt\.com\/ddm\/files[^\s"'<>]*/gi,
+    /https?:\/\/files\.oaiusercontent\.com[^\s"'<>]+/gi,
+    /https?:\/\/cdn\.openai\.com[^\s"'<>]+\.mp4/gi,
+    /https?:\/\/[^\s"'<>]*download[^\s"'<>]*/gi,
+  ]
+  const found = new Set()
+  for (const pattern of patterns) {
+    const matches = text.match(pattern)
+    if (matches) for (const m of matches) found.add(m.replace(/[.,;!?)]+$/, ''))
+  }
+  return [...found]
+}
+
+/**
+ * 下载文件到本地
+ */
+async function downloadFile(url, destDir, filename) {
+  const { writeFile } = await import('fs/promises')
+  mkdirSync(destDir, { recursive: true })
+  const destPath = join(destDir, filename)
+
+  const response = await fetch(url, { redirect: 'follow' })
+  if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+
+  const buffer = Buffer.from(await response.arrayBuffer())
+  await writeFile(destPath, buffer)
+
+  return { filename, path: destPath, size: buffer.length }
+}
+
 // 注册任务处理器
 registerTaskHandler('chatgpt-analyze-video', handleChatGptAnalyzeVideo)
 registerTaskHandler('chatgpt-chat', handleChatGptChat)
+registerTaskHandler('chatgpt-ai-remix', handleChatGptAiRemix)
 
 // ===== HTTP 路由 =====
 async function handleRequest(req, res) {

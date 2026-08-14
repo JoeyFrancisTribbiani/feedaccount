@@ -8,6 +8,7 @@ data/*.db-wal
 data/remix-videos/
 data/remix-output/
 data/remix-tmp/
+data/remix-resources/
 src/chrome-cdp-daemon/tmp/
 src/chrome-cdp-daemon/outputs/
 src/chrome-cdp-daemon/node_modules/

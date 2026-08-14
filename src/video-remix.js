@@ -365,4 +365,136 @@ export async function stitchVideos(inputPaths, ratio = null, options = {}) {
   }
 }
 
+/**
+ * 混剪视频：去重原视频 → 拼接 intro + 去重视频 + outro → 叠加背景音乐(8%音量)
+ * @param {string} inputPath - 原视频路径
+ * @param {object} resources - { introPath, outroPath, musicPath } 每项可为 null
+ * @param {string|null} ratio - 目标比例
+ * @param {object} options - { preset }
+ * @returns {Promise<string>} 输出文件路径
+ */
+export async function remixVideoWithResources(inputPath, resources = {}, ratio = null, options = {}) {
+  const { introPath = null, outroPath = null, musicPath = null } = resources;
+  const id = genId();
+  const tempPaths = [];
+
+  try {
+    // 1. 先对原视频去重
+    const meta = await probeVideo(inputPath);
+    if (!meta) throw new Error("无法读取原视频信息");
+    const dedupedPath = path.join(TEMP_DIR, `remix_deduped_${id}.mp4`);
+    await processSingleVideo(inputPath, dedupedPath, meta, { ...options, ratio });
+    tempPaths.push(dedupedPath);
+
+    // 2. 收集需要拼接的片段（intro + 去重视频 + outro）
+    const segments = [];
+    if (introPath && existsSync(introPath)) {
+      const introMeta = await probeVideo(introPath);
+      if (introMeta) {
+        const introNorm = path.join(TEMP_DIR, `remix_intro_${id}.mp4`);
+        await normalizeSegment(introPath, introNorm, meta, ratio);
+        segments.push(introNorm);
+        tempPaths.push(introNorm);
+      }
+    }
+    segments.push(dedupedPath);
+    if (outroPath && existsSync(outroPath)) {
+      const outroMeta = await probeVideo(outroPath);
+      if (outroMeta) {
+        const outroNorm = path.join(TEMP_DIR, `remix_outro_${id}.mp4`);
+        await normalizeSegment(outroPath, outroNorm, meta, ratio);
+        segments.push(outroNorm);
+        tempPaths.push(outroNorm);
+      }
+    }
+
+    // 3. 拼接
+    const concatenatedPath = path.join(TEMP_DIR, `remix_concat_${id}.mp4`);
+    if (segments.length > 1) {
+      await concatVideos(segments, concatenatedPath);
+      tempPaths.push(concatenatedPath);
+    } else {
+      concatenatedPath = dedupedPath;
+    }
+
+    // 4. 叠加背景音乐
+    const baseName = path.basename(inputPath, path.extname(inputPath));
+    const cleanName = baseName.startsWith("remix_") ? baseName.slice(6) : baseName;
+    const outputPath = path.join(OUTPUT_DIR, `remix_${cleanName}_${id}.mp4`);
+
+    if (musicPath && existsSync(musicPath)) {
+      await mixBackgroundMusic(concatenatedPath, musicPath, outputPath);
+    } else {
+      const { copyFile } = await import("node:fs/promises");
+      await copyFile(concatenatedPath, outputPath);
+    }
+
+    return outputPath;
+  } finally {
+    for (const p of tempPaths) {
+      try { await unlink(p); } catch {}
+    }
+  }
+}
+
+/** 将 intro/outro 片段归一化到与主视频相同的分辨率和帧率 */
+async function normalizeSegment(inputPath, outputPath, mainVideoMeta, ratio = null) {
+  const meta = await probeVideo(inputPath);
+  if (!meta) throw new Error("无法读取片段信息");
+
+  let targetW = mainVideoMeta.width;
+  let targetH = mainVideoMeta.height;
+  if (ratio && RATIO_MAP[ratio]) {
+    targetW = RATIO_MAP[ratio].w;
+    targetH = RATIO_MAP[ratio].h;
+  }
+
+  const args = [
+    "-i", inputPath,
+    "-vf", `scale=${targetW}:${targetH}:flags=bicubic,format=yuv420p,fps=${Math.round(mainVideoMeta.fps)}`,
+    "-c:v", "libx264", "-crf", "23", "-preset", "veryfast",
+    "-pix_fmt", "yuv420p", "-movflags", "+faststart",
+    "-c:a", "aac", "-b:a", "128k",
+    "-y", outputPath,
+  ];
+  await runFfmpeg(args);
+}
+
+/** 将背景音乐混入视频，音乐音量 8% */
+async function mixBackgroundMusic(videoPath, musicPath, outputPath) {
+  const videoMeta = await probeVideo(videoPath);
+  const musicMeta = await probeVideo(musicPath);
+  const duration = videoMeta?.duration || 0;
+  const hasVideoAudio = videoMeta?.hasAudio;
+
+  const args = [
+    "-i", videoPath,
+    "-i", musicPath,
+  ];
+
+  // 如果视频有原声音轨，保留原声 + 叠加背景音乐
+  if (hasVideoAudio) {
+    args.push(
+      "-filter_complex",
+      `[0:a]volume=1.0[a0];[1:a]volume=0.08,atrim=duration=${duration.toFixed(3)}[a1];[a0][a1]amix=inputs=2:duration=first:dropout_transition=0[aout]`,
+      "-map", "0:v", "-map", "[aout]",
+    );
+  } else {
+    // 视频没有原声音轨，只有背景音乐
+    args.push(
+      "-filter_complex",
+      `[1:a]volume=0.08,atrim=duration=${duration.toFixed(3)}[aout]`,
+      "-map", "0:v", "-map", "[aout]",
+    );
+  }
+
+  args.push(
+    "-c:v", "libx264", "-crf", "23", "-preset", "veryfast",
+    "-pix_fmt", "yuv420p", "-movflags", "+faststart",
+    "-c:a", "aac", "-b:a", "128k",
+    "-shortest", "-y", outputPath,
+  );
+  await runFfmpeg(args);
+}
+
 export { probeVideo, OUTPUT_DIR };
