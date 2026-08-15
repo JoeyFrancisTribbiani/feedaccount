@@ -379,14 +379,11 @@ export async function remixVideoWithResources(inputPath, resources = {}, ratio =
   const tempPaths = [];
 
   try {
-    // 1. 先对原视频去重
+    // 1. 读取原视频信息（不做去重，直接使用原视频）
     const meta = await probeVideo(inputPath);
     if (!meta) throw new Error("无法读取原视频信息");
-    const dedupedPath = path.join(TEMP_DIR, `remix_deduped_${id}.mp4`);
-    await processSingleVideo(inputPath, dedupedPath, meta, { ...options, ratio });
-    tempPaths.push(dedupedPath);
 
-    // 2. 收集需要拼接的片段（intro + 去重视频 + outro）
+    // 2. 收集需要拼接的片段（intro + 原视频 + outro）
     const segments = [];
     if (introPath && existsSync(introPath)) {
       const introMeta = await probeVideo(introPath);
@@ -397,7 +394,7 @@ export async function remixVideoWithResources(inputPath, resources = {}, ratio =
         tempPaths.push(introNorm);
       }
     }
-    segments.push(dedupedPath);
+    segments.push(inputPath);
     if (outroPath && existsSync(outroPath)) {
       const outroMeta = await probeVideo(outroPath);
       if (outroMeta) {
