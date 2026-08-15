@@ -4552,7 +4552,7 @@ function renderModalVideos() {
     return `
       <label class="modal-check-item ${checked ? "checked" : ""}">
         <input type="checkbox" value="${escapeHtml(v.id)}" ${checked ? "checked" : ""} />
-        <video src="${escapeHtml(v.url)}" muted preload="metadata" class="modal-video-thumb"></video>
+        <video src="${escapeHtml(v.url)}#t=0.1" muted preload="metadata" class="modal-video-thumb"></video>
         <span>${escapeHtml(v.title || "未命名")}</span>
         ${v.matrixLinks?.length ? `<span class="muted-activity" style="font-size: 10px;">已链接${v.matrixLinks.length}个矩阵</span>` : ""}
       </label>

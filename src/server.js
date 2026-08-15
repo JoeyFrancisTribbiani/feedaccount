@@ -1281,7 +1281,7 @@ export function createMonitorServer({
         return;
       }
 
-      if (pathname.startsWith("/api/")) {
+      if (pathname.startsWith("/api/") && !pathname.startsWith("/api/matrices") && !pathname.startsWith("/api/ai-presets")) {
         // ---- Remix: 达人管理 ----
         if (request.method === "GET" && pathname === "/api/remix/creators") {
           sendJson(response, 200, store.listRemixCreators());
