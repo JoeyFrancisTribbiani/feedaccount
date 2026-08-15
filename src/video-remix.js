@@ -486,8 +486,8 @@ async function mixBackgroundMusic(videoPath, musicPath, outputPath) {
   }
 
   args.push(
-    "-c:v", "libx264", "-crf", "23", "-preset", "veryfast",
-    "-pix_fmt", "yuv420p", "-movflags", "+faststart",
+    "-c:v", "copy",
+    "-movflags", "+faststart",
     "-c:a", "aac", "-b:a", "128k",
     "-shortest", "-y", outputPath,
   );
