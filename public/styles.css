@@ -1047,6 +1047,18 @@ textarea:focus-visible {
   box-shadow: 0 3px 12px rgba(79, 70, 229, 0.3);
 }
 
+.platform-tab.active[data-platform="scheduler"] {
+  background: var(--green-dark, #047857);
+  color: #ffffff;
+  box-shadow: 0 3px 12px rgba(4, 120, 87, 0.3);
+}
+
+.platform-tab.active[data-platform="matrix"] {
+  background: #6366f1;
+  color: #ffffff;
+  box-shadow: 0 3px 12px rgba(99, 102, 241, 0.3);
+}
+
 /* ==========================================================================
    Workspace Grid (.workspace-grid)
    ========================================================================== */
