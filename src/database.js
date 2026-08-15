@@ -324,6 +324,18 @@ export class LocalDatabase {
         updated_at TEXT NOT NULL
       );
 
+      -- 方案变量绑定的文件（每个变量对应一个固定文件）
+      CREATE TABLE IF NOT EXISTS ai_preset_files (
+        id TEXT PRIMARY KEY,
+        preset_id TEXT NOT NULL,
+        var_name TEXT NOT NULL,
+        file_path TEXT NOT NULL,
+        filename TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (preset_id) REFERENCES ai_remix_presets(id) ON DELETE CASCADE,
+        UNIQUE (preset_id, var_name)
+      );
+
       CREATE TABLE IF NOT EXISTS reddit_accounts (
         id TEXT PRIMARY KEY,
         profile_id TEXT NOT NULL UNIQUE,
@@ -1664,6 +1676,7 @@ export class LocalDatabase {
     return rows.map((r) => ({
       id: r.id, name: r.name, prompt: r.prompt,
       isDefault: Boolean(r.is_default), createdAt: r.created_at, updatedAt: r.updated_at,
+      files: this.getPresetFiles(r.id),
     }));
   }
 
@@ -1672,6 +1685,7 @@ export class LocalDatabase {
     return row ? {
       id: row.id, name: row.name, prompt: row.prompt,
       isDefault: Boolean(row.is_default), createdAt: row.created_at, updatedAt: row.updated_at,
+      files: this.getPresetFiles(id),
     } : null;
   }
 
@@ -1697,7 +1711,32 @@ export class LocalDatabase {
   }
 
   deleteAiRemixPreset(id) {
+    this.db.prepare(`DELETE FROM ai_preset_files WHERE preset_id = ?`).run(id);
     return this.db.prepare(`DELETE FROM ai_remix_presets WHERE id = ?`).run(id).changes;
+  }
+
+  // --- 方案变量文件管理 ---
+  upsertPresetFile({ presetId, varName, filePath, filename }) {
+    const id = `pf_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const ts = nowIso();
+    this.db.prepare(`
+      INSERT INTO ai_preset_files (id, preset_id, var_name, file_path, filename, created_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(preset_id, var_name) DO UPDATE SET file_path = excluded.file_path, filename = excluded.filename
+    `).run(id, presetId, varName, filePath, filename, ts);
+    return this.getPresetFiles(presetId);
+  }
+
+  getPresetFiles(presetId) {
+    const rows = this.db.prepare(`SELECT * FROM ai_preset_files WHERE preset_id = ? ORDER BY var_name ASC`).all(presetId);
+    return rows.map((r) => ({
+      id: r.id, presetId: r.preset_id, varName: r.var_name,
+      filePath: r.file_path, filename: r.filename, createdAt: r.created_at,
+    }));
+  }
+
+  deletePresetFile(presetId, varName) {
+    return this.db.prepare(`DELETE FROM ai_preset_files WHERE preset_id = ? AND var_name = ?`).run(presetId, varName).changes;
   }
 
   // --- Remix 视频管理 ---

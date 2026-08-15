@@ -4280,6 +4280,46 @@ footer span {
   display: flex;
   gap: 8px;
 }
+
+/* 方案变量文件绑定 */
+.preset-form-vars {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.preset-var-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: var(--surface, #fff);
+  border: 1px solid var(--line, #e2e8f0);
+  border-radius: var(--radius-xs, 6px);
+}
+.preset-var-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--indigo, #4f46e5);
+  min-width: 80px;
+}
+.preset-var-input {
+  font-size: 12px;
+  max-width: 200px;
+}
+.preset-var-filename {
+  font-size: 11px;
+  color: var(--text-muted, #64748b);
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.preset-var-bound {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--green-dark, #047857);
+  flex-shrink: 0;
+}
 .preset-list {
   display: flex;
   flex-direction: column;

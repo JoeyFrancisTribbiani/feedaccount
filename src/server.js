@@ -1433,7 +1433,7 @@ export function createMonitorServer({
         // ---- Remix: AI 自动视频混剪任务 ----
         if (request.method === "POST" && pathname === "/api/remix/ai-remix-task") {
           const body = await readJson(request);
-          const { matrixIds, creatorId, videoIds, cdpInstanceId, prompt, ratio, templateFiles } = body;
+          const { matrixIds, creatorId, videoIds, cdpInstanceId, prompt, ratio, presetId } = body;
           if (!matrixIds?.length) { sendJson(response, 400, { error: "请选择至少一个社媒矩阵" }); return; }
           if (!creatorId) { sendJson(response, 400, { error: "请选择达人" }); return; }
           if (!videoIds?.length) { sendJson(response, 400, { error: "请选择至少一个视频" }); return; }
@@ -1443,6 +1443,9 @@ export function createMonitorServer({
           const inst = store.getChromeInstance(cdpInstanceId);
           if (!inst) { sendJson(response, 404, { error: "CDP 实例不存在" }); return; }
           const daemonUrl = inst.ngrokUrl || `http://${inst.cdpHost}:${inst.daemonPort}`;
+
+          // 从方案中获取绑定的变量文件
+          const presetFiles = presetId ? store.getPresetFiles(presetId) : [];
 
           // 获取达人资源
           const resources = store.listRemixResources(creatorId);
@@ -1484,10 +1487,10 @@ export function createMonitorServer({
 
             // 收集要上传的文件路径
             const filesToUpload = [resolveLocal(video.url)];
-            // 模板变量文件（用户在弹框中上传的额外文件）
-            if (templateFiles?.length) {
-              for (const tf of templateFiles) {
-                const localPath = resolveLocal(tf);
+            // 方案绑定的变量文件
+            if (presetFiles.length) {
+              for (const pf of presetFiles) {
+                const localPath = resolveLocal(pf.filePath);
                 if (localPath) filesToUpload.push(localPath);
               }
             }
@@ -1887,6 +1890,34 @@ export function createMonitorServer({
           sendJson(response, 200, { ok: true });
           return;
         }
+      }
+
+      // 方案变量文件绑定
+      const presetFileMatch = pathname.match(/^\/api\/ai-presets\/([^/]+)\/files$/);
+      if (presetFileMatch) {
+        const presetId = decodeURIComponent(presetFileMatch[1]);
+        if (request.method === "GET") {
+          sendJson(response, 200, store.getPresetFiles(presetId));
+          return;
+        }
+        if (request.method === "POST") {
+          const body = await readJson(request);
+          if (!body.varName || !body.filePath) { sendJson(response, 400, { error: "缺少 varName 或 filePath" }); return; }
+          const files = store.upsertPresetFile({
+            presetId, varName: body.varName,
+            filePath: body.filePath, filename: body.filename || path.basename(body.filePath),
+          });
+          sendJson(response, 200, files);
+          return;
+        }
+      }
+      const presetFileDeleteMatch = pathname.match(/^\/api\/ai-presets\/([^/]+)\/files\/(.+)$/);
+      if (request.method === "DELETE" && presetFileDeleteMatch) {
+        const presetId = decodeURIComponent(presetFileDeleteMatch[1]);
+        const varName = decodeURIComponent(presetFileDeleteMatch[2]);
+        store.deletePresetFile(presetId, varName);
+        sendJson(response, 200, { ok: true });
+        return;
       }
 
       // ---- 静态文件: remix 输出 ----
