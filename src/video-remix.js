@@ -21,7 +21,7 @@ try {
 }
 
 function runFfmpeg(args) {
-  const FFMPEG_TIMEOUT_MS = 10 * 60 * 1000;
+  const FFMPEG_TIMEOUT_MS = 30 * 60 * 1000;
   return new Promise((resolve, reject) => {
     const proc = execFile("ffmpeg", ["-threads", "0", ...args], { maxBuffer: 20 * 1024 * 1024 }, (error, stdout, stderr) => {
       clearTimeout(timer);
@@ -465,6 +465,7 @@ async function mixBackgroundMusic(videoPath, musicPath, outputPath) {
   const hasVideoAudio = videoMeta?.hasAudio;
 
   const args = [
+    "-err_detect", "ignore_err",
     "-i", videoPath,
     "-i", musicPath,
   ];
