@@ -4411,6 +4411,7 @@ const modalState = {
   selectedCreatorId: null,
   selectedVideoIds: new Set(),
   mode: "stitch",
+  videoViewMode: "grid",
 };
 
 const modalEl = {
@@ -4431,6 +4432,8 @@ const modalEl = {
   presetSave: document.querySelector("#modal-preset-save"),
   presetManage: document.querySelector("#modal-preset-manage"),
   templateVars: document.querySelector("#modal-template-vars"),
+  viewGridBtn: document.querySelector("#modal-view-grid"),
+  viewListBtn: document.querySelector("#modal-view-list"),
 };
 
 const presetModalEl = {
@@ -4545,19 +4548,37 @@ function renderModalCreators() {
 function renderModalVideos() {
   if (!modalState.videos.length) {
     modalEl.videoList.innerHTML = '<div class="empty-state compact">该达人暂无视频</div>';
+    modalEl.videoList.className = "modal-video-list";
     return;
   }
+  const isList = modalState.videoViewMode === "list";
+  modalEl.videoList.className = isList ? "modal-video-list modal-video-list-view" : "modal-video-list modal-video-grid-view";
+
   modalEl.videoList.innerHTML = modalState.videos.map((v) => {
     const checked = modalState.selectedVideoIds.has(v.id);
-    return `
-      <label class="modal-check-item ${checked ? "checked" : ""}">
-        <input type="checkbox" value="${escapeHtml(v.id)}" ${checked ? "checked" : ""} />
-        <video src="${escapeHtml(v.url)}#t=0.1" muted preload="metadata" class="modal-video-thumb"></video>
-        <span>${escapeHtml(v.title || "未命名")}</span>
-        ${v.matrixLinks?.length ? `<span class="muted-activity" style="font-size: 10px;">已链接${v.matrixLinks.length}个矩阵</span>` : ""}
-      </label>
-    `;
+    const thumb = `<video src="${escapeHtml(v.url)}#t=0.1" muted preload="metadata" class="modal-video-thumb"></video>`;
+    const title = escapeHtml(v.title || "未命名");
+    const matrixInfo = v.matrixLinks?.length ? `<span class="muted-activity" style="font-size: 10px;">已链接${v.matrixLinks.length}个矩阵</span>` : "";
+    const checkbox = `<input type="checkbox" value="${escapeHtml(v.id)}" ${checked ? "checked" : ""} />`;
+
+    if (isList) {
+      return `<label class="modal-check-item modal-video-row ${checked ? "checked" : ""}">
+        ${checkbox}
+        ${thumb}
+        <div class="modal-video-row-info">
+          <span class="modal-video-row-title">${title}</span>
+          ${matrixInfo}
+        </div>
+      </label>`;
+    }
+    return `<label class="modal-check-item modal-video-card ${checked ? "checked" : ""}">
+      ${checkbox}
+      ${thumb}
+      <span class="modal-video-card-title">${title}</span>
+      ${matrixInfo}
+    </label>`;
   }).join("");
+
   modalEl.videoList.querySelectorAll("input[type=checkbox]").forEach((cb) => {
     cb.addEventListener("change", () => {
       if (cb.checked) modalState.selectedVideoIds.add(cb.value);
@@ -4567,6 +4588,20 @@ function renderModalVideos() {
     });
   });
 }
+
+// 视图切换
+modalEl.viewGridBtn?.addEventListener("click", () => {
+  modalState.videoViewMode = "grid";
+  modalEl.viewGridBtn.classList.add("active");
+  modalEl.viewListBtn?.classList.remove("active");
+  renderModalVideos();
+});
+modalEl.viewListBtn?.addEventListener("click", () => {
+  modalState.videoViewMode = "list";
+  modalEl.viewListBtn.classList.add("active");
+  modalEl.viewGridBtn?.classList.remove("active");
+  renderModalVideos();
+});
 
 function updateModalStartBtn() {
   const baseReady = modalState.selectedMatrixIds.size > 0 && modalState.selectedCreatorId && modalState.selectedVideoIds.size > 0;
