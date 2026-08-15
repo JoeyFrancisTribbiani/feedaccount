@@ -4898,3 +4898,6 @@ modalEl.start?.addEventListener("click", async () => {
 });
 fetchRemixCreators();
 fetchRemixTasks();
+
+// 初始化默认显示第一个 tab（视频去重与混剪）
+document.querySelector('.platform-tab[data-platform="remix"]')?.click();
