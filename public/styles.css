@@ -3550,9 +3550,9 @@ footer span {
 .cdp-log-error .cdp-log-level { color: var(--red-dark); }
 
 .platform-tab.active[data-platform="cdp"] {
-  border-bottom-color: var(--text-primary);
-  color: var(--text-primary);
-  font-weight: 700;
+  background: #1e293b;
+  color: #ffffff;
+  box-shadow: 0 3px 12px rgba(30, 41, 59, 0.3);
 }
 
 .cdp-scan-list {
