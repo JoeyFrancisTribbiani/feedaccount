@@ -82,32 +82,32 @@
         </button>
       </nav>
 
-      <!-- Key Metrics Overview Grid (always visible) -->
-      <section class="metric-grid" aria-label="运行概览">
-        <article class="metric-card">
-          <span class="metric-label">发现实例</span>
-          <strong id="metric-profiles">—</strong>
-          <small>BitBrowser 档案配置</small>
-        </article>
-        <article class="metric-card metric-accent">
-          <span class="metric-label">正在运行</span>
-          <strong id="metric-active">0</strong>
-          <small>独立并发自动化任务</small>
-        </article>
-        <article class="metric-card">
-          <span class="metric-label">已展示帖子</span>
-          <strong id="metric-posts">0</strong>
-          <small>服务启动后累计浏览</small>
-        </article>
-        <article class="metric-card">
-          <span class="metric-label">查看详情</span>
-          <strong id="metric-detail-visits">0</strong>
-          <small>只读深入帖子评论区</small>
-        </article>
-      </section>
-
       <!-- Scheduler / Automation Rotation Panel (独立 Tab) -->
       <section class="scheduler-panel scheduler-tab hidden">
+        <!-- Key Metrics Overview Grid -->
+        <section class="metric-grid" aria-label="运行概览">
+          <article class="metric-card">
+            <span class="metric-label">发现实例</span>
+            <strong id="metric-profiles">—</strong>
+            <small>BitBrowser 档案配置</small>
+          </article>
+          <article class="metric-card metric-accent">
+            <span class="metric-label">正在运行</span>
+            <strong id="metric-active">0</strong>
+            <small>独立并发自动化任务</small>
+          </article>
+          <article class="metric-card">
+            <span class="metric-label">已展示帖子</span>
+            <strong id="metric-posts">0</strong>
+            <small>服务启动后累计浏览</small>
+          </article>
+          <article class="metric-card">
+            <span class="metric-label">查看详情</span>
+            <strong id="metric-detail-visits">0</strong>
+            <small>只读深入帖子评论区</small>
+          </article>
+        </section>
+
         <div class="panel-heading">
           <div>
             <p class="section-kicker">轮换调度控制台</p>
@@ -1076,15 +1076,6 @@
               <button id="remix-stitch-btn" class="button button-primary" type="button">新建混剪任务</button>
             </div>
 
-            <!-- 任务历史 -->
-            <div class="remix-history-area">
-              <div class="remix-history-head">
-                <h3>去重/混剪历史</h3>
-                <button id="remix-refresh-tasks" class="link-btn" type="button">刷新</button>
-              </div>
-              <div id="remix-tasks-list" class="remix-tasks-list"></div>
-            </div>
-
             <!-- 达人专属资源 -->
             <div class="remix-resources-area">
               <div class="remix-resources-head">
@@ -1123,6 +1114,15 @@
                   <div class="remix-resource-list" id="remix-resource-list-music"></div>
                 </div>
               </div>
+            </div>
+
+            <!-- 任务历史 -->
+            <div class="remix-history-area">
+              <div class="remix-history-head">
+                <h3>去重/混剪历史</h3>
+                <button id="remix-refresh-tasks" class="link-btn" type="button">刷新</button>
+              </div>
+              <div id="remix-tasks-list" class="remix-tasks-list"></div>
             </div>
           </div>
         </div>
