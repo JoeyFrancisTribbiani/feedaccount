@@ -4144,3 +4144,122 @@ footer span {
   line-height: 1.4;
 }
 
+/* AI 方案管理 */
+.modal-preset-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+  align-items: flex-end;
+}
+.preset-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px;
+  background: var(--bg-subtle, #f8f9fa);
+  border-radius: var(--radius-sm, 8px);
+  margin-bottom: 12px;
+}
+.preset-form input,
+.preset-form textarea {
+  width: 100%;
+}
+.preset-default-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary, #475569);
+  cursor: pointer;
+}
+.preset-default-label input { width: 16px; height: 16px; }
+.preset-form-actions {
+  display: flex;
+  gap: 8px;
+}
+.preset-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 280px;
+  overflow-y: auto;
+}
+.preset-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: var(--bg-subtle, #f8f9fa);
+  border: 1px solid var(--line, #e2e8f0);
+  border-radius: var(--radius-sm, 6px);
+}
+.preset-item-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.preset-item-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary, #0f172a);
+}
+.preset-default-tag {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--amber-soft, #fffbe6);
+  color: var(--amber-dark, #b45309);
+}
+.preset-item-prompt {
+  font-size: 11px;
+  color: var(--text-muted, #64748b);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.preset-item-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+/* 模板变量上传组件 */
+.modal-template-vars {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+.template-var-item {
+  padding: 10px 12px;
+  background: var(--bg-subtle, #f8f9fa);
+  border: 1px solid var(--line, #e2e8f0);
+  border-radius: var(--radius-sm, 8px);
+}
+.template-var-item .wide-input span {
+  font-weight: 600;
+  color: var(--indigo, #4f46e5);
+  font-size: 12px;
+}
+.template-var-upload {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.template-var-input {
+  flex-shrink: 0;
+  font-size: 12px;
+  max-width: 200px;
+}
+.template-var-filename {
+  font-size: 11px;
+  color: var(--text-muted, #64748b);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+

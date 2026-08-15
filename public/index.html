@@ -1457,7 +1457,7 @@
                 <option value="1:1">1:1 方形</option>
               </select>
             </div>
-            <!-- AI 模式专属：CDP 实例 + 提示词 -->
+            <!-- AI 模式专属：CDP 实例 + 方案 + 提示词 -->
             <div id="modal-ai-config" class="modal-step hidden">
               <div class="modal-step-head">
                 <span class="modal-step-num">5</span>
@@ -1467,10 +1467,19 @@
                 <span>CDP 实例（需已启动守护进程）</span>
                 <select id="modal-cdp-instance" class="sched-check-select"></select>
               </label>
+              <div class="modal-preset-row">
+                <label class="wide-input" style="flex: 1;">
+                  <span>混剪方案</span>
+                  <select id="modal-ai-preset" class="sched-check-select"></select>
+                </label>
+                <button id="modal-preset-save" class="button button-secondary" type="button" style="align-self: flex-end;">另存为方案</button>
+                <button id="modal-preset-manage" class="button button-secondary" type="button" style="align-self: flex-end;">管理方案</button>
+              </div>
               <label class="wide-input">
-                <span>提示词（可选，留空使用默认）</span>
-                <textarea id="modal-ai-prompt" rows="3" placeholder="请根据上传的视频和音频文件，生成一个混剪视频..."></textarea>
+                <span>提示词</span>
+                <textarea id="modal-ai-prompt" rows="4" placeholder="使用 {{变量名}} 作为占位符，如：请将 {{开头片段}} 拼接到视频开头，{{结尾片段}} 拼接到结尾..."></textarea>
               </label>
+              <div id="modal-template-vars" class="modal-template-vars"></div>
             </div>
           </div>
           <div class="modal-footer">

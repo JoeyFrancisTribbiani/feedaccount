@@ -1386,10 +1386,54 @@ export function createMonitorServer({
           return;
         }
 
+        // ---- Remix: 模板变量文件上传 ----
+        if (request.method === "POST" && pathname === "/api/remix/creators/_template/upload") {
+          const contentType = request.headers["content-type"] || "";
+          const boundaryMatch = contentType.match(/boundary=([^;\s]+)/);
+          if (!boundaryMatch) { sendJson(response, 400, { error: "无效的上传请求" }); return; }
+          const boundaryBuf = Buffer.from("--" + boundaryMatch[1]);
+          const chunks = [];
+          for await (const chunk of request) chunks.push(chunk);
+          const buf = Buffer.concat(chunks);
+          const SEP = Buffer.from([0x0d, 0x0a, 0x0d, 0x0a]);
+          let filename = null;
+          let fileContent = null;
+          let searchStart = 0;
+          while (true) {
+            const pos = buf.indexOf(boundaryBuf, searchStart);
+            if (pos === -1) break;
+            const afterBoundary = pos + boundaryBuf.length;
+            if (buf[afterBoundary] === 0x2d && buf[afterBoundary + 1] === 0x2d) break;
+            const partStart = afterBoundary + 2;
+            const nextPos = buf.indexOf(boundaryBuf, partStart);
+            if (nextPos === -1) break;
+            const part = buf.subarray(partStart, nextPos - 2);
+            const headerEnd = part.indexOf(SEP);
+            if (headerEnd !== -1) {
+              const headerStr = part.subarray(0, headerEnd).toString("latin1");
+              const fnMatch = headerStr.match(/filename="([^"]*)"/);
+              if (fnMatch) {
+                filename = fnMatch[1];
+                fileContent = part.subarray(headerEnd + 4);
+                break;
+              }
+            }
+            searchStart = nextPos;
+          }
+          if (!filename || !fileContent) { sendJson(response, 400, { error: "未找到文件" }); return; }
+          const uploadDir = path.resolve(THIS_DIR, "..", "data", "remix-videos");
+          mkdirSync(uploadDir, { recursive: true });
+          const safeName = `${Date.now()}_${filename.replace(/[^\w.-]/g, "_")}`;
+          const filePath = path.join(uploadDir, safeName);
+          writeFileSync(filePath, fileContent);
+          sendJson(response, 200, { url: `/data/remix-videos/${safeName}`, filename: safeName });
+          return;
+        }
+
         // ---- Remix: AI 自动视频混剪任务 ----
         if (request.method === "POST" && pathname === "/api/remix/ai-remix-task") {
           const body = await readJson(request);
-          const { matrixIds, creatorId, videoIds, cdpInstanceId, prompt, ratio } = body;
+          const { matrixIds, creatorId, videoIds, cdpInstanceId, prompt, ratio, templateFiles } = body;
           if (!matrixIds?.length) { sendJson(response, 400, { error: "请选择至少一个社媒矩阵" }); return; }
           if (!creatorId) { sendJson(response, 400, { error: "请选择达人" }); return; }
           if (!videoIds?.length) { sendJson(response, 400, { error: "请选择至少一个视频" }); return; }
@@ -1418,6 +1462,9 @@ export function createMonitorServer({
             if (url.startsWith("/data/remix-output/")) {
               return path.resolve(THIS_DIR, "..", "data", "remix-output", path.basename(url));
             }
+            if (url.startsWith("/data/remix-resources/")) {
+              return path.resolve(THIS_DIR, "..", url.replace(/^\//, ""));
+            }
             return url;
           };
           const resolveResource = (fp) => {
@@ -1436,20 +1483,27 @@ export function createMonitorServer({
             });
 
             // 收集要上传的文件路径
-          const filesToUpload = [resolveLocal(video.url)];
-          // 随机选取资源
-          if (intros.length) filesToUpload.push(resolveResource(intros[Math.floor(Math.random() * intros.length)].filePath));
-          if (outros.length) filesToUpload.push(resolveResource(outros[Math.floor(Math.random() * outros.length)].filePath));
-          if (musics.length) filesToUpload.push(resolveResource(musics[Math.floor(Math.random() * musics.length)].filePath));
+            const filesToUpload = [resolveLocal(video.url)];
+            // 模板变量文件（用户在弹框中上传的额外文件）
+            if (templateFiles?.length) {
+              for (const tf of templateFiles) {
+                const localPath = resolveLocal(tf);
+                if (localPath) filesToUpload.push(localPath);
+              }
+            }
+            // 随机选取达人资源
+            if (intros.length) filesToUpload.push(resolveResource(intros[Math.floor(Math.random() * intros.length)].filePath));
+            if (outros.length) filesToUpload.push(resolveResource(outros[Math.floor(Math.random() * outros.length)].filePath));
+            if (musics.length) filesToUpload.push(resolveResource(musics[Math.floor(Math.random() * musics.length)].filePath));
 
-          // 提交到 AI 混剪队列（异步处理）
-          aiRemixQueue.push({
-            taskId: task.id, daemonUrl, filesToUpload, prompt: prompt || "",
-            matrixIds, creatorId, sourceVideoId: video.id, videoTitle: video.title,
-          });
-          processAiRemixQueue();
+            // 提交到 AI 混剪队列（异步处理）
+            aiRemixQueue.push({
+              taskId: task.id, daemonUrl, filesToUpload, prompt: prompt || "",
+              matrixIds, creatorId, sourceVideoId: video.id, videoTitle: video.title,
+            });
+            processAiRemixQueue();
 
-          tasks.push(task);
+            tasks.push(task);
           }
 
           sendJson(response, 200, { tasks, count: tasks.length });
@@ -1800,6 +1854,39 @@ export function createMonitorServer({
 
         sendJson(response, 404, { error: "矩阵接口不存在" });
         return;
+      }
+
+      // ---- AI 混剪方案管理 ----
+      if (pathname === "/api/ai-presets") {
+        if (request.method === "GET") {
+          sendJson(response, 200, store.listAiRemixPresets());
+          return;
+        }
+        if (request.method === "POST") {
+          const body = await readJson(request);
+          if (!body.name || !body.prompt) { sendJson(response, 400, { error: "缺少方案名称或提示词" }); return; }
+          sendJson(response, 200, store.createAiRemixPreset({ name: body.name, prompt: body.prompt, isDefault: body.isDefault || false }));
+          return;
+        }
+      }
+
+      const aiPresetMatch = pathname.match(/^\/api\/ai-presets\/([^/]+)$/);
+      if (aiPresetMatch) {
+        const presetId = decodeURIComponent(aiPresetMatch[1]);
+        if (request.method === "PUT") {
+          const body = await readJson(request);
+          const updated = store.updateAiRemixPreset(presetId, {
+            name: body.name, prompt: body.prompt, isDefault: body.isDefault,
+          });
+          if (!updated) { sendJson(response, 404, { error: "方案不存在" }); return; }
+          sendJson(response, 200, updated);
+          return;
+        }
+        if (request.method === "DELETE") {
+          store.deleteAiRemixPreset(presetId);
+          sendJson(response, 200, { ok: true });
+          return;
+        }
       }
 
       // ---- 静态文件: remix 输出 ----

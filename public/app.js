@@ -4427,6 +4427,21 @@ const modalEl = {
   aiPrompt: document.querySelector("#modal-ai-prompt"),
   modeStitchLabel: document.querySelector("#modal-mode-stitch-label"),
   modeAiLabel: document.querySelector("#modal-mode-ai-label"),
+  aiPreset: document.querySelector("#modal-ai-preset"),
+  presetSave: document.querySelector("#modal-preset-save"),
+  presetManage: document.querySelector("#modal-preset-manage"),
+  templateVars: document.querySelector("#modal-template-vars"),
+};
+
+const presetModalEl = {
+  overlay: null,
+  list: null,
+  name: null,
+  prompt: null,
+  isDefault: null,
+  save: null,
+  cancel: null,
+  close: null,
 };
 
 async function openRemixTaskModal() {
@@ -4469,6 +4484,9 @@ async function openRemixTaskModal() {
 
   modalEl.videoList.innerHTML = '<div class="empty-state compact">请先选择达人</div>';
   modalEl.start.disabled = true;
+
+  // 加载 AI 混剪方案列表
+  await fetchAiPresets();
 }
 
 function renderModalMatrices() {
@@ -4572,6 +4590,251 @@ document.querySelectorAll('input[name="modal-mode"]').forEach((rb) => {
 
 modalEl.cdpInstance?.addEventListener("change", updateModalStartBtn);
 
+// AI 混剪方案管理
+let aiPresets = [];
+
+async function fetchAiPresets() {
+  try {
+    const data = await request("/api/ai-presets");
+    aiPresets = Array.isArray(data) ? data : [];
+    renderAiPresetSelect();
+  } catch { aiPresets = []; renderAiPresetSelect(); }
+}
+
+function renderAiPresetSelect() {
+  if (!modalEl.aiPreset) return;
+  if (!aiPresets.length) {
+    modalEl.aiPreset.innerHTML = '<option value="">无方案（手动输入提示词）</option>';
+    return;
+  }
+  modalEl.aiPreset.innerHTML = '<option value="">— 选择方案 —</option>' +
+    aiPresets.map((p) => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)}${p.isDefault ? " ★" : ""}</option>`).join("");
+}
+
+// 模板变量解析与渲染
+function parseTemplateVars(prompt) {
+  const regex = /\{\{(.+?)\}\}/g;
+  const vars = [];
+  const seen = new Set();
+  let match;
+  while ((match = regex.exec(prompt)) !== null) {
+    const name = match[1].trim();
+    if (name && !seen.has(name)) {
+      seen.add(name);
+      vars.push(name);
+    }
+  }
+  return vars;
+}
+
+const templateFileMap = new Map(); // varName → { url, filename }
+
+function renderTemplateVars(vars) {
+  if (!modalEl.templateVars) return;
+  if (!vars.length) {
+    modalEl.templateVars.innerHTML = "";
+    templateFileMap.clear();
+    return;
+  }
+  // 清除不再存在的变量
+  for (const key of [...templateFileMap.keys()]) {
+    if (!vars.includes(key)) templateFileMap.delete(key);
+  }
+  modalEl.templateVars.innerHTML = vars.map((v) => {
+    const existing = templateFileMap.get(v);
+    return `
+      <div class="template-var-item" data-var="${escapeHtml(v)}">
+        <label class="wide-input">
+          <span>${escapeHtml(v)}</span>
+          <div class="template-var-upload">
+            <input type="file" data-var-file="${escapeHtml(v)}" class="template-var-input" />
+            <span class="template-var-filename">${existing ? escapeHtml(existing.filename) : "未选择文件"}</span>
+          </div>
+        </label>
+      </div>
+    `;
+  }).join("");
+
+  modalEl.templateVars.querySelectorAll("input[data-var-file]").forEach((input) => {
+    input.addEventListener("change", async () => {
+      const varName = input.dataset.varFile;
+      const file = input.files[0];
+      if (!file) return;
+      // 上传文件到服务器
+      try {
+        const formData = new FormData();
+        formData.append("file", file);
+        formData.append("type", "intro");
+        const res = await fetch("/api/remix/creators/_template/upload", { method: "POST", body: formData });
+        if (!res.ok) throw new Error("上传失败");
+        const data = await res.json();
+        templateFileMap.set(varName, { url: data.url, filename: file.name });
+        const filenameEl = input.parentElement.querySelector(".template-var-filename");
+        if (filenameEl) filenameEl.textContent = file.name;
+      } catch (e) { showToast(`${varName}: ${e.message}`, true); }
+    });
+  });
+}
+
+function updateTemplateVars() {
+  const prompt = modalEl.aiPrompt?.value || "";
+  const vars = parseTemplateVars(prompt);
+  renderTemplateVars(vars);
+}
+
+modalEl.aiPrompt?.addEventListener("input", updateTemplateVars);
+
+modalEl.aiPreset?.addEventListener("change", () => {
+  const presetId = modalEl.aiPreset.value;
+  if (!presetId) { modalEl.aiPrompt.value = ""; updateTemplateVars(); return; }
+  const preset = aiPresets.find((p) => p.id === presetId);
+  if (preset) {
+    modalEl.aiPrompt.value = preset.prompt;
+    updateTemplateVars();
+  }
+});
+
+// 另存为方案
+modalEl.presetSave?.addEventListener("click", async () => {
+  const prompt = modalEl.aiPrompt.value.trim();
+  if (!prompt) { showToast("提示词为空，无法保存", true); return; }
+  const name = window.prompt("请输入方案名称：");
+  if (!name) return;
+  try {
+    await request("/api/ai-presets", { method: "POST", body: JSON.stringify({ name, prompt, isDefault: false }) });
+    showToast("方案已保存");
+    await fetchAiPresets();
+  } catch (e) { showToast(e.message, true); }
+});
+
+// 管理方案弹框
+modalEl.presetManage?.addEventListener("click", () => openPresetModal());
+
+function openPresetModal() {
+  // 动态创建弹框（如果不存在）
+  let overlay = document.querySelector("#preset-modal");
+  if (!overlay) {
+    overlay = document.createElement("div");
+    overlay.id = "preset-modal";
+    overlay.className = "modal-overlay";
+    overlay.innerHTML = `
+      <div class="modal-content" style="max-width: 600px;">
+        <div class="modal-header">
+          <h3>管理混剪方案</h3>
+          <button id="preset-modal-close" class="modal-close" type="button">×</button>
+        </div>
+        <div class="modal-body">
+          <div class="preset-form">
+            <input type="text" id="preset-form-name" placeholder="方案名称" />
+            <textarea id="preset-form-prompt" rows="4" placeholder="提示词内容"></textarea>
+            <label class="preset-default-label">
+              <input type="checkbox" id="preset-form-default" /> 设为默认方案
+            </label>
+            <div class="preset-form-actions">
+              <button id="preset-form-add" class="button button-primary" type="button">新增</button>
+              <button id="preset-form-update" class="button button-secondary" type="button" disabled>更新选中</button>
+            </div>
+          </div>
+          <div id="preset-list" class="preset-list"></div>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+
+    presetModalEl.overlay = overlay;
+    presetModalEl.list = overlay.querySelector("#preset-list");
+    presetModalEl.name = overlay.querySelector("#preset-form-name");
+    presetModalEl.prompt = overlay.querySelector("#preset-form-prompt");
+    presetModalEl.isDefault = overlay.querySelector("#preset-form-default");
+    presetModalEl.save = overlay.querySelector("#preset-form-add");
+    presetModalEl.update = overlay.querySelector("#preset-form-update");
+    presetModalEl.close = overlay.querySelector("#preset-modal-close");
+
+    presetModalEl.close.addEventListener("click", () => { overlay.classList.add("hidden"); fetchAiPresets(); });
+    presetModalEl.save.addEventListener("click", handlePresetAdd);
+    presetModalEl.update.addEventListener("click", handlePresetUpdate);
+  }
+
+  overlay.classList.remove("hidden");
+  renderPresetList();
+}
+
+function renderPresetList() {
+  if (!presetModalEl.list) return;
+  if (!aiPresets.length) {
+    presetModalEl.list.innerHTML = '<div class="empty-state compact">暂无方案</div>';
+    return;
+  }
+  presetModalEl.list.innerHTML = aiPresets.map((p) => `
+    <div class="preset-item" data-id="${escapeHtml(p.id)}">
+      <div class="preset-item-info">
+        <span class="preset-item-name">${escapeHtml(p.name)}${p.isDefault ? ' <span class="preset-default-tag">默认</span>' : ""}</span>
+        <span class="preset-item-prompt">${escapeHtml(p.prompt.slice(0, 80))}${p.prompt.length > 80 ? "…" : ""}</span>
+      </div>
+      <div class="preset-item-actions">
+        <button class="button button-secondary" data-edit="${escapeHtml(p.id)}" type="button" style="font-size:11px;padding:2px 8px;">编辑</button>
+        <button class="danger-button" data-del="${escapeHtml(p.id)}" type="button" style="font-size:11px;padding:2px 6px;">删除</button>
+      </div>
+    </div>
+  `).join("");
+
+  presetModalEl.list.querySelectorAll("[data-edit]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const preset = aiPresets.find((p) => p.id === btn.dataset.edit);
+      if (!preset) return;
+      presetModalEl.name.value = preset.name;
+      presetModalEl.prompt.value = preset.prompt;
+      presetModalEl.isDefault.checked = preset.isDefault;
+      presetModalEl.update.disabled = false;
+      presetModalEl.save.textContent = "新增";
+    });
+  });
+  presetModalEl.list.querySelectorAll("[data-del]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      if (!confirm("删除此方案？")) return;
+      await request(`/api/ai-presets/${encodeURIComponent(btn.dataset.del)}`, { method: "DELETE" });
+      await fetchAiPresets();
+      renderPresetList();
+      // 清空表单
+      presetModalEl.name.value = "";
+      presetModalEl.prompt.value = "";
+      presetModalEl.isDefault.checked = false;
+      presetModalEl.update.disabled = true;
+    });
+  });
+}
+
+async function handlePresetAdd() {
+  const name = presetModalEl.name.value.trim();
+  const prompt = presetModalEl.prompt.value.trim();
+  if (!name || !prompt) { showToast("名称和提示词不能为空", true); return; }
+  try {
+    await request("/api/ai-presets", { method: "POST", body: JSON.stringify({ name, prompt, isDefault: presetModalEl.isDefault.checked }) });
+    showToast("方案已新增");
+    presetModalEl.name.value = "";
+    presetModalEl.prompt.value = "";
+    presetModalEl.isDefault.checked = false;
+    await fetchAiPresets();
+    renderPresetList();
+  } catch (e) { showToast(e.message, true); }
+}
+
+async function handlePresetUpdate() {
+  const name = presetModalEl.name.value.trim();
+  const prompt = presetModalEl.prompt.value.trim();
+  const preset = aiPresets.find((p) => p.name === name);
+  if (!preset) { showToast("未找到对应方案，请点击「新增」", true); return; }
+  try {
+    await request(`/api/ai-presets/${encodeURIComponent(preset.id)}`, {
+      method: "PUT",
+      body: JSON.stringify({ name, prompt, isDefault: presetModalEl.isDefault.checked }),
+    });
+    showToast("方案已更新");
+    await fetchAiPresets();
+    renderPresetList();
+  } catch (e) { showToast(e.message, true); }
+}
+
 modalEl.close?.addEventListener("click", () => modalEl.overlay.classList.add("hidden"));
 modalEl.cancel?.addEventListener("click", () => modalEl.overlay.classList.add("hidden"));
 
@@ -4590,6 +4853,17 @@ modalEl.start?.addEventListener("click", async () => {
       const prompt = modalEl.aiPrompt.value.trim();
       if (!cdpInstanceId) { showToast("请选择 CDP 实例", true); return; }
 
+      // 检查模板变量是否都已上传文件
+      const vars = parseTemplateVars(prompt);
+      const missingVars = vars.filter((v) => !templateFileMap.has(v));
+      if (missingVars.length) {
+        showToast(`请为以下变量上传文件：${missingVars.join("、")}`, true);
+        return;
+      }
+
+      // 收集模板变量文件 URL
+      const templateFiles = [...templateFileMap.values()].map((f) => f.url);
+
       // 检查 CDP 实例守护进程是否已启动
       let daemonStatus = null;
       try {
@@ -4602,7 +4876,7 @@ modalEl.start?.addEventListener("click", async () => {
 
       const res = await request("/api/remix/ai-remix-task", {
         method: "POST",
-        body: JSON.stringify({ matrixIds, creatorId, videoIds, cdpInstanceId, prompt, ratio }),
+        body: JSON.stringify({ matrixIds, creatorId, videoIds, cdpInstanceId, prompt, ratio, templateFiles }),
       });
       modalEl.overlay.classList.add("hidden");
       showToast(`已创建 ${res.count} 个 AI 混剪任务，正在处理…（预计需要较长时间）`);

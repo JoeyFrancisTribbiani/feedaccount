@@ -314,6 +314,16 @@ export class LocalDatabase {
 
       CREATE INDEX IF NOT EXISTS idx_matrix_profiles_matrix ON matrix_profiles(matrix_id);
 
+      -- AI 混剪方案（预设提示词）
+      CREATE TABLE IF NOT EXISTS ai_remix_presets (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        prompt TEXT NOT NULL,
+        is_default INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
       CREATE TABLE IF NOT EXISTS reddit_accounts (
         id TEXT PRIMARY KEY,
         profile_id TEXT NOT NULL UNIQUE,
@@ -1636,6 +1646,58 @@ export class LocalDatabase {
       WHERE v.source_video_id = ?
     `).all(videoId);
     return rows.map((r) => ({ matrixId: r.matrix_id, matrixName: r.matrix_name }));
+  }
+
+  // --- AI 混剪方案管理 ---
+  createAiRemixPreset({ name, prompt, isDefault = false }) {
+    const id = `ap_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const ts = nowIso();
+    if (isDefault) {
+      this.db.exec("UPDATE ai_remix_presets SET is_default = 0");
+    }
+    this.db.prepare(`INSERT INTO ai_remix_presets (id, name, prompt, is_default, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`).run(id, name, prompt, booleanInt(isDefault), ts, ts);
+    return this.getAiRemixPreset(id);
+  }
+
+  listAiRemixPresets() {
+    const rows = this.db.prepare(`SELECT * FROM ai_remix_presets ORDER BY is_default DESC, created_at DESC`).all();
+    return rows.map((r) => ({
+      id: r.id, name: r.name, prompt: r.prompt,
+      isDefault: Boolean(r.is_default), createdAt: r.created_at, updatedAt: r.updated_at,
+    }));
+  }
+
+  getAiRemixPreset(id) {
+    const row = this.db.prepare(`SELECT * FROM ai_remix_presets WHERE id = ?`).get(id);
+    return row ? {
+      id: row.id, name: row.name, prompt: row.prompt,
+      isDefault: Boolean(row.is_default), createdAt: row.created_at, updatedAt: row.updated_at,
+    } : null;
+  }
+
+  getAiRemixDefaultPreset() {
+    const row = this.db.prepare(`SELECT * FROM ai_remix_presets WHERE is_default = 1 LIMIT 1`).get();
+    return row ? {
+      id: row.id, name: row.name, prompt: row.prompt,
+      isDefault: Boolean(row.is_default), createdAt: row.created_at, updatedAt: row.updated_at,
+    } : null;
+  }
+
+  updateAiRemixPreset(id, { name, prompt, isDefault }) {
+    const ts = nowIso();
+    if (isDefault) {
+      this.db.exec("UPDATE ai_remix_presets SET is_default = 0");
+    }
+    this.db.prepare(`
+      UPDATE ai_remix_presets
+      SET name = COALESCE(?, name), prompt = COALESCE(?, prompt), is_default = COALESCE(?, is_default), updated_at = ?
+      WHERE id = ?
+    `).run(name ?? null, prompt ?? null, isDefault === undefined ? null : booleanInt(isDefault), ts, id);
+    return this.getAiRemixPreset(id);
+  }
+
+  deleteAiRemixPreset(id) {
+    return this.db.prepare(`DELETE FROM ai_remix_presets WHERE id = ?`).run(id).changes;
   }
 
   // --- Remix 视频管理 ---
