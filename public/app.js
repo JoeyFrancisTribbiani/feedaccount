@@ -4425,6 +4425,7 @@ const modalEl = {
   ratio: document.querySelector("#modal-ratio"),
   aiConfig: document.querySelector("#modal-ai-config"),
   cdpInstance: document.querySelector("#modal-cdp-instance"),
+  cdpRefresh: document.querySelector("#modal-cdp-refresh"),
   aiPrompt: document.querySelector("#modal-ai-prompt"),
   modeStitchLabel: document.querySelector("#modal-mode-stitch-label"),
   modeAiLabel: document.querySelector("#modal-mode-ai-label"),
@@ -4478,15 +4479,7 @@ async function openRemixTaskModal() {
   renderModalCreators();
 
   // 加载 CDP 实例列表（用于 AI 模式）
-  try {
-    const res = await request("/api/cdp/instances");
-    const instances = res.instances || [];
-    modalEl.cdpInstance.innerHTML = instances.length
-      ? instances.map((i) => `<option value="${escapeHtml(i.id)}">${escapeHtml(i.name)} (${escapeHtml(i.cdpHost)}:${i.cdpPort})</option>`).join("")
-      : '<option value="">无可用实例</option>';
-  } catch {
-    modalEl.cdpInstance.innerHTML = '<option value="">加载失败</option>';
-  }
+  await loadModalCdpInstances();
 
   modalEl.videoList.innerHTML = '<div class="empty-state compact">请先选择达人</div>';
   modalEl.start.disabled = true;
@@ -4494,6 +4487,28 @@ async function openRemixTaskModal() {
   // 加载 AI 混剪方案列表
   await fetchAiPresets();
 }
+
+async function loadModalCdpInstances() {
+  try {
+    const res = await request("/api/cdp/instances");
+    const instances = res.instances || [];
+    modalEl.cdpInstance.innerHTML = instances.length
+      ? instances.map((i) => `<option value="${escapeHtml(i.id)}">${escapeHtml(i.name)} (${escapeHtml(i.cdpHost)}:${i.cdpPort})</option>`).join("")
+      : '<option value="">无可用实例</option>';
+    updateModalStartBtn();
+  } catch {
+    modalEl.cdpInstance.innerHTML = '<option value="">加载失败</option>';
+  }
+}
+
+modalEl.cdpRefresh?.addEventListener("click", async () => {
+  modalEl.cdpRefresh.textContent = "刷新中…";
+  modalEl.cdpRefresh.disabled = true;
+  await loadModalCdpInstances();
+  modalEl.cdpRefresh.textContent = "刷新";
+  modalEl.cdpRefresh.disabled = false;
+  showToast("CDP 实例列表已刷新");
+});
 
 function renderModalMatrices() {
   if (!modalState.matrices.length) {

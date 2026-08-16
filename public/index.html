@@ -1473,7 +1473,10 @@
               </div>
               <label class="wide-input" style="margin-bottom: 10px;">
                 <span>CDP 实例（需已启动守护进程）</span>
-                <select id="modal-cdp-instance" class="sched-check-select"></select>
+                <div style="display:flex;gap:6px;">
+                  <select id="modal-cdp-instance" class="sched-check-select" style="flex:1;"></select>
+                  <button id="modal-cdp-refresh" class="button button-secondary" type="button" style="padding:6px 10px;font-size:12px;white-space:nowrap;">刷新</button>
+                </div>
               </label>
               <div class="modal-preset-row">
                 <label class="wide-input" style="flex: 1;">
