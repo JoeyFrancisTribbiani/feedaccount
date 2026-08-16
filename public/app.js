@@ -3500,6 +3500,7 @@ function renderRemixTasks() {
     return `
       <div class="remix-task-item">
         <div class="remix-task-info">
+          ${t.status === "DONE" && t.outputUrl ? `<input type="checkbox" class="task-select-cb" data-task-id="${escapeHtml(t.id)}" data-out-url="${escapeHtml(t.outputUrl)}" style="margin-right:8px;" />` : ""}
           <span class="remix-task-mode ${isDedup ? "mode-dedup" : "mode-stitch"}">${modeLabel}</span>
           <strong>${escapeHtml(t.title)}</strong>
           ${statusBadge}
@@ -3507,6 +3508,7 @@ function renderRemixTasks() {
           ${t.errorMessage ? `<span style="color: #dc2626; font-size: 11px;">${escapeHtml(t.errorMessage)}</span>` : ""}
         </div>
         <div class="remix-task-actions">
+          <button class="button button-secondary task-log-btn" data-task-id="${escapeHtml(t.id)}" style="font-size: 11px; padding:2px 8px;">日志</button>
           ${t.status === "DONE" && t.outputUrl ? `<a href="${escapeHtml(t.outputUrl)}" target="_blank" class="button button-secondary" style="font-size: 11px;">预览</a>` : ""}
           ${t.status === "DONE" && t.outputUrl ? `<a href="${escapeHtml(t.outputUrl)}" download data-task-id="${escapeHtml(t.id)}" data-out-url="${escapeHtml(t.outputUrl)}" class="button button-primary" style="font-size: 11px;">${t.downloaded ? "已下载 ✓" : "下载"}</a>` : ""}
           <button class="remix-del-task" data-del-task="${escapeHtml(t.id)}" style="color: #dc2626; background: none; border: none; cursor: pointer; font-size: 16px;">×</button>
@@ -3520,11 +3522,77 @@ function renderRemixTasks() {
       await fetchRemixTasks();
     });
   });
+  // 日志按钮
+  remixEl.tasksList.querySelectorAll(".task-log-btn").forEach((btn) => {
+    btn.addEventListener("click", () => openTaskLogModal(btn.dataset.taskId));
+  });
   bindRemixDownloadLinks(remixEl.tasksList);
 }
 
 // 达人添加
 remixEl.addCreatorBtn.addEventListener("click", () => remixEl.addCreatorForm.classList.toggle("hidden"));
+
+// 全选
+document.querySelector("#remix-select-all")?.addEventListener("change", (e) => {
+  document.querySelectorAll(".task-select-cb").forEach((cb) => { cb.checked = e.target.checked; });
+});
+
+// 批量下载
+document.querySelector("#remix-batch-download")?.addEventListener("click", () => {
+  const checked = document.querySelectorAll(".task-select-cb:checked");
+  if (!checked.length) { showToast("请先勾选要下载的任务", true); return; }
+  checked.forEach((cb, i) => {
+    setTimeout(() => {
+      const a = document.createElement("a");
+      a.href = cb.dataset.outUrl;
+      a.download = "";
+      a.click();
+    }, i * 500);
+  });
+  showToast(`开始下载 ${checked.length} 个视频`);
+});
+
+// 任务日志弹框
+function openTaskLogModal(taskId) {
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `
+    <div class="modal-content" style="max-width: 700px;">
+      <div class="modal-header">
+        <h3>任务日志</h3>
+        <button class="text-button" id="task-log-close">关闭</button>
+      </div>
+      <div style="padding: 16px 20px; max-height: 60vh; overflow-y: auto;">
+        <ol id="task-log-list" class="cdp-logs-list" style="padding:0;">
+          <li class="muted-activity">加载中...</li>
+        </ol>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  overlay.querySelector("#task-log-close").addEventListener("click", () => overlay.remove());
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
+
+  // 加载日志
+  request(`/api/cdp/logs?taskId=${encodeURIComponent(taskId)}&limit=200`)
+    .then((data) => {
+      const list = overlay.querySelector("#task-log-list");
+      const logs = data.logs || [];
+      if (!logs.length) {
+        list.innerHTML = '<li class="muted-activity">暂无日志</li>';
+        return;
+      }
+      // 反转为时间正序
+      logs.reverse();
+      list.innerHTML = logs.map((l) => {
+        const color = l.level === "error" ? "#dc2626" : l.level === "warning" ? "#d97706" : "inherit";
+        return `<li style="color:${color};"><span class="muted-activity">${l.createdAt?.substring(11, 19) || ""}</span> ${escapeHtml(l.message)}</li>`;
+      }).join("");
+    })
+    .catch(() => {
+      overlay.querySelector("#task-log-list").innerHTML = '<li class="muted-activity">加载失败</li>';
+    });
+}
 remixEl.cancelCreator.addEventListener("click", () => { remixEl.addCreatorForm.classList.add("hidden"); remixEl.creatorName.value = ""; remixEl.creatorPlatform.value = ""; });
 remixEl.confirmCreator.addEventListener("click", async () => {
   const name = remixEl.creatorName.value.trim();

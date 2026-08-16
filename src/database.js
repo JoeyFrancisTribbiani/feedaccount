@@ -381,6 +381,8 @@ export class LocalDatabase {
       CREATE INDEX IF NOT EXISTS idx_cdp_logs_instance ON cdp_logs(instance_id, created_at DESC);
     `);
 
+    this.#ensureColumn("cdp_logs", "task_id", "TEXT");
+
     this.#ensureColumn("task_runs", "task_mode", "TEXT NOT NULL DEFAULT 'pixel'");
     this.#ensureColumn("task_runs", "workflow_mode", "TEXT NOT NULL DEFAULT 'feed_only'");
     this.#ensureColumn("task_runs", "workflow_phase", "TEXT NOT NULL DEFAULT 'feed'");
@@ -1300,21 +1302,23 @@ export class LocalDatabase {
     this.db.prepare(`UPDATE chrome_instances SET status = ?, updated_at = ? WHERE id = ?`).run(status, nowIso(), id);
   }
 
-  logCdpEvent(instanceId, level, message, data = null) {
-    this.db.prepare(`INSERT INTO cdp_logs (instance_id, created_at, level, message, data_json) VALUES (?, ?, ?, ?, ?)`)
-      .run(instanceId, nowIso(), level, message, data ? JSON.stringify(data) : null);
+  logCdpEvent(instanceId, level, message, data = null, taskId = null) {
+    this.db.prepare(`INSERT INTO cdp_logs (instance_id, created_at, level, message, data_json, task_id) VALUES (?, ?, ?, ?, ?, ?)`)
+      .run(instanceId, nowIso(), level, message, data ? JSON.stringify(data) : null, taskId);
   }
 
-  listCdpLogs({ instanceId = null, limit = 100, level = null } = {}) {
+  listCdpLogs({ instanceId = null, limit = 100, level = null, taskId = null } = {}) {
     const clauses = [];
     const params = [];
     if (instanceId) { clauses.push("instance_id = ?"); params.push(instanceId); }
     if (level) { clauses.push("level = ?"); params.push(level); }
+    if (taskId) { clauses.push("task_id = ?"); params.push(taskId); }
     const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
     params.push(Math.min(Number(limit) || 100, 500));
     return this.db.prepare(`SELECT * FROM cdp_logs ${where} ORDER BY created_at DESC, id DESC LIMIT ?`).all(...params).map(r => ({
       id: r.id, instanceId: r.instance_id, createdAt: r.created_at,
       level: r.level, message: r.message, data: parseJson(r.data_json, null),
+      taskId: r.task_id || null,
     }));
   }
 

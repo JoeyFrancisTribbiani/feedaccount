@@ -429,7 +429,7 @@ export function createMonitorServer({
         const fileIds = [];
         for (const filePath of filesToUpload) {
           if (!filePath || !existsSync(filePath)) {
-            store.logCdpEvent(null, "warning", `AI混剪: 文件不存在，跳过: ${filePath}`);
+            store.logCdpEvent(null, "warning", `AI混剪: 文件不存在，跳过: ${filePath}`, taskId);
             continue;
           }
           const fileBuffer = await readFile(filePath);
@@ -478,7 +478,7 @@ export function createMonitorServer({
 
         if (fileOutputs.length > 0 && fileOutputs[0].type === "image") {
           // 图片输出：下载图片到本地，然后用方案配置拼接成视频
-            store.logCdpEvent(null, "info", "AI 返回图片，开始下载图片并拼接...")
+            store.logCdpEvent(null, "info", "AI 返回图片，开始下载图片并拼接...", taskId)
             const imagePaths = [];
             for (const imgOutput of fileOutputs) {
               try {
@@ -490,14 +490,14 @@ export function createMonitorServer({
                   writeFileSync(imgPath, buffer);
                   imagePaths.push(imgPath);
                 }
-              } catch (e) { store.logCdpEvent(null, "warning", `下载图片失败: ${e.message}`); }
+              } catch (e) { store.logCdpEvent(null, "warning", `下载图片失败: ${e.message}`, taskId); }
             }
 
             if (imagePaths.length > 0) {
               // 用方案配置拼接：图片覆盖到片头/片尾视频上
               const preset = presetId ? store.getAiRemixPreset(presetId) : null;
 
-              store.logCdpEvent(null, "info", `AI混剪合成: ${imagePaths.length}张图片, 方案=${preset?.name || "默认"}`);
+              store.logCdpEvent(null, "info", `AI混剪合成: ${imagePaths.length}张图片, 方案=${preset?.name || "默认"}`, taskId);
 
               // 使用队列中传递的原视频本地路径
               if (mainVideoLocalPath && existsSync(mainVideoLocalPath)) {
@@ -513,9 +513,9 @@ export function createMonitorServer({
                   "9:16"
                 );
                 outputUrl = `/data/remix-output/${path.basename(finalOut)}`;
-                store.logCdpEvent(null, "info", `AI 混剪成品: ${outputUrl}`);
+                store.logCdpEvent(null, "info", `AI 混剪成品: ${outputUrl}`, taskId);
               } else {
-                store.logCdpEvent(null, "error", "找不到原视频文件，无法合成");
+                store.logCdpEvent(null, "error", "找不到原视频文件，无法合成", taskId);
               }
             }
         } else if (fileOutputs.length > 0) {
@@ -720,7 +720,8 @@ export function createMonitorServer({
         const instanceId = url.searchParams.get("instanceId") || null;
         const level = url.searchParams.get("level") || null;
         const limit = url.searchParams.get("limit") || 100;
-        sendJson(response, 200, { logs: store.listCdpLogs({ instanceId, level, limit }) });
+        const taskId = url.searchParams.get("taskId") || null;
+        sendJson(response, 200, { logs: store.listCdpLogs({ instanceId, level, limit, taskId }) });
         return;
       }
       if (request.method === "DELETE" && pathname === "/api/cdp/logs") {
