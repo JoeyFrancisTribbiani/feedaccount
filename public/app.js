@@ -4712,7 +4712,7 @@ modalEl.presetSave?.addEventListener("click", async () => {
 // 管理方案弹框 — 列表
 modalEl.presetManage?.addEventListener("click", () => openPresetListModal());
 
-function openPresetListModal() {
+async function openPresetListModal() {
   let overlay = document.querySelector("#preset-list-modal");
   if (!overlay) {
     overlay = document.createElement("div");
@@ -4738,6 +4738,7 @@ function openPresetListModal() {
     presetModalEl.list = overlay.querySelector("#preset-list-container");
   }
   overlay.classList.remove("hidden");
+  await fetchAiPresets();
   renderPresetList();
 }
 
@@ -4760,8 +4761,8 @@ function openPresetEditModal(preset) {
       </div>
       <div class="modal-body">
         <div class="preset-form">
-          <input type="text" id="preset-form-name" placeholder="方案名称" value="${isEdit ? escapeHtml(preset.name) : ""}" />
-          <textarea id="preset-form-prompt" rows="5" placeholder="提示词内容，使用 {{变量名}} 定义需要上传的资源变量">${isEdit ? escapeHtml(preset.prompt) : ""}</textarea>
+          <input type="text" id="preset-form-name" placeholder="方案名称" />
+          <textarea id="preset-form-prompt" rows="5" placeholder="提示词内容，使用 {{变量名}} 定义需要上传的资源变量"></textarea>
           <label class="preset-default-label">
             <input type="checkbox" id="preset-form-default" ${isEdit && preset.isDefault ? "checked" : ""} /> 设为默认方案
           </label>
@@ -4846,6 +4847,12 @@ function openPresetEditModal(preset) {
   presetModalEl.musicLoop = overlay.querySelector("#preset-music-loop");
   presetModalEl.musicFile = overlay.querySelector("#preset-music-file");
   presetModalEl.musicFileInfo = overlay.querySelector("#preset-music-file-info");
+
+  // 通过 JS 设置编辑值（避免模板字符串被 prompt 中的反引号破坏）
+  if (isEdit) {
+    presetModalEl.name.value = preset.name;
+    presetModalEl.prompt.value = preset.prompt;
+  }
 
   overlay.querySelector("#preset-edit-close").addEventListener("click", () => overlay.remove());
   overlay.querySelector("#preset-form-cancel").addEventListener("click", () => overlay.remove());
