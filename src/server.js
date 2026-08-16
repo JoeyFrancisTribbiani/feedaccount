@@ -498,7 +498,7 @@ export function createMonitorServer({
               const introDur = introConfig.imageDuration || 0.4;
               const outroDur = outroConfig.imageDuration || 5;
 
-              // 构建 concat 列表
+              // 构建 concat 列表并写入临时文件
               let concatList = "";
               for (let i = 0; i < imagePaths.length; i++) {
                 const dur = i < introCount ? introDur : outroDur;
@@ -507,15 +507,17 @@ export function createMonitorServer({
               if (imagePaths.length > 0) {
                 concatList += `file '${imagePaths[imagePaths.length - 1].replace(/'/g, "'\\''")}'\n`;
               }
+              const concatFile = path.join(REMIX_OUTPUT_DIR, `concat_${Date.now()}.txt`);
+              writeFileSync(concatFile, concatList);
 
               const { execFileSync } = await import("child_process");
               store.logCdpEvent(null, "info", `生成幻灯片视频: ${imagePaths.length}张图片`);
               execFileSync("ffmpeg", ["-threads", "0", "-err_detect", "ignore_err",
-                "-f", "concat", "-safe", "0", "-i", "-",
+                "-f", "concat", "-safe", "0", "-i", concatFile,
                 "-c:v", "libx264", "-crf", "23", "-preset", "veryfast",
                 "-pix_fmt", "yuv420p", "-vf", "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,fps=30",
                 "-movflags", "+faststart", "-y", slidePath,
-              ], { input: concatList, maxBuffer: 20 * 1024 * 1024, timeout: 120000 });
+              ], { maxBuffer: 20 * 1024 * 1024, timeout: 120000 });
 
               // 拼接 intro + 幻灯片 + outro + 背景音乐
               if (existsSync(slidePath)) {
