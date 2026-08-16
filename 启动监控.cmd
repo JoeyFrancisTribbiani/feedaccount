@@ -81,8 +81,7 @@ if errorlevel 1 (
   )
 )
 
-title FeedAccount Monitor
-"%NODE_EXE%" --no-warnings src\server.js --open
+start "FeedAccount Monitor" /wait "%NODE_EXE%" --no-warnings src\server.js --open
 set "APP_EXIT=%ERRORLEVEL%"
 if "%APP_EXIT%"=="0" goto finished
 
