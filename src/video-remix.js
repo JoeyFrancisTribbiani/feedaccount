@@ -539,7 +539,7 @@ export async function composeAiRemixVideo(mainVideoPath, imagePaths, config = {}
 
         const introProcessed = await overlayImagesOnVideo(
           introPath, introImages, introInsertStart, introImgDuration,
-          targetW, targetH, mainMeta.fps, id, "intro", tempPaths
+          targetW, targetH, mainMeta.fps, id, "intro", tempPaths, introConfig.effect || "none"
         );
         segments.push(introProcessed);
       }
@@ -560,7 +560,7 @@ export async function composeAiRemixVideo(mainVideoPath, imagePaths, config = {}
 
         const outroProcessed = await overlayImagesOnVideo(
           outroPath, outroImages, outroInsertStart, outroImgDuration,
-          targetW, targetH, mainMeta.fps, id, "outro", tempPaths
+          targetW, targetH, mainMeta.fps, id, "outro", tempPaths, outroConfig.effect || "none"
         );
         segments.push(outroProcessed);
       }
@@ -622,7 +622,7 @@ export async function composeAiRemixVideo(mainVideoPath, imagePaths, config = {}
  *
  * @returns {Promise<string>} 处理后的视频路径
  */
-async function overlayImagesOnVideo(videoPath, imagePaths, insertStart, imgDuration, targetW, targetH, fps, id, label, tempPaths) {
+async function overlayImagesOnVideo(videoPath, imagePaths, insertStart, imgDuration, targetW, targetH, fps, id, label, tempPaths, effect = "none") {
   const videoMeta = await probeVideo(videoPath);
   if (!videoMeta) throw new Error(`无法读取${label}视频信息`);
 
@@ -650,10 +650,48 @@ async function overlayImagesOnVideo(videoPath, imagePaths, insertStart, imgDurat
   }
 
   // 构建 filter_complex
-  // 先缩放每张图片到目标尺寸
+  // 先缩放每张图片到目标尺寸，并应用动效
+  const fadeInDur = Math.min(0.3, imgDuration * 0.3); // 淡入时长
   const filters = [];
   for (let i = 0; i < imagePaths.length; i++) {
-    filters.push(`[${i + 1}:v]scale=${targetW}:${targetH}:flags=bicubic,format=yuva420p,setpts=PTS-STARTPTS[img${i}]`);
+    let imgFilter = `[${i + 1}:v]scale=${targetW}:${targetH}:flags=bicubic,format=yuva420p,setpts=PTS-STARTPTS`;
+    // 根据动效类型添加 filter
+    if (effect === "fade") {
+      // 淡入淡出
+      imgFilter += `,fade=t=in:st=0:d=${fadeInDur.toFixed(3)}:alpha=1,fade=t=out:st=${(imgDuration - fadeInDur).toFixed(3)}:d=${fadeInDur.toFixed(3)}:alpha=1`;
+    } else if (effect === "zoom_in") {
+      // 放大（Ken Burns）：从1.0缓慢放大到1.15
+      imgFilter += `,zoompan=z='min(zoom+0.003,1.15)':d=1:s=${targetW}x${targetH}:fps=${Math.round(fps)}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'`;
+    } else if (effect === "zoom_out") {
+      // 缩小：从1.15缩小到1.0
+      imgFilter += `,zoompan=z='max(1.15-0.003*on,1.0)':d=1:s=${targetW}x${targetH}:fps=${Math.round(fps)}`;
+    } else if (effect === "slide_left") {
+      // 左滑入：从右侧滑入
+      imgFilter += `,crop=iw:ih:iw-'iw*t/${imgDuration.toFixed(3)}':0`;
+    } else if (effect === "slide_right") {
+      // 右滑入：从左侧滑入
+      imgFilter += `,crop=iw:ih:'iw*t/${imgDuration.toFixed(3)}-iw':0`;
+    } else if (effect === "slide_up") {
+      // 上滑入：从下方滑入
+      imgFilter += `,crop=iw:ih:0:ih-'ih*t/${imgDuration.toFixed(3)}'`;
+    } else if (effect === "slide_down") {
+      // 下滑入：从上方滑入
+      imgFilter += `,crop=iw:ih:0:'ih*t/${imgDuration.toFixed(3)}-ih'`;
+    } else if (effect === "blur") {
+      // 模糊到清晰
+      imgFilter += `,gblur=sigma='20*(1-t/${imgDuration.toFixed(3)})'`;
+    } else if (effect === "flash") {
+      // 闪白转场
+      imgFilter += `,fade=t=in:st=0:d=0.15:color=white,fade=t=out:st=${(imgDuration - 0.15).toFixed(3)}:d=0.15:color=white`;
+    } else if (effect === "bounce") {
+      // 弹动：缩放回弹效果
+      imgFilter += `,zoompan=z='if(lt(t,0.15),0.8+t*2,if(lt(t,0.3),1.1-(t-0.15)*0.5,1.0))':d=1:s=${targetW}x${targetH}:fps=${Math.round(fps)}`;
+    } else if (effect === "rotate") {
+      // 旋转入场
+      imgFilter += `,rotate='2*PI*t/${imgDuration.toFixed(3)}':fillcolor=#00000000:ow=${targetW}:oh=${targetH}`;
+    }
+    imgFilter += `[img${i}]`;
+    filters.push(imgFilter);
   }
 
   // 依次 overlay 每张图片
