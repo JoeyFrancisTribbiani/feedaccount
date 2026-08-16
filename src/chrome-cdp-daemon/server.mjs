@@ -488,6 +488,12 @@ async function chatgptWaitForResponse(opts = {}) {
     const stillGenerating = await isStillGenerating()
     if (DEBUG) log(`轮询: textLen=${currentText.length} stable=${stableIterations}/${stableCount} generating=${stillGenerating}`)
 
+    // 检测 ChatGPT 错误提示
+    if (currentText && (currentText.includes('出了点问题') || currentText.includes('请重试') || currentText.includes('Something went wrong') || currentText.includes('try again'))) {
+      log('检测到 ChatGPT 错误提示: ' + currentText.substring(0, 100))
+      return { ok: false, text: currentText, error: true, reason: 'chatgpt_error', duration: Date.now() - startTime }
+    }
+
     if (currentText === lastText) {
       if (!stillGenerating) {
         if (minResponseLength > 0 && currentText.length < minResponseLength) {
