@@ -362,9 +362,12 @@ export function createMonitorServer({
 
         if (mode === "matrix-remix") {
           // 新混剪流程：去重 → 拼接 intro+dedup+outro → 叠加背景音乐
+          store.logCdpEvent(null, "info", `开始混剪: ${videoTitle || "未命名"}`, null, taskId);
+          store.logCdpEvent(null, "info", `片头=${introPath ? "有" : "无"}, 片尾=${outroPath ? "有" : "无"}, 音乐=${musicPath ? "有" : "无"}`, null, taskId);
           const out = await remixVideoWithResources(localPaths[0], { introPath, outroPath, musicPath }, ratio, opts);
           const outputUrl = `/data/remix-output/${path.basename(out)}`;
           store.updateRemixTask(taskId, { status: "DONE", outputUrl, completedAt: nowIso() });
+          store.logCdpEvent(null, "info", `混剪完成: ${outputUrl}`, null, taskId);
 
           // 将成品视频链接到每个选中的社媒矩阵
           if (matrixIds && matrixIds.length) {
@@ -379,18 +382,23 @@ export function createMonitorServer({
             }
           }
         } else if (mode === "stitch") {
+          store.logCdpEvent(null, "info", `开始拼接: ${localPaths.length}个视频`, null, taskId);
           const out = await stitchVideos(localPaths, ratio, opts);
           store.updateRemixTask(taskId, { status: "DONE", outputUrl: `/data/remix-output/${path.basename(out)}`, completedAt: nowIso() });
+          store.logCdpEvent(null, "info", `拼接完成: ${path.basename(out)}`, null, taskId);
         } else {
+          store.logCdpEvent(null, "info", `开始去重: ${localPaths.length}个视频`, null, taskId);
           let lastOut = null;
           for (let i = 0; i < localPaths.length; i++) {
             const out = await dedupVideo(localPaths[i], ratio, opts);
             lastOut = out;
           }
           store.updateRemixTask(taskId, { status: "DONE", outputUrl: `/data/remix-output/${path.basename(lastOut)}`, completedAt: nowIso() });
+          store.logCdpEvent(null, "info", `去重完成: ${path.basename(lastOut)}`, null, taskId);
         }
       } catch (e) {
         store.updateRemixTask(taskId, { status: "FAILED", errorMessage: e.message, completedAt: nowIso() });
+        store.logCdpEvent(null, "error", `任务失败: ${e.message}`, null, taskId);
       }
     }
     remixProcessing = false;
