@@ -3630,9 +3630,15 @@ remixEl.dedupBtn.addEventListener("click", async () => {
   showToast("去重任务已创建");
 });
 
-// 混剪 — 改为打开新建混剪任务弹框
+// 拼接混剪 — 打开弹框，预设为拼接模式
 remixEl.stitchBtn.addEventListener("click", () => {
-  openRemixTaskModal();
+  openRemixTaskModal("stitch");
+});
+
+// AI混剪 — 打开弹框，预设为AI模式
+remixEl.aiBtn = document.querySelector("#remix-ai-btn");
+remixEl.aiBtn?.addEventListener("click", () => {
+  openRemixTaskModal("ai");
 });
 
 remixEl.refreshTasks.addEventListener("click", fetchRemixTasks);
@@ -4451,18 +4457,19 @@ const presetModalEl = {
   musicVolume: null, musicScope: null, musicLoop: null, musicFile: null, musicFileInfo: null,
 };
 
-async function openRemixTaskModal() {
+async function openRemixTaskModal(presetMode = "stitch") {
   modalEl.overlay.classList.remove("hidden");
   modalState.selectedMatrixIds.clear();
   modalState.selectedCreatorId = null;
   modalState.selectedVideoIds.clear();
-  modalState.mode = "stitch";
+  modalState.mode = presetMode;
 
-  // 重置模式选择为默认
-  document.querySelector('input[name="modal-mode"][value="stitch"]').checked = true;
-  modalEl.modeStitchLabel.classList.add("checked");
-  modalEl.modeAiLabel.classList.remove("checked");
-  modalEl.aiConfig.classList.add("hidden");
+  // 根据按钮来源预设模式
+  const isAi = presetMode === "ai";
+  document.querySelector(`input[name="modal-mode"][value="${presetMode}"]`).checked = true;
+  modalEl.modeStitchLabel.classList.toggle("checked", !isAi);
+  modalEl.modeAiLabel.classList.toggle("checked", isAi);
+  modalEl.aiConfig.classList.toggle("hidden", !isAi);
 
   // 加载矩阵列表
   try {
