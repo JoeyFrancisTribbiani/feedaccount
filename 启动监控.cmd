@@ -3,6 +3,21 @@ setlocal
 chcp 65001 >nul
 cd /d "%~dp0"
 
+REM ===== 先杀掉旧进程（监控服务 + CDP守护进程）=====
+echo [清理] 正在停止旧进程...
+taskkill /fi "WINDOWTITLE eq Chrome CDP Daemon*" /f >nul 2>nul
+taskkill /fi "WINDOWTITLE eq FeedAccount Monitor*" /f >nul 2>nul
+REM 按命令行匹配杀掉 server.mjs 和 server.js 进程
+for /f "tokens=2" %%p in ('tasklist /fi "imagename eq node.exe" /fo list 2^>nul ^| findstr /i "PID"') do (
+  for /f "tokens=*" %%c in ('wmic process where "processid=%%p" get commandline /value 2^>nul ^| findstr /i "server.mjs"') do (
+    taskkill /pid %%p /f >nul 2>nul
+  )
+  for /f "tokens=*" %%c in ('wmic process where "processid=%%p" get commandline /value 2^>nul ^| findstr /i "src\\server.js"') do (
+    taskkill /pid %%p /f >nul 2>nul
+  )
+)
+timeout /t 1 /nobreak >nul
+
 set "NODE_EXE="
 set "BUNDLED_NODE=%USERPROFILE%\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin\node.exe"
 
@@ -66,6 +81,7 @@ if errorlevel 1 (
   )
 )
 
+title FeedAccount Monitor
 "%NODE_EXE%" --no-warnings src\server.js --open
 set "APP_EXIT=%ERRORLEVEL%"
 if "%APP_EXIT%"=="0" goto finished
@@ -80,4 +96,6 @@ endlocal
 exit /b 1
 
 :finished
+REM 监控服务退出时也杀掉 CDP Daemon
+taskkill /fi "WINDOWTITLE eq Chrome CDP Daemon*" /f >nul 2>nul
 endlocal
