@@ -566,13 +566,33 @@ export async function composeAiRemixVideo(mainVideoPath, imagePaths, config = {}
       }
     }
 
-    // 拼接所有片段
-    const concatenatedPath = path.join(TEMP_DIR, `ai_concat_${id}.mp4`);
-    if (segments.length > 1) {
-      await concatVideos(segments, concatenatedPath);
+    // 拼接所有片段（带转场效果）
+    let concatenatedPath;
+    if (segments.length === 1) {
+      concatenatedPath = segments[0];
+    } else if (segments.length === 2) {
+      // 两个片段：一个转场
+      const transitionType = segments[0] === normalizedMain ? (outroConfig.transition || "none") : (introConfig.transition || "none");
+      concatenatedPath = path.join(TEMP_DIR, `ai_concat_${id}.mp4`);
+      if (transitionType && transitionType !== "none") {
+        await concatWithTransition(segments, [transitionType], concatenatedPath, targetW, targetH, mainMeta.fps);
+      } else {
+        await concatVideos(segments, concatenatedPath);
+      }
       tempPaths.push(concatenatedPath);
     } else {
-      concatenatedPath = segments[0];
+      // 三个片段：片头→正片（introConfig.transition）+ 正片→片尾（outroConfig.transition）
+      const transitions = [
+        introConfig.transition && introConfig.transition !== "none" ? introConfig.transition : null,
+        outroConfig.transition && outroConfig.transition !== "none" ? outroConfig.transition : null,
+      ];
+      concatenatedPath = path.join(TEMP_DIR, `ai_concat_${id}.mp4`);
+      if (transitions.some(t => t)) {
+        await concatWithTransition(segments, transitions, concatenatedPath, targetW, targetH, mainMeta.fps);
+      } else {
+        await concatVideos(segments, concatenatedPath);
+      }
+      tempPaths.push(concatenatedPath);
     }
 
     // 叠加背景音乐
@@ -674,6 +694,113 @@ async function overlayImagesOnVideo(videoPath, imagePaths, insertStart, imgDurat
   tempPaths.push(overlayPath);
 
   return overlayPath;
+}
+
+/**
+ * 带转场效果拼接视频片段
+ * @param {string[]} segments - 视频片段路径数组
+ * @param {(string|null)[]} transitions - 转场类型数组（长度 = segments.length - 1），null 表示无转场
+ * @param {string} outputPath - 输出路径
+ * @param {number} targetW - 目标宽度
+ * @param {number} targetH - 目标高度
+ * @param {number} fps - 帧率
+ */
+async function concatWithTransition(segments, transitions, outputPath, targetW, targetH, fps) {
+  const TRANSITION_DURATION = 0.5; // 转场持续0.5秒
+
+  // 先归一化所有片段到相同分辨率和帧率
+  const normalizedPaths = [];
+  const durations = [];
+  for (let i = 0; i < segments.length; i++) {
+    const normPath = path.join(TEMP_DIR, `trans_norm_${Date.now()}_${i}.mp4`);
+    const meta = await probeVideo(segments[i]);
+    durations.push(meta?.duration || 0);
+    await runFfmpeg([
+      "-err_detect", "ignore_err",
+      "-i", segments[i],
+      "-vf", `scale=${targetW}:${targetH}:flags=bicubic,format=yuv420p,fps=${Math.round(fps)}`,
+      "-c:v", "libx264", "-crf", "23", "-preset", "veryfast",
+      "-c:a", "aac", "-b:a", "128k",
+      "-pix_fmt", "yuv420p", "-movflags", "+faststart",
+      "-y", normPath,
+    ]);
+    normalizedPaths.push(normPath);
+  }
+
+  // 构建 xfade filter 链
+  const inputs = [];
+  for (const p of normalizedPaths) {
+    inputs.push("-i", p);
+  }
+
+  const filters = [];
+  const xfadeMap = {
+    fade: "fade",
+    dissolve: "dissolve",
+    slide_left: "slideleft",
+    slide_right: "slideright",
+    slide_up: "slideup",
+    slide_down: "slidedown",
+    zoom_in: "zoomin",
+    zoom_out: "zoomout",
+    blur: "smoothleft",
+    flash: "fadewhite",
+    black: "fadeblack",
+  };
+
+  // 构建视频 xfade 链
+  let prevVideoLabel = "[0:v]";
+  let prevAudioLabel = "[0:a]";
+  let offset = 0;
+
+  for (let i = 0; i < transitions.length; i++) {
+    const trans = transitions[i];
+    offset += durations[i] - (trans ? TRANSITION_DURATION : 0);
+
+    if (trans && xfadeMap[trans]) {
+      const vOut = i < transitions.length - 1 ? `[vt${i}]` : "[vout]";
+      const aOut = i < transitions.length - 1 ? `[at${i}]` : "[aout]";
+      // 视频 xfade
+      filters.push(`${prevVideoLabel}[${i + 1}:v]xfade=transition=${xfadeMap[trans]}:duration=${TRANSITION_DURATION}:offset=${offset.toFixed(3)}${vOut}`);
+      prevVideoLabel = vOut;
+      // 音频 crossfade（acrossfade）
+      filters.push(`${prevAudioLabel}[${i + 1}:a]acrossfade=d=${TRANSITION_DURATION}${aOut}`);
+      prevAudioLabel = aOut;
+    } else {
+      // 无转场，直接 concat
+      const vOut = i < transitions.length - 1 ? `[vt${i}]` : "[vout]";
+      const aOut = i < transitions.length - 1 ? `[at${i}]` : "[aout]";
+      filters.push(`${prevVideoLabel}[${i + 1}:v]concat=n=2:v=1:a=0${vOut}`);
+      filters.push(`${prevAudioLabel}[${i + 1}:a]concat=n=2:v=0:a=1${aOut}`);
+      prevVideoLabel = vOut;
+      prevAudioLabel = aOut;
+    }
+  }
+
+  // 如果只有一个片段没有转场
+  if (transitions.length === 0) {
+    prevVideoLabel = "[0:v]";
+    prevAudioLabel = "[0:a]";
+  }
+
+  const args = [
+    ...inputs,
+    "-filter_complex", filters.join(";"),
+    "-map", prevVideoLabel,
+    "-map", prevAudioLabel,
+    "-c:v", "libx264", "-crf", "23", "-preset", "veryfast",
+    "-pix_fmt", "yuv420p",
+    "-c:a", "aac", "-b:a", "128k",
+    "-movflags", "+faststart",
+    "-y", outputPath,
+  ];
+
+  await runFfmpeg(args);
+
+  // 清理临时归一化文件
+  for (const p of normalizedPaths) {
+    try { await unlink(p); } catch {}
+  }
 }
 
 /** 将 /data/xxx 路径解析为本地文件路径 */

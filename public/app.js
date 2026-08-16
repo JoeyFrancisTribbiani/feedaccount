@@ -4479,8 +4479,8 @@ const presetModalEl = {
   isDefault: null,
   vars: null,
   save: null,
-  introStart: null, introCount: null, introDuration: null, introEffect: null, introFile: null, introFileInfo: null,
-  outroStart: null, outroCount: null, outroDuration: null, outroEffect: null, outroFile: null, outroFileInfo: null,
+  introStart: null, introCount: null, introDuration: null, introEffect: null, introTransition: null, introFile: null, introFileInfo: null,
+  outroStart: null, outroCount: null, outroDuration: null, outroEffect: null, outroTransition: null, outroFile: null, outroFileInfo: null,
   musicVolume: null, musicScope: null, musicLoop: null, musicFile: null, musicFileInfo: null,
 };
 
@@ -4788,6 +4788,8 @@ function openPresetEditModal(preset) {
 
   const EFFECTS = `<option value="none">硬切（无动效）</option><option value="fade">淡入淡出</option><option value="slide_left">左滑入</option><option value="slide_right">右滑入</option><option value="slide_up">上滑入</option><option value="slide_down">下滑入</option><option value="zoom_in">放大（Ken Burns）</option><option value="zoom_out">缩小</option><option value="bounce">弹动</option><option value="rotate">旋转入场</option><option value="blur">模糊到清晰</option><option value="flash">闪白转场</option>`;
 
+  const TRANSITIONS = `<option value="none">无转场（硬切）</option><option value="fade">淡入淡出</option><option value="dissolve">叠化</option><option value="slide_left">左滑</option><option value="slide_right">右滑</option><option value="slide_up">上滑</option><option value="slide_down">下滑</option><option value="zoom_in">放大</option><option value="zoom_out">缩小</option><option value="blur">模糊</option><option value="flash">闪白</option><option value="black">闪黑</option>`;
+
   overlay.innerHTML = `
     <div class="modal-content" style="max-width: 680px;">
       <div class="modal-header">
@@ -4811,6 +4813,7 @@ function openPresetEditModal(preset) {
             </div>
             <div class="preset-config-row">
               <label>图片动效 <select id="preset-intro-effect">${EFFECTS}</select></label>
+              <label>正片切换转场 <select id="preset-intro-transition">${TRANSITIONS}</select></label>
               <label>片头片段文件 <input type="file" id="preset-intro-file" accept="video/*" /></label>
             </div>
             <span id="preset-intro-file-info" class="preset-file-info"></span>
@@ -4824,6 +4827,7 @@ function openPresetEditModal(preset) {
             </div>
             <div class="preset-config-row">
               <label>图片动效 <select id="preset-outro-effect">${EFFECTS}</select></label>
+              <label>正片切换转场 <select id="preset-outro-transition">${TRANSITIONS}</select></label>
               <label>片尾片段文件 <input type="file" id="preset-outro-file" accept="video/*" /></label>
             </div>
             <span id="preset-outro-file-info" class="preset-file-info"></span>
@@ -4869,12 +4873,14 @@ function openPresetEditModal(preset) {
   presetModalEl.introCount = overlay.querySelector("#preset-intro-count");
   presetModalEl.introDuration = overlay.querySelector("#preset-intro-duration");
   presetModalEl.introEffect = overlay.querySelector("#preset-intro-effect");
+  presetModalEl.introTransition = overlay.querySelector("#preset-intro-transition");
   presetModalEl.introFile = overlay.querySelector("#preset-intro-file");
   presetModalEl.introFileInfo = overlay.querySelector("#preset-intro-file-info");
   presetModalEl.outroStart = overlay.querySelector("#preset-outro-start");
   presetModalEl.outroCount = overlay.querySelector("#preset-outro-count");
   presetModalEl.outroDuration = overlay.querySelector("#preset-outro-duration");
   presetModalEl.outroEffect = overlay.querySelector("#preset-outro-effect");
+  presetModalEl.outroTransition = overlay.querySelector("#preset-outro-transition");
   presetModalEl.outroFile = overlay.querySelector("#preset-outro-file");
   presetModalEl.outroFileInfo = overlay.querySelector("#preset-outro-file-info");
   presetModalEl.musicVolume = overlay.querySelector("#preset-music-volume");
@@ -4938,6 +4944,7 @@ function collectPresetConfig() {
     imageCount: parseInt(presetModalEl.introCount?.value) || 0,
     imageDuration: timecodeToSeconds(presetModalEl.introDuration?.value),
     effect: presetModalEl.introEffect?.value || "none",
+    transition: presetModalEl.introTransition?.value || "none",
     segmentFile: pendingSegmentFiles.intro || null,
   };
   const outroConfig = {
@@ -4945,6 +4952,7 @@ function collectPresetConfig() {
     imageCount: parseInt(presetModalEl.outroCount?.value) || 0,
     imageDuration: timecodeToSeconds(presetModalEl.outroDuration?.value),
     effect: presetModalEl.outroEffect?.value || "none",
+    transition: presetModalEl.outroTransition?.value || "none",
     segmentFile: pendingSegmentFiles.outro || null,
   };
   const musicConfig = {
@@ -4964,10 +4972,12 @@ function fillPresetConfigForm(preset) {
   if (presetModalEl.introCount) presetModalEl.introCount.value = ic.imageCount ?? 8;
   if (presetModalEl.introDuration) presetModalEl.introDuration.value = secondsToTimecode(ic.imageDuration ?? 0.4);
   if (presetModalEl.introEffect) presetModalEl.introEffect.value = ic.effect || "none";
+  if (presetModalEl.introTransition) presetModalEl.introTransition.value = ic.transition || "none";
   if (presetModalEl.outroStart) presetModalEl.outroStart.value = secondsToTimecode(oc.imageInsertStart ?? 0);
   if (presetModalEl.outroCount) presetModalEl.outroCount.value = oc.imageCount ?? 4;
   if (presetModalEl.outroDuration) presetModalEl.outroDuration.value = secondsToTimecode(oc.imageDuration ?? 5);
   if (presetModalEl.outroEffect) presetModalEl.outroEffect.value = oc.effect || "none";
+  if (presetModalEl.outroTransition) presetModalEl.outroTransition.value = oc.transition || "none";
   if (presetModalEl.musicVolume) presetModalEl.musicVolume.value = mc.volumePercent ?? 8;
   if (presetModalEl.musicScope) presetModalEl.musicScope.value = mc.scope || "original";
   if (presetModalEl.musicLoop) presetModalEl.musicLoop.checked = mc.loop ?? true;
