@@ -4744,9 +4744,9 @@ function openPresetModal() {
             <div class="preset-config-section">
               <div class="preset-config-title">片头配置 (Intro)</div>
               <div class="preset-config-row">
-                <label>第几秒开始插入图片 <input type="number" id="preset-intro-start" min="0" step="0.1" value="0" /></label>
+                <label>开始插入图片时间 <input type="text" id="preset-intro-start" value="00:00:00:00" placeholder="时:分:秒:帧" pattern="\d{2}:\d{2}:\d{2}:\d{2}" /></label>
                 <label>插入图片数量 <input type="number" id="preset-intro-count" min="0" value="8" /></label>
-                <label>每张图片持续秒数 <input type="number" id="preset-intro-duration" min="0.1" step="0.1" value="0.4" /></label>
+                <label>每张图片持续 <input type="text" id="preset-intro-duration" value="00:00:00:12" placeholder="时:分:秒:帧" pattern="\d{2}:\d{2}:\d{2}:\d{2}" /></label>
               </div>
               <div class="preset-config-row">
                 <label>图片动效
@@ -4774,9 +4774,9 @@ function openPresetModal() {
             <div class="preset-config-section">
               <div class="preset-config-title">片尾配置 (Outro)</div>
               <div class="preset-config-row">
-                <label>第几秒开始插入图片 <input type="number" id="preset-outro-start" min="0" step="0.1" value="0" /></label>
+                <label>开始插入图片时间 <input type="text" id="preset-outro-start" value="00:00:00:00" placeholder="时:分:秒:帧" pattern="\d{2}:\d{2}:\d{2}:\d{2}" /></label>
                 <label>插入图片数量 <input type="number" id="preset-outro-count" min="0" value="4" /></label>
-                <label>每张图片持续秒数 <input type="number" id="preset-outro-duration" min="0.1" step="0.1" value="5" /></label>
+                <label>每张图片持续 <input type="text" id="preset-outro-duration" value="00:00:05:00" placeholder="时:分:秒:帧" pattern="\d{2}:\d{2}:\d{2}:\d{2}" /></label>
               </div>
               <div class="preset-config-row">
                 <label>图片动效
@@ -4888,18 +4888,39 @@ function openPresetModal() {
 let currentEditPresetId = null;
 let pendingSegmentFiles = { intro: null, outro: null, music: null };
 
+// 时间码 HH:MM:SS:FF (30fps) → 秒
+function timecodeToSeconds(tc) {
+  if (typeof tc === "number") return tc;
+  if (!tc || typeof tc !== "string") return 0;
+  const m = tc.match(/^(\d{2}):(\d{2}):(\d{2}):(\d{2})$/);
+  if (!m) { const n = parseFloat(tc); return isNaN(n) ? 0 : n; }
+  const [, h, mi, s, f] = m;
+  return (parseInt(h) * 3600 + parseInt(mi) * 60 + parseInt(s) + parseInt(f) / 30);
+}
+
+// 秒 → 时间码 HH:MM:SS:FF (30fps)
+function secondsToTimecode(sec) {
+  if (typeof sec === "string" && /^\d{2}:\d{2}:\d{2}:\d{2}$/.test(sec)) return sec;
+  const n = parseFloat(sec) || 0;
+  const h = Math.floor(n / 3600);
+  const mi = Math.floor((n % 3600) / 60);
+  const s = Math.floor(n % 60);
+  const f = Math.round((n - Math.floor(n)) * 30);
+  return `${String(h).padStart(2, "0")}:${String(mi).padStart(2, "0")}:${String(s).padStart(2, "0")}:${String(f % 30).padStart(2, "0")}`;
+}
+
 function collectPresetConfig() {
   const introConfig = {
-    imageInsertStart: parseFloat(presetModalEl.introStart?.value) || 0,
+    imageInsertStart: timecodeToSeconds(presetModalEl.introStart?.value),
     imageCount: parseInt(presetModalEl.introCount?.value) || 0,
-    imageDuration: parseFloat(presetModalEl.introDuration?.value) || 0.4,
+    imageDuration: timecodeToSeconds(presetModalEl.introDuration?.value),
     effect: presetModalEl.introEffect?.value || "none",
     segmentFile: pendingSegmentFiles.intro || null,
   };
   const outroConfig = {
-    imageInsertStart: parseFloat(presetModalEl.outroStart?.value) || 0,
+    imageInsertStart: timecodeToSeconds(presetModalEl.outroStart?.value),
     imageCount: parseInt(presetModalEl.outroCount?.value) || 0,
-    imageDuration: parseFloat(presetModalEl.outroDuration?.value) || 5,
+    imageDuration: timecodeToSeconds(presetModalEl.outroDuration?.value),
     effect: presetModalEl.outroEffect?.value || "none",
     segmentFile: pendingSegmentFiles.outro || null,
   };
@@ -4916,13 +4937,13 @@ function fillPresetConfigForm(preset) {
   const ic = preset?.introConfig || {};
   const oc = preset?.outroConfig || {};
   const mc = preset?.musicConfig || {};
-  if (presetModalEl.introStart) presetModalEl.introStart.value = ic.imageInsertStart ?? 0;
+  if (presetModalEl.introStart) presetModalEl.introStart.value = secondsToTimecode(ic.imageInsertStart ?? 0);
   if (presetModalEl.introCount) presetModalEl.introCount.value = ic.imageCount ?? 8;
-  if (presetModalEl.introDuration) presetModalEl.introDuration.value = ic.imageDuration ?? 0.4;
+  if (presetModalEl.introDuration) presetModalEl.introDuration.value = secondsToTimecode(ic.imageDuration ?? 0.4);
   if (presetModalEl.introEffect) presetModalEl.introEffect.value = ic.effect || "none";
-  if (presetModalEl.outroStart) presetModalEl.outroStart.value = oc.imageInsertStart ?? 0;
+  if (presetModalEl.outroStart) presetModalEl.outroStart.value = secondsToTimecode(oc.imageInsertStart ?? 0);
   if (presetModalEl.outroCount) presetModalEl.outroCount.value = oc.imageCount ?? 4;
-  if (presetModalEl.outroDuration) presetModalEl.outroDuration.value = oc.imageDuration ?? 5;
+  if (presetModalEl.outroDuration) presetModalEl.outroDuration.value = secondsToTimecode(oc.imageDuration ?? 5);
   if (presetModalEl.outroEffect) presetModalEl.outroEffect.value = oc.effect || "none";
   if (presetModalEl.musicVolume) presetModalEl.musicVolume.value = mc.volumePercent ?? 8;
   if (presetModalEl.musicScope) presetModalEl.musicScope.value = mc.scope || "original";
