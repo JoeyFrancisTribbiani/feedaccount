@@ -7,16 +7,12 @@ REM ===== 先杀掉旧进程（监控服务 + CDP守护进程）=====
 echo [清理] 正在停止旧进程...
 taskkill /fi "WINDOWTITLE eq Chrome CDP Daemon*" /f >nul 2>nul
 taskkill /fi "WINDOWTITLE eq FeedAccount Monitor*" /f >nul 2>nul
-REM 按命令行匹配杀掉 server.mjs 和 server.js 进程
-for /f "tokens=2" %%p in ('tasklist /fi "imagename eq node.exe" /fo list 2^>nul ^| findstr /i "PID"') do (
-  for /f "tokens=*" %%c in ('wmic process where "processid=%%p" get commandline /value 2^>nul ^| findstr /i "server.mjs"') do (
-    taskkill /pid %%p /f >nul 2>nul
-  )
-  for /f "tokens=*" %%c in ('wmic process where "processid=%%p" get commandline /value 2^>nul ^| findstr /i "src\\server.js"') do (
-    taskkill /pid %%p /f >nul 2>nul
-  )
+taskkill /fi "WINDOWTITLE eq 启动监控*" /f >nul 2>nul
+REM 按 PID 杀掉所有运行 server.mjs 或 server.js 的 node 进程
+for /f "tokens=2 delims==" %%a in ('wmic process where "name='node.exe'" get processid^,commandline /format:list 2^>nul ^| findstr /i "server.mjs server.js"') do (
+  for /f "tokens=*" %%p in ("%%a") do taskkill /pid %%p /f >nul 2>nul
 )
-timeout /t 1 /nobreak >nul
+timeout /t 2 /nobreak >nul
 
 set "NODE_EXE="
 set "BUNDLED_NODE=%USERPROFILE%\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin\node.exe"
@@ -55,7 +51,7 @@ if exist "%DAEMON_DIR%\server.mjs" (
     popd
   )
   echo [CDP Daemon] 正在后台启动...
-  start "Chrome CDP Daemon" /min "%NODE_EXE%" "%DAEMON_DIR%\server.mjs"
+  start "Chrome CDP Daemon" "%NODE_EXE%" "%DAEMON_DIR%\server.mjs"
   timeout /t 2 /nobreak >nul
 ) else (
   echo [CDP Daemon] 未找到 src\chrome-cdp-daemon\server.mjs，跳过
