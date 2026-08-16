@@ -1596,7 +1596,7 @@ export function createMonitorServer({
         // ---- Remix: 新混剪任务（社媒矩阵 + 达人资源） ----
         if (request.method === "POST" && pathname === "/api/remix/matrix-task") {
           const body = await readJson(request);
-          const { matrixIds, creatorId, videoIds, ratio, preset } = body;
+          const { matrixIds, creatorId, videoIds, ratio, preset, introId, outroId, musicId } = body;
           if (!matrixIds?.length) { sendJson(response, 400, { error: "请选择至少一个社媒矩阵" }); return; }
           if (!creatorId) { sendJson(response, 400, { error: "请选择达人" }); return; }
           if (!videoIds?.length) { sendJson(response, 400, { error: "请选择至少一个视频" }); return; }
@@ -1636,10 +1636,18 @@ export function createMonitorServer({
               return path.resolve(THIS_DIR, "..", fp.replace(/^\//, ""));
             };
 
-            // 随机选取资源
-            const introPath = intros.length ? resolveResource(intros[Math.floor(Math.random() * intros.length)].filePath) : null;
-            const outroPath = outros.length ? resolveResource(outros[Math.floor(Math.random() * outros.length)].filePath) : null;
-            const musicPath = musics.length ? resolveResource(musics[Math.floor(Math.random() * musics.length)].filePath) : null;
+            // 选取资源：用户指定 > 随机
+            const pickResource = (list, selectedId) => {
+              if (selectedId === "none") return null;
+              if (selectedId && list.length) {
+                const found = list.find(r => r.id === selectedId);
+                if (found) return resolveResource(found.filePath);
+              }
+              return list.length ? resolveResource(list[Math.floor(Math.random() * list.length)].filePath) : null;
+            };
+            const introPath = pickResource(intros, introId);
+            const outroPath = pickResource(outros, outroId);
+            const musicPath = pickResource(musics, musicId);
 
             remixQueue.push({
               taskId: task.id, localPaths: [resolveLocal(video.url)], mode: "matrix-remix",

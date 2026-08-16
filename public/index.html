@@ -1385,6 +1385,28 @@
                 <option value="1:1">1:1 方形</option>
               </select>
             </div>
+            <!-- 拼接模式专属：资源选择 -->
+            <div id="modal-stitch-config" class="modal-step">
+              <div class="modal-step-head">
+                <span class="modal-step-num">5</span>
+                <strong>片头/片尾/背景音乐</strong>
+                <span class="muted-activity" style="font-size: 11px;">可选，默认随机</span>
+              </div>
+              <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;">
+                <label class="wide-input">
+                  <span>片头</span>
+                  <select id="modal-intro-select" class="sched-check-select"><option value="">随机</option></select>
+                </label>
+                <label class="wide-input">
+                  <span>片尾</span>
+                  <select id="modal-outro-select" class="sched-check-select"><option value="">随机</option></select>
+                </label>
+                <label class="wide-input">
+                  <span>背景音乐</span>
+                  <select id="modal-music-select" class="sched-check-select"><option value="">随机</option><option value="none">不加</option></select>
+                </label>
+              </div>
+            </div>
             <!-- AI 模式专属：CDP 实例 + 方案 + 提示词 -->
             <div id="modal-ai-config" class="modal-step hidden">
               <div class="modal-step-head">

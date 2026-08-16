@@ -4529,6 +4529,10 @@ const modalEl = {
   videoList: document.querySelector("#modal-video-list"),
   ratio: document.querySelector("#modal-ratio"),
   aiConfig: document.querySelector("#modal-ai-config"),
+  stitchConfig: document.querySelector("#modal-stitch-config"),
+  introSelect: document.querySelector("#modal-intro-select"),
+  outroSelect: document.querySelector("#modal-outro-select"),
+  musicSelect: document.querySelector("#modal-music-select"),
   cdpInstance: document.querySelector("#modal-cdp-instance"),
   cdpRefresh: document.querySelector("#modal-cdp-refresh"),
   aiPrompt: document.querySelector("#modal-ai-prompt"),
@@ -4564,6 +4568,7 @@ async function openRemixTaskModal(presetMode = "stitch") {
   const titleEl = document.querySelector("#remix-task-modal-title");
   if (titleEl) titleEl.textContent = isAi ? "新建 AI 混剪任务" : "新建拼接混剪任务";
   modalEl.aiConfig?.classList.toggle("hidden", !isAi);
+  modalEl.stitchConfig?.classList.toggle("hidden", isAi);
 
   // 加载矩阵列表
   try {
@@ -4680,6 +4685,23 @@ function renderModalCreators() {
         modalState.videos = Array.isArray(data) ? data : [];
       } catch { modalState.videos = []; }
       renderModalVideos();
+      // 加载该达人的资源到下拉框
+      try {
+        const resData = await request(`/api/remix/creators/${encodeURIComponent(rb.value)}/resources`);
+        const resources = Array.isArray(resData) ? resData : [];
+        const fillSelect = (sel, type, keepNone) => {
+          if (!sel) return;
+          const oldVal = sel.value;
+          const opts = keepNone
+            ? `<option value="">随机</option><option value="none">不加</option>`
+            : `<option value="">随机</option>`;
+          sel.innerHTML = opts + resources.filter(r => r.type === type).map(r => `<option value="${escapeHtml(r.id)}">${escapeHtml(r.filename || r.title || type)}</option>`).join("");
+          sel.value = oldVal;
+        };
+        fillSelect(modalEl.introSelect, "intro");
+        fillSelect(modalEl.outroSelect, "outro");
+        fillSelect(modalEl.musicSelect, "music", true);
+      } catch {}
       updateModalStartBtn();
     });
   });
@@ -5370,9 +5392,12 @@ modalEl.start?.addEventListener("click", async () => {
       showToast(msg);
     } else {
       // 素材直接拼接
+      const introId = modalEl.introSelect?.value || "";
+      const outroId = modalEl.outroSelect?.value || "";
+      const musicId = modalEl.musicSelect?.value || "";
       const res = await request("/api/remix/matrix-task", {
         method: "POST",
-        body: JSON.stringify({ matrixIds, creatorId, videoIds, ratio }),
+        body: JSON.stringify({ matrixIds, creatorId, videoIds, ratio, introId, outroId, musicId }),
       });
       modalEl.overlay.classList.add("hidden");
       showToast(`已创建 ${res.count} 个混剪任务，正在处理…`);
