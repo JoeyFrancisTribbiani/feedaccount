@@ -398,8 +398,8 @@ async function chatgptUploadFile(filePath, opts = {}) {
       await plusBtn.click({ timeout: 5000 })
       await page.waitForTimeout(1000)
 
-      // ChatGPT 的弹出菜单项是 div.__menu-item，不是标准 role=menuitem
-      const menuItem = page.locator('div[class*="__menu-item"]').first()
+      // ChatGPT 的弹出菜单在 div.popover 容器内，菜单项是 div.__menu-item
+      const menuItem = page.locator('div[class*="popover"] div[class*="__menu-item"]').first()
       if (await menuItem.count() > 0) {
         const fileChooserPromise = page.waitForEvent('filechooser', { timeout: 10000 })
         await menuItem.click({ timeout: 5000 })

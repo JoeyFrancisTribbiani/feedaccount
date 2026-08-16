@@ -1497,19 +1497,14 @@ export function createMonitorServer({
               ratio: ratio || "9:16",
             });
 
-            // 收集要上传的文件路径
+            // 收集要上传的文件路径：原视频 + 方案绑定的文件
             const filesToUpload = [resolveLocal(video.url)];
-            // 方案绑定的变量文件
             if (presetFiles.length) {
               for (const pf of presetFiles) {
                 const localPath = resolveLocal(pf.filePath);
                 if (localPath) filesToUpload.push(localPath);
               }
             }
-            // 随机选取达人资源
-            if (intros.length) filesToUpload.push(resolveResource(intros[Math.floor(Math.random() * intros.length)].filePath));
-            if (outros.length) filesToUpload.push(resolveResource(outros[Math.floor(Math.random() * outros.length)].filePath));
-            if (musics.length) filesToUpload.push(resolveResource(musics[Math.floor(Math.random() * musics.length)].filePath));
 
             // 提交到 AI 混剪队列（异步处理）
             aiRemixQueue.push({
