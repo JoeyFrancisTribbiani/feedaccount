@@ -403,7 +403,7 @@ export function createMonitorServer({
     if (aiRemixProcessing) return;
     aiRemixProcessing = true;
     while (aiRemixQueue.length > 0) {
-      const { taskId, daemonUrl, filesToUpload, prompt, matrixIds, creatorId, sourceVideoId, videoTitle } = aiRemixQueue.shift();
+      const { taskId, daemonUrl, filesToUpload, prompt, matrixIds, creatorId, sourceVideoId, videoTitle, presetId } = aiRemixQueue.shift();
       store.updateRemixTask(taskId, { status: "PROCESSING" });
       try {
         // Step 1: 上传文件到 daemon
@@ -453,12 +453,80 @@ export function createMonitorServer({
           continue;
         }
 
-        // Step 4: 从 daemon 输出中找到视频文件并下载到本地
-        const fileOutputs = (daemonTask.outputs || []).filter((o) => o.type === "file");
+        // Step 4: 从 daemon 输出中找到文件（视频或图片）并下载到本地
+        const fileOutputs = (daemonTask.outputs || []).filter((o) => o.type === "file" || o.type === "image");
         let outputUrl = null;
-        if (fileOutputs.length > 0) {
+
+        if (fileOutputs.length > 0 && fileOutputs[0].type === "image") {
+          // 图片输出：下载图片到本地，然后用方案配置拼接成视频
+            store.logCdpEvent(null, "info", "AI 返回图片，开始下载图片并拼接...")
+            const imagePaths = [];
+            for (const imgOutput of fileOutputs) {
+              try {
+                const downloadRes = await fetch(`${daemonUrl}${imgOutput.url}`);
+                if (downloadRes.ok) {
+                  const buffer = Buffer.from(await downloadRes.arrayBuffer());
+                  const imgFileName = `ai_img_${Date.now()}_${imagePaths.length + 1}.png`;
+                  const imgPath = path.join(REMIX_OUTPUT_DIR, imgFileName);
+                  writeFileSync(imgPath, buffer);
+                  imagePaths.push(imgPath);
+                }
+              } catch (e) { store.logCdpEvent(null, "warning", `下载图片失败: ${e.message}`); }
+            }
+
+            if (imagePaths.length > 0) {
+              // 用方案配置拼接：片头 + 图片 + 片尾 + 背景音乐
+              const preset = presetId ? store.getAiRemixPreset(presetId) : null;
+              const introConfig = preset?.introConfig || {};
+              const outroConfig = preset?.outroConfig || {};
+
+              // 获取方案绑定的片头/片尾/音乐文件
+              const presetFiles = presetId ? store.getPresetFiles(presetId) : [];
+              const introFile = presetFiles.find(f => f.varName === "_intro_segment");
+              const outroFile = presetFiles.find(f => f.varName === "_outro_segment");
+              const musicFile = presetFiles.find(f => f.varName === "_music_segment");
+
+              const introPath = introFile ? resolveLocal(introFile.filePath) : null;
+              const outroPath = outroFile ? resolveLocal(outroFile.filePath) : null;
+              const musicPath = musicFile ? resolveLocal(musicFile.filePath) : null;
+
+              store.logCdpEvent(null, "info", `图片拼接: ${imagePaths.length}张图片, intro=${!!introPath}, outro=${!!outroPath}, music=${!!musicPath}`);
+
+              // 用 FFmpeg 把图片合成幻灯片视频
+              const slidePath = path.join(REMIX_OUTPUT_DIR, `ai_slide_${Date.now()}.mp4`);
+              const introCount = Math.min(introConfig.imageCount || imagePaths.length, imagePaths.length);
+              const introDur = introConfig.imageDuration || 0.4;
+              const outroDur = outroConfig.imageDuration || 5;
+
+              // 构建 concat 列表
+              let concatList = "";
+              for (let i = 0; i < imagePaths.length; i++) {
+                const dur = i < introCount ? introDur : outroDur;
+                concatList += `file '${imagePaths[i].replace(/'/g, "'\\''")}'\nduration ${dur}\n`;
+              }
+              if (imagePaths.length > 0) {
+                concatList += `file '${imagePaths[imagePaths.length - 1].replace(/'/g, "'\\''")}'\n`;
+              }
+
+              const { execFileSync } = await import("child_process");
+              store.logCdpEvent(null, "info", `生成幻灯片视频: ${imagePaths.length}张图片`);
+              execFileSync("ffmpeg", ["-threads", "0", "-err_detect", "ignore_err",
+                "-f", "concat", "-safe", "0", "-i", "-",
+                "-c:v", "libx264", "-crf", "23", "-preset", "veryfast",
+                "-pix_fmt", "yuv420p", "-vf", "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,fps=30",
+                "-movflags", "+faststart", "-y", slidePath,
+              ], { input: concatList, maxBuffer: 20 * 1024 * 1024, timeout: 120000 });
+
+              // 拼接 intro + 幻灯片 + outro + 背景音乐
+              if (existsSync(slidePath)) {
+                const finalOut = await remixVideoWithResources(slidePath, { introPath, outroPath, musicPath }, "9:16", {});
+                outputUrl = `/data/remix-output/${path.basename(finalOut)}`;
+                store.logCdpEvent(null, "info", `AI 混剪成品: ${outputUrl}`);
+              }
+            }
+        } else if (fileOutputs.length > 0) {
+          // 视频输出：直接下载
           const fileOutput = fileOutputs[0];
-          // 下载到 remix-output 目录
           const downloadRes = await fetch(`${daemonUrl}${fileOutput.url}`);
           if (downloadRes.ok) {
             const buffer = Buffer.from(await downloadRes.arrayBuffer());
@@ -1504,6 +1572,7 @@ export function createMonitorServer({
             aiRemixQueue.push({
               taskId: task.id, daemonUrl, filesToUpload, prompt: prompt || "",
               matrixIds, creatorId, sourceVideoId: video.id, videoTitle: video.title,
+              presetId: presetId || null,
             });
             processAiRemixQueue();
 

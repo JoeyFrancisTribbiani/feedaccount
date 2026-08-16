@@ -796,7 +796,23 @@ async function handleChatGptAiRemix(taskNo, params) {
   const videoLinks = extractVideoLinks(response.text)
 
   if (!videoLinks.length) {
-    log('未找到视频下载链接，保存回复文本')
+    log('未找到视频下载链接，尝试下载图片...')
+    // 下载 ChatGPT 生成的图片
+    const images = await downloadGeneratedImages(OUTPUTS_DIR)
+    if (images.length > 0) {
+      const outputs = [
+        { type: 'text', content: response.text },
+        ...images.map(img => ({ type: 'image', filename: img.filename, url: img.downloadUrl || `/outputs/${img.filename}` })),
+      ]
+      taskStore.set(taskNo, {
+        status: 'completed', outputs, error: null, progress: '100%',
+        startedAt: taskStore.get(taskNo).startedAt, completedAt: Date.now(),
+      })
+      log(`=== AI 混剪完成，下载了 ${images.length} 张图片 ===`)
+      return
+    }
+
+    log('未找到视频链接或图片，保存回复文本')
     taskStore.set(taskNo, {
       status: 'completed', outputs: [{ type: 'text', content: response.text }],
       error: null, progress: '100%',
