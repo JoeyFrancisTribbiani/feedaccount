@@ -1250,7 +1250,16 @@ export class LocalDatabase {
   // --- Chrome CDP 实例管理 ---
   upsertChromeInstance(data) {
     const ts = nowIso();
-    const id = data.id || `chrome_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const host = data.cdpHost || "localhost";
+    const port = Number(data.cdpPort || 9222);
+
+    // 如果没传 id，先按 host+port 查找已有实例
+    let id = data.id;
+    if (!id) {
+      const existing = this.db.prepare(`SELECT id FROM chrome_instances WHERE cdp_host = ? AND cdp_port = ?`).get(host, port);
+      id = existing ? existing.id : `chrome_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    }
+
     this.db.prepare(`
       INSERT INTO chrome_instances (id, name, cdp_host, cdp_port, ngrok_url, daemon_port, status, notes, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -1258,7 +1267,7 @@ export class LocalDatabase {
         name = excluded.name, cdp_host = excluded.cdp_host, cdp_port = excluded.cdp_port,
         ngrok_url = excluded.ngrok_url, daemon_port = excluded.daemon_port,
         status = excluded.status, notes = excluded.notes, updated_at = excluded.updated_at
-    `).run(id, data.name || "", data.cdpHost || "localhost", Number(data.cdpPort || 9222),
+    `).run(id, data.name || "", host, port,
       data.ngrokUrl || null, Number(data.daemonPort || 9223), data.status || "stopped",
       data.notes || "", ts, ts);
     return this.getChromeInstance(id);

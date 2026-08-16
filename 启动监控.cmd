@@ -30,7 +30,7 @@ goto launch_failed
 
 :node_ready
 
-REM ===== 启动 Chrome CDP Daemon（后台）=====
+REM ===== 确保 CDP Daemon 依赖已安装 =====
 set "DAEMON_DIR=%~dp0src\chrome-cdp-daemon"
 if exist "%DAEMON_DIR%\server.mjs" (
   if not exist "%DAEMON_DIR%\node_modules" (
@@ -39,11 +39,6 @@ if exist "%DAEMON_DIR%\server.mjs" (
     call npm install
     popd
   )
-  echo [CDP Daemon] 正在后台启动...
-  start "Chrome CDP Daemon" "%~dp0start-daemon.cmd" "%NODE_EXE%"
-  timeout /t 2 /nobreak >nul
-) else (
-  echo [CDP Daemon] 未找到 src\chrome-cdp-daemon\server.mjs，跳过
 )
 
 where ffmpeg >nul 2>nul
@@ -65,6 +60,13 @@ if errorlevel 1 (
     echo [提示] FFprobe 未在 PATH 中，视频去重将使用降级模式
   )
 )
+
+echo.
+echo ========================================
+echo  FeedAccount 监控服务
+echo  CDP 守护进程请在页面中启动
+echo ========================================
+echo.
 
 "%NODE_EXE%" --no-warnings src\server.js --open
 set "APP_EXIT=%ERRORLEVEL%"

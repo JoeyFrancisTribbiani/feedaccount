@@ -4111,6 +4111,29 @@ async function refreshCdpLogs() {
 
 cdpEl.logsRefresh?.addEventListener("click", refreshCdpLogs);
 cdpEl.logFilter?.addEventListener("change", refreshCdpLogs);
+
+// CDP Tab 激活时定时刷新日志和实例状态
+let cdpAutoRefreshTimer = null;
+function startCdpAutoRefresh() {
+  if (cdpAutoRefreshTimer) return;
+  cdpAutoRefreshTimer = setInterval(() => {
+    refreshCdpInstances();
+  }, 5000);
+}
+function stopCdpAutoRefresh() {
+  if (cdpAutoRefreshTimer) { clearInterval(cdpAutoRefreshTimer); cdpAutoRefreshTimer = null; }
+}
+// 在 tab 切换时启动/停止自动刷新
+document.querySelectorAll('.platform-tab[data-platform="cdp"]').forEach((btn) => {
+  btn.addEventListener("click", () => {
+    startCdpAutoRefresh();
+  });
+});
+document.querySelectorAll('.platform-tab:not([data-platform="cdp"])').forEach((btn) => {
+  btn.addEventListener("click", () => {
+    stopCdpAutoRefresh();
+  });
+});
 cdpEl.logsClear?.addEventListener("click", async () => {
   try {
     await request("/api/cdp/logs", { method: "DELETE" });
