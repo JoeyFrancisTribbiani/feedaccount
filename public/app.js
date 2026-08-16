@@ -4490,11 +4490,27 @@ async function openRemixTaskModal() {
 
 async function loadModalCdpInstances() {
   try {
-    // 先扫描端口发现运行中的 Chrome 实例，自动注册到数据库
+    // 先扫描端口发现运行中的 Chrome 实例
+    let scanned = [];
     try {
-      await request("/api/cdp/scan", { method: "POST", body: JSON.stringify({ host: "localhost", portStart: 9222, portEnd: 9232 }) });
+      const scanRes = await request("/api/cdp/scan", { method: "POST", body: JSON.stringify({ host: "localhost", portStart: 9222, portEnd: 9232 }) });
+      scanned = scanRes.instances || [];
     } catch {}
-    // 再从数据库加载（包含刚扫描注册的）
+    // 获取数据库中已有的实例
+    const existingRes = await request("/api/cdp/instances");
+    const existing = existingRes.instances || [];
+    // 把扫描到但数据库中不存在的实例自动注册
+    for (const s of scanned) {
+      if (s.chromeInfo?.Browser && !existing.some((e) => e.cdpHost === s.host && e.cdpPort === s.port)) {
+        try {
+          await request("/api/cdp/instances", {
+            method: "POST",
+            body: JSON.stringify({ name: `Chrome ${s.port}`, cdpHost: s.host, cdpPort: s.port }),
+          });
+        } catch {}
+      }
+    }
+    // 重新加载
     const res = await request("/api/cdp/instances");
     const instances = res.instances || [];
     modalEl.cdpInstance.innerHTML = instances.length
