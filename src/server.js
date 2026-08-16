@@ -97,6 +97,7 @@ function getNgrokStatus() {
 }
 // Chrome CDP daemon 进程管理
 const cdpDaemonProcesses = new Map();
+let _store = null; // 由 createMonitorServer 设置
 
 function startCdpDaemon(instance) {
   const existing = cdpDaemonProcesses.get(instance.id);
@@ -126,7 +127,7 @@ function startCdpDaemon(instance) {
     if (!line) return;
     procInfo.logs.push({ at: new Date().toISOString(), level, message: line });
     if (procInfo.logs.length > 200) procInfo.logs.shift();
-    store.logCdpEvent(instance.id, level, line);
+    if (_store) _store.logCdpEvent(instance.id, level, line);
   };
 
   proc.stdout.on("data", (d) => pushLog("info", d.toString()));
@@ -134,17 +135,17 @@ function startCdpDaemon(instance) {
 
   proc.on("exit", (code) => {
     pushLog("info", `守护进程退出 (code=${code})`);
-    store.updateChromeInstanceStatus(instance.id, "stopped");
+    if (_store) _store.updateChromeInstanceStatus(instance.id, "stopped");
     cdpDaemonProcesses.delete(instance.id);
   });
 
   proc.on("error", (err) => {
     pushLog("error", `守护进程启动失败: ${err.message}`);
-    store.updateChromeInstanceStatus(instance.id, "error");
+    if (_store) _store.updateChromeInstanceStatus(instance.id, "error");
     cdpDaemonProcesses.delete(instance.id);
   });
 
-  store.updateChromeInstanceStatus(instance.id, "running");
+  _store.updateChromeInstanceStatus(instance.id, "running");
   return { pid: proc.pid, startedAt: procInfo.startedAt };
 }
 
@@ -159,7 +160,7 @@ function stopCdpDaemon(instanceId) {
       procInfo.proc.kill("SIGKILL");
     }
   }, 3000);
-  store.updateChromeInstanceStatus(instanceId, "stopped");
+  _store.updateChromeInstanceStatus(instanceId, "stopped");
   cdpDaemonProcesses.delete(instanceId);
   return { stopped: true };
 }
@@ -339,6 +340,7 @@ export function createMonitorServer({
 } = {}) {
   const api = bitBrowserApi || new BitBrowserApi(bitBrowserApiUrl);
   const store = database || new LocalDatabase(databasePath);
+  _store = store; // 让模块级函数（startCdpDaemon 等）也能访问
   ngrokStore = store;
   globalThis.__ngrokDb = store.db;
   const jobs = jobManager || new JobManager({ bitBrowserApi: api, persistence: store });
