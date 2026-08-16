@@ -529,7 +529,7 @@ export async function composeAiRemixVideo(mainVideoPath, imagePaths, config = {}
     const segments = [];
 
     // 处理片头：把前 N 张图片覆盖到片头视频中
-    if (introConfig.segmentFile && imagePaths.length > 0) {
+    if (introConfig.enabled !== false && introConfig.segmentFile && imagePaths.length > 0) {
       const introPath = resolveLocal(introConfig.segmentFile.filePath);
       if (introPath && existsSync(introPath)) {
         const introImgCount = Math.min(introConfig.imageCount || 6, imagePaths.length);
@@ -550,7 +550,7 @@ export async function composeAiRemixVideo(mainVideoPath, imagePaths, config = {}
 
     // 处理片尾：把后 N 张图片覆盖到片尾视频中
     const outroImgCount = Math.min(outroConfig.imageCount || 4, Math.max(0, imagePaths.length - (introConfig.imageCount || 6)));
-    if (outroConfig.segmentFile && outroImgCount > 0) {
+    if (outroConfig.enabled !== false && outroConfig.segmentFile && outroImgCount > 0) {
       const outroPath = resolveLocal(outroConfig.segmentFile.filePath);
       if (outroPath && existsSync(outroPath)) {
         const introCount = introConfig.imageCount || 6;
@@ -599,7 +599,7 @@ export async function composeAiRemixVideo(mainVideoPath, imagePaths, config = {}
     const outputPath = path.join(OUTPUT_DIR, `ai_remix_${id}.mp4`);
     const musicPath = musicConfig.segmentFile ? resolveLocal(musicConfig.segmentFile.filePath) : null;
 
-    if (musicPath && existsSync(musicPath) && musicConfig.scope !== "none") {
+    if (musicConfig.enabled !== false && musicPath && existsSync(musicPath) && musicConfig.scope !== "none") {
       await mixBackgroundMusic(concatenatedPath, musicPath, outputPath);
     } else {
       const { copyFile } = await import("node:fs/promises");

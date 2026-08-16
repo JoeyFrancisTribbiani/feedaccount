@@ -4551,9 +4551,9 @@ const presetModalEl = {
   isDefault: null,
   vars: null,
   save: null,
-  introStart: null, introCount: null, introDuration: null, introEffect: null, introTransition: null, introFile: null, introFileInfo: null,
-  outroStart: null, outroCount: null, outroDuration: null, outroEffect: null, outroTransition: null, outroFile: null, outroFileInfo: null,
-  musicVolume: null, musicScope: null, musicLoop: null, musicFile: null, musicFileInfo: null,
+  introStart: null, introCount: null, introDuration: null, introEffect: null, introTransition: null, introEnabled: null, introFile: null, introFileInfo: null,
+  outroStart: null, outroCount: null, outroDuration: null, outroEffect: null, outroTransition: null, outroEnabled: null, outroFile: null, outroFileInfo: null,
+  musicVolume: null, musicScope: null, musicLoop: null, musicEnabled: null, musicFile: null, musicFileInfo: null,
 };
 
 async function openRemixTaskModal(presetMode = "stitch") {
@@ -4895,7 +4895,7 @@ function openPresetEditModal(preset) {
           </label>
           <div id="preset-form-vars" class="preset-form-vars"></div>
           <div class="preset-config-section">
-            <div class="preset-config-title">片头配置 (Intro)</div>
+            <div class="preset-config-title"><label><input type="checkbox" id="preset-intro-enabled" checked /> 启用片头</label></div>
             <div class="preset-config-row">
               <label>开始插入图片时间 <input type="text" id="preset-intro-start" value="00:00:00:00" placeholder="时:分:秒:帧" /></label>
               <label>插入图片数量 <input type="number" id="preset-intro-count" min="0" value="8" /></label>
@@ -4909,7 +4909,7 @@ function openPresetEditModal(preset) {
             <span id="preset-intro-file-info" class="preset-file-info"></span>
           </div>
           <div class="preset-config-section">
-            <div class="preset-config-title">片尾配置 (Outro)</div>
+            <div class="preset-config-title"><label><input type="checkbox" id="preset-outro-enabled" checked /> 启用片尾</label></div>
             <div class="preset-config-row">
               <label>开始插入图片时间 <input type="text" id="preset-outro-start" value="00:00:00:00" placeholder="时:分:秒:帧" /></label>
               <label>插入图片数量 <input type="number" id="preset-outro-count" min="0" value="4" /></label>
@@ -4923,7 +4923,7 @@ function openPresetEditModal(preset) {
             <span id="preset-outro-file-info" class="preset-file-info"></span>
           </div>
           <div class="preset-config-section">
-            <div class="preset-config-title">背景音乐配置</div>
+            <div class="preset-config-title"><label><input type="checkbox" id="preset-music-enabled" checked /> 启用背景音乐</label></div>
             <div class="preset-config-row">
               <label>音量百分比 <input type="number" id="preset-music-volume" min="1" max="100" value="8" /></label>
               <label>适用范围
@@ -4964,6 +4964,7 @@ function openPresetEditModal(preset) {
   presetModalEl.introDuration = overlay.querySelector("#preset-intro-duration");
   presetModalEl.introEffect = overlay.querySelector("#preset-intro-effect");
   presetModalEl.introTransition = overlay.querySelector("#preset-intro-transition");
+  presetModalEl.introEnabled = overlay.querySelector("#preset-intro-enabled");
   presetModalEl.introFile = overlay.querySelector("#preset-intro-file");
   presetModalEl.introFileInfo = overlay.querySelector("#preset-intro-file-info");
   presetModalEl.outroStart = overlay.querySelector("#preset-outro-start");
@@ -4971,11 +4972,13 @@ function openPresetEditModal(preset) {
   presetModalEl.outroDuration = overlay.querySelector("#preset-outro-duration");
   presetModalEl.outroEffect = overlay.querySelector("#preset-outro-effect");
   presetModalEl.outroTransition = overlay.querySelector("#preset-outro-transition");
+  presetModalEl.outroEnabled = overlay.querySelector("#preset-outro-enabled");
   presetModalEl.outroFile = overlay.querySelector("#preset-outro-file");
   presetModalEl.outroFileInfo = overlay.querySelector("#preset-outro-file-info");
   presetModalEl.musicVolume = overlay.querySelector("#preset-music-volume");
   presetModalEl.musicScope = overlay.querySelector("#preset-music-scope");
   presetModalEl.musicLoop = overlay.querySelector("#preset-music-loop");
+  presetModalEl.musicEnabled = overlay.querySelector("#preset-music-enabled");
   presetModalEl.musicFile = overlay.querySelector("#preset-music-file");
   presetModalEl.musicFileInfo = overlay.querySelector("#preset-music-file-info");
 
@@ -5030,6 +5033,7 @@ function secondsToTimecode(sec) {
 
 function collectPresetConfig() {
   const introConfig = {
+    enabled: presetModalEl.introEnabled?.checked ?? true,
     imageInsertStart: timecodeToSeconds(presetModalEl.introStart?.value),
     imageCount: parseInt(presetModalEl.introCount?.value) || 0,
     imageDuration: timecodeToSeconds(presetModalEl.introDuration?.value),
@@ -5038,6 +5042,7 @@ function collectPresetConfig() {
     segmentFile: pendingSegmentFiles.intro || null,
   };
   const outroConfig = {
+    enabled: presetModalEl.outroEnabled?.checked ?? true,
     imageInsertStart: timecodeToSeconds(presetModalEl.outroStart?.value),
     imageCount: parseInt(presetModalEl.outroCount?.value) || 0,
     imageDuration: timecodeToSeconds(presetModalEl.outroDuration?.value),
@@ -5046,6 +5051,7 @@ function collectPresetConfig() {
     segmentFile: pendingSegmentFiles.outro || null,
   };
   const musicConfig = {
+    enabled: presetModalEl.musicEnabled?.checked ?? true,
     volumePercent: parseInt(presetModalEl.musicVolume?.value) || 8,
     scope: presetModalEl.musicScope?.value || "original",
     loop: presetModalEl.musicLoop?.checked ?? true,
@@ -5058,6 +5064,7 @@ function fillPresetConfigForm(preset) {
   const ic = preset?.introConfig || {};
   const oc = preset?.outroConfig || {};
   const mc = preset?.musicConfig || {};
+  if (presetModalEl.introEnabled) presetModalEl.introEnabled.checked = ic.enabled !== false;
   if (presetModalEl.introStart) presetModalEl.introStart.value = secondsToTimecode(ic.imageInsertStart ?? 0);
   if (presetModalEl.introCount) presetModalEl.introCount.value = ic.imageCount ?? 8;
   if (presetModalEl.introDuration) presetModalEl.introDuration.value = secondsToTimecode(ic.imageDuration ?? 0.4);
@@ -5068,8 +5075,10 @@ function fillPresetConfigForm(preset) {
   if (presetModalEl.outroDuration) presetModalEl.outroDuration.value = secondsToTimecode(oc.imageDuration ?? 5);
   if (presetModalEl.outroEffect) presetModalEl.outroEffect.value = oc.effect || "none";
   if (presetModalEl.outroTransition) presetModalEl.outroTransition.value = oc.transition || "none";
+  if (presetModalEl.outroEnabled) presetModalEl.outroEnabled.checked = oc.enabled !== false;
   if (presetModalEl.musicVolume) presetModalEl.musicVolume.value = mc.volumePercent ?? 8;
   if (presetModalEl.musicScope) presetModalEl.musicScope.value = mc.scope || "original";
+  if (presetModalEl.musicEnabled) presetModalEl.musicEnabled.checked = mc.enabled !== false;
   if (presetModalEl.musicLoop) presetModalEl.musicLoop.checked = mc.loop ?? true;
   // 显示已绑定的片段文件名
   if (presetModalEl.introFileInfo) {
@@ -5395,9 +5404,12 @@ modalEl.start?.addEventListener("click", async () => {
       const introId = modalEl.introSelect?.value || "";
       const outroId = modalEl.outroSelect?.value || "";
       const musicId = modalEl.musicSelect?.value || "";
+      const introEnabled = document.querySelector("#modal-intro-enabled")?.checked ?? true;
+      const outroEnabled = document.querySelector("#modal-outro-enabled")?.checked ?? true;
+      const musicEnabled = document.querySelector("#modal-music-enabled")?.checked ?? true;
       const res = await request("/api/remix/matrix-task", {
         method: "POST",
-        body: JSON.stringify({ matrixIds, creatorId, videoIds, ratio, introId, outroId, musicId }),
+        body: JSON.stringify({ matrixIds, creatorId, videoIds, ratio, introId, outroId, musicId, introEnabled, outroEnabled, musicEnabled }),
       });
       modalEl.overlay.classList.add("hidden");
       showToast(`已创建 ${res.count} 个混剪任务，正在处理…`);
