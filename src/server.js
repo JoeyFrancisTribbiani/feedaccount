@@ -19,7 +19,7 @@ import { TiktokJobManager, TIKTOK_DEFAULT_OPTIONS } from "./tiktok/tiktok-job-ma
 import { TiktokPublishManager } from "./tiktok/tiktok-publish-manager.js";
 import { RotationScheduler, SCHEDULER_DEFAULTS } from "./scheduler.js";
 import { checkIpGeoViaSocks5 } from "./socks5-check.js";
-import { DEDUP_PRESETS, dedupVideo, stitchVideos, probeVideo, remixVideoWithResources, OUTPUT_DIR as REMIX_OUTPUT_DIR } from "./video-remix.js";
+import { DEDUP_PRESETS, dedupVideo, stitchVideos, probeVideo, remixVideoWithResources, composeAiRemixVideo, OUTPUT_DIR as REMIX_OUTPUT_DIR } from "./video-remix.js";
 
 const THIS_DIR = path.dirname(fileURLToPath(import.meta.url));
 const CDP_DAEMON_DIR = path.resolve(THIS_DIR, "chrome-cdp-daemon");
@@ -475,55 +475,34 @@ export function createMonitorServer({
             }
 
             if (imagePaths.length > 0) {
-              // 用方案配置拼接：片头 + 图片 + 片尾 + 背景音乐
+              // 用方案配置拼接：图片覆盖到片头/片尾视频上
               const preset = presetId ? store.getAiRemixPreset(presetId) : null;
-              const introConfig = preset?.introConfig || {};
-              const outroConfig = preset?.outroConfig || {};
 
               // 获取方案绑定的片头/片尾/音乐文件
               const presetFiles = presetId ? store.getPresetFiles(presetId) : [];
-              const introFile = presetFiles.find(f => f.varName === "_intro_segment");
-              const outroFile = presetFiles.find(f => f.varName === "_outro_segment");
-              const musicFile = presetFiles.find(f => f.varName === "_music_segment");
 
-              const introPath = introFile ? resolveLocal(introFile.filePath) : null;
-              const outroPath = outroFile ? resolveLocal(outroFile.filePath) : null;
-              const musicPath = musicFile ? resolveLocal(musicFile.filePath) : null;
+              store.logCdpEvent(null, "info", `AI混剪合成: ${imagePaths.length}张图片, 方案=${preset?.name || "默认"}`);
 
-              store.logCdpEvent(null, "info", `图片拼接: ${imagePaths.length}张图片, intro=${!!introPath}, outro=${!!outroPath}, music=${!!musicPath}`);
+              // 获取原视频路径
+              const sourceVideo = videos.find(v => v.id === sourceVideoId);
+              const mainVideoPath = sourceVideo ? resolveLocal(sourceVideo.url) : null;
 
-              // 用 FFmpeg 把图片合成幻灯片视频
-              const slidePath = path.join(REMIX_OUTPUT_DIR, `ai_slide_${Date.now()}.mp4`);
-              const introCount = Math.min(introConfig.imageCount || imagePaths.length, imagePaths.length);
-              const introDur = introConfig.imageDuration || 0.4;
-              const outroDur = outroConfig.imageDuration || 5;
-
-              // 构建 concat 列表并写入临时文件
-              let concatList = "";
-              for (let i = 0; i < imagePaths.length; i++) {
-                const dur = i < introCount ? introDur : outroDur;
-                concatList += `file '${imagePaths[i].replace(/'/g, "'\\''")}'\nduration ${dur}\n`;
-              }
-              if (imagePaths.length > 0) {
-                concatList += `file '${imagePaths[imagePaths.length - 1].replace(/'/g, "'\\''")}'\n`;
-              }
-              const concatFile = path.join(REMIX_OUTPUT_DIR, `concat_${Date.now()}.txt`);
-              writeFileSync(concatFile, concatList);
-
-              const { execFileSync } = await import("child_process");
-              store.logCdpEvent(null, "info", `生成幻灯片视频: ${imagePaths.length}张图片`);
-              execFileSync("ffmpeg", ["-threads", "0", "-err_detect", "ignore_err",
-                "-f", "concat", "-safe", "0", "-i", concatFile,
-                "-c:v", "libx264", "-crf", "23", "-preset", "veryfast",
-                "-pix_fmt", "yuv420p", "-vf", "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,fps=30",
-                "-movflags", "+faststart", "-y", slidePath,
-              ], { maxBuffer: 20 * 1024 * 1024, timeout: 120000 });
-
-              // 拼接 intro + 幻灯片 + outro + 背景音乐
-              if (existsSync(slidePath)) {
-                const finalOut = await remixVideoWithResources(slidePath, { introPath, outroPath, musicPath }, "9:16", {});
+              if (mainVideoPath && existsSync(mainVideoPath)) {
+                // 用 composeAiRemixVideo 合成
+                const finalOut = await composeAiRemixVideo(
+                  mainVideoPath,
+                  imagePaths,
+                  {
+                    introConfig: preset?.introConfig || {},
+                    outroConfig: preset?.outroConfig || {},
+                    musicConfig: preset?.musicConfig || {},
+                  },
+                  "9:16"
+                );
                 outputUrl = `/data/remix-output/${path.basename(finalOut)}`;
                 store.logCdpEvent(null, "info", `AI 混剪成品: ${outputUrl}`);
+              } else {
+                store.logCdpEvent(null, "error", "找不到原视频文件，无法合成");
               }
             }
         } else if (fileOutputs.length > 0) {

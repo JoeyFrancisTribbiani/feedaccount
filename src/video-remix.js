@@ -499,3 +499,185 @@ async function mixBackgroundMusic(videoPath, musicPath, outputPath) {
 }
 
 export { probeVideo, OUTPUT_DIR };
+
+/**
+ * AI 混剪合成：把 AI 生成的图片覆盖到片头/片尾视频上，再与原视频拼接
+ *
+ * @param {string} mainVideoPath - 原视频路径（去重后的主视频）
+ * @param {string[]} imagePaths - AI 生成的图片路径数组
+ * @param {object} config - { introConfig, outroConfig, musicConfig }
+ * @param {string} ratio - 目标比例
+ * @returns {Promise<string>} 输出文件路径
+ */
+export async function composeAiRemixVideo(mainVideoPath, imagePaths, config = {}, ratio = "9:16") {
+  const { introConfig = {}, outroConfig = {}, musicConfig = {} } = config;
+  const id = genId();
+  const tempPaths = [];
+  const targetW = RATIO_MAP[ratio]?.w || 1080;
+  const targetH = RATIO_MAP[ratio]?.h || 1920;
+
+  try {
+    const mainMeta = await probeVideo(mainVideoPath);
+    if (!mainMeta) throw new Error("无法读取原视频信息");
+
+    // 归一化原视频
+    const normalizedMain = path.join(TEMP_DIR, `ai_main_${id}.mp4`);
+    await processSingleVideo(mainVideoPath, normalizedMain, mainMeta, { ratio });
+    tempPaths.push(normalizedMain);
+
+    const segments = [];
+
+    // 处理片头：把前 N 张图片覆盖到片头视频中
+    if (introConfig.segmentFile && imagePaths.length > 0) {
+      const introPath = resolveLocal(introConfig.segmentFile.filePath);
+      if (introPath && existsSync(introPath)) {
+        const introImgCount = Math.min(introConfig.imageCount || 6, imagePaths.length);
+        const introImages = imagePaths.slice(0, introImgCount);
+        const introInsertStart = introConfig.imageInsertStart || 0;
+        const introImgDuration = introConfig.imageDuration || 0.7;
+
+        const introProcessed = await overlayImagesOnVideo(
+          introPath, introImages, introInsertStart, introImgDuration,
+          targetW, targetH, mainMeta.fps, id, "intro", tempPaths
+        );
+        segments.push(introProcessed);
+      }
+    }
+
+    // 主视频
+    segments.push(normalizedMain);
+
+    // 处理片尾：把后 N 张图片覆盖到片尾视频中
+    const outroImgCount = Math.min(outroConfig.imageCount || 4, Math.max(0, imagePaths.length - (introConfig.imageCount || 6)));
+    if (outroConfig.segmentFile && outroImgCount > 0) {
+      const outroPath = resolveLocal(outroConfig.segmentFile.filePath);
+      if (outroPath && existsSync(outroPath)) {
+        const introCount = introConfig.imageCount || 6;
+        const outroImages = imagePaths.slice(introCount, introCount + outroImgCount);
+        const outroInsertStart = outroConfig.imageInsertStart || 0;
+        const outroImgDuration = outroConfig.imageDuration || 3;
+
+        const outroProcessed = await overlayImagesOnVideo(
+          outroPath, outroImages, outroInsertStart, outroImgDuration,
+          targetW, targetH, mainMeta.fps, id, "outro", tempPaths
+        );
+        segments.push(outroProcessed);
+      }
+    }
+
+    // 拼接所有片段
+    const concatenatedPath = path.join(TEMP_DIR, `ai_concat_${id}.mp4`);
+    if (segments.length > 1) {
+      await concatVideos(segments, concatenatedPath);
+      tempPaths.push(concatenatedPath);
+    } else {
+      concatenatedPath = segments[0];
+    }
+
+    // 叠加背景音乐
+    const outputPath = path.join(OUTPUT_DIR, `ai_remix_${id}.mp4`);
+    const musicPath = musicConfig.segmentFile ? resolveLocal(musicConfig.segmentFile.filePath) : null;
+
+    if (musicPath && existsSync(musicPath) && musicConfig.scope !== "none") {
+      await mixBackgroundMusic(concatenatedPath, musicPath, outputPath);
+    } else {
+      const { copyFile } = await import("node:fs/promises");
+      await copyFile(concatenatedPath, outputPath);
+    }
+
+    return outputPath;
+  } finally {
+    for (const p of tempPaths) {
+      try { await unlink(p); } catch {}
+    }
+  }
+}
+
+/**
+ * 将图片覆盖到视频上：
+ * 1. 从 insertStart 秒开始，依次把每张图片覆盖到视频画面上
+ * 2. 保留原视频的音频
+ * 3. 图片播完后，截断视频（删除剩余部分）
+ *
+ * @returns {Promise<string>} 处理后的视频路径
+ */
+async function overlayImagesOnVideo(videoPath, imagePaths, insertStart, imgDuration, targetW, targetH, fps, id, label, tempPaths) {
+  const videoMeta = await probeVideo(videoPath);
+  if (!videoMeta) throw new Error(`无法读取${label}视频信息`);
+
+  // 先归一化视频到目标分辨率
+  const normalizedPath = path.join(TEMP_DIR, `ai_${label}_norm_${id}.mp4`);
+  await runFfmpeg([
+    "-err_detect", "ignore_err",
+    "-i", videoPath,
+    "-vf", `scale=${targetW}:${targetH}:flags=bicubic,format=yuv420p,fps=${Math.round(fps)}`,
+    "-c:v", "libx264", "-crf", "23", "-preset", "veryfast",
+    "-c:a", "aac", "-b:a", "128k",
+    "-pix_fmt", "yuv420p", "-movflags", "+faststart",
+    "-y", normalizedPath,
+  ]);
+  tempPaths.push(normalizedPath);
+
+  const totalImgDuration = insertStart + imagePaths.length * imgDuration;
+
+  // 构建图片覆盖的 overlay filter
+  // 每张图片缩放到目标尺寸，在指定时间段内 overlay
+  const inputs = ["-err_detect", "ignore_err", "-i", normalizedPath];
+  // 为每张图片添加输入
+  for (let i = 0; i < imagePaths.length; i++) {
+    inputs.push("-i", imagePaths[i]);
+  }
+
+  // 构建 filter_complex
+  // 先缩放每张图片到目标尺寸
+  const filters = [];
+  for (let i = 0; i < imagePaths.length; i++) {
+    filters.push(`[${i + 1}:v]scale=${targetW}:${targetH}:flags=bicubic,format=yuva420p,setpts=PTS-STARTPTS=img${i}`);
+  }
+
+  // 依次 overlay 每张图片
+  // 第 i 张图片在 insertStart + i*imgDuration 到 insertStart + (i+1)*imgDuration 之间显示
+  let lastLabel = "[0:v]";
+  for (let i = 0; i < imagePaths.length; i++) {
+    const startTs = insertStart + i * imgDuration;
+    const endTs = insertStart + (i + 1) * imgDuration;
+    const inputLabel = `img${i}`;
+    const outputLabel = i < imagePaths.length - 1 ? `v${i}` : "vout";
+    filters.push(`${lastLabel}[${inputLabel}]overlay=enable='between(t,${startTs.toFixed(3)},${endTs.toFixed(3)})'[${outputLabel}]`);
+    lastLabel = `[${outputLabel}]`;
+  }
+
+  // 截断到图片结束时间
+  filters.push(`[vout]trim=duration=${totalImgDuration.toFixed(3)},setpts=PTS-STARTPTS[vfinal]`);
+
+  const args = [
+    ...inputs,
+    "-filter_complex", filters.join(";"),
+    "-map", "[vfinal]",
+    "-map", "0:a?",
+    "-c:v", "libx264", "-crf", "23", "-preset", "veryfast",
+    "-pix_fmt", "yuv420p",
+    "-c:a", "aac", "-b:a", "128k",
+    "-movflags", "+faststart",
+    "-y", path.join(TEMP_DIR, `ai_${label}_overlay_${id}.mp4`),
+  ];
+
+  const overlayPath = path.join(TEMP_DIR, `ai_${label}_overlay_${id}.mp4`);
+  await runFfmpeg(args);
+  tempPaths.push(overlayPath);
+
+  return overlayPath;
+}
+
+/** 将 /data/xxx 路径解析为本地文件路径 */
+function resolveLocal(url) {
+  if (!url) return null;
+  const fs = require("fs");
+  // 尝试直接作为路径
+  if (fs.existsSync(url)) return url;
+  // 尝试相对于项目根目录
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+  const local = path.join(root, url.replace(/^\//, ""));
+  if (fs.existsSync(local)) return local;
+  return null;
+}
