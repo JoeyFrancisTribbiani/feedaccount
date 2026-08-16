@@ -5171,13 +5171,21 @@ modalEl.start?.addEventListener("click", async () => {
         }
       }
 
-      // 检查 CDP 实例守护进程是否已启动
-      let daemonStatus = null;
+      // 检查 CDP 实例的 Chrome 调试端口是否可达
+      let chromeAlive = false;
       try {
-        daemonStatus = await request(`/api/cdp/instances/${encodeURIComponent(cdpInstanceId)}/daemon-status`);
+        const instRes = await request(`/api/cdp/instances`);
+        const inst = (instRes.instances || []).find((i) => i.id === cdpInstanceId);
+        if (inst) {
+          const scanRes = await request("/api/cdp/scan", {
+            method: "POST",
+            body: JSON.stringify({ host: inst.cdpHost || "localhost", portStart: inst.cdpPort, portEnd: inst.cdpPort }),
+          });
+          chromeAlive = (scanRes.instances || []).some((s) => s.port === inst.cdpPort && s.chromeInfo?.Browser);
+        }
       } catch {}
-      if (!daemonStatus?.running) {
-        showToast("该 CDP 实例的守护进程未启动，请先到「Chrome CDP」标签页启动守护进程", true);
+      if (!chromeAlive) {
+        showToast("CDP Chrome 调试端口未响应，请确认 Chrome 调试实例已启动", true);
         return;
       }
 
