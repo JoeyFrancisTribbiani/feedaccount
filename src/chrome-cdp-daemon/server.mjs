@@ -405,13 +405,14 @@ async function chatgptUploadFile(filePath, opts = {}) {
         // 点击 plus 按钮弹出菜单
         await page.click(sel, { timeout: 5000 })
         await page.waitForTimeout(800)
-        await dismissModal()
 
         // 点击弹出菜单的第一项（添加照片和文件 / Add photos and files）
+        // 注意：不能调用 dismissModal()，否则会把弹出的菜单关掉
         const menuItemSelectors = [
           'div[role="menu"] [role="menuitem"]',
           'div[class*="popover"] button',
           'div[class*="dropdown"] button',
+          'div[role="menu"] button',
         ]
         let clicked = false
         for (const miSel of menuItemSelectors) {
