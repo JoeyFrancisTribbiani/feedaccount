@@ -4715,10 +4715,18 @@ function openPresetModal() {
               <div class="preset-config-row">
                 <label>图片动效
                   <select id="preset-intro-effect">
-                    <option value="none">无（硬切）</option>
+                    <option value="none">硬切（无动效）</option>
                     <option value="fade">淡入淡出</option>
-                    <option value="slide">滑动</option>
-                    <option value="zoom">缩放</option>
+                    <option value="slide_left">左滑入</option>
+                    <option value="slide_right">右滑入</option>
+                    <option value="slide_up">上滑入</option>
+                    <option value="slide_down">下滑入</option>
+                    <option value="zoom_in">放大（Ken Burns）</option>
+                    <option value="zoom_out">缩小</option>
+                    <option value="bounce">弹动</option>
+                    <option value="rotate">旋转入场</option>
+                    <option value="blur">模糊到清晰</option>
+                    <option value="flash">闪白转场</option>
                   </select>
                 </label>
                 <label>片头片段文件
@@ -4737,10 +4745,18 @@ function openPresetModal() {
               <div class="preset-config-row">
                 <label>图片动效
                   <select id="preset-outro-effect">
-                    <option value="none">无（硬切）</option>
+                    <option value="none">硬切（无动效）</option>
                     <option value="fade">淡入淡出</option>
-                    <option value="slide">滑动</option>
-                    <option value="zoom">缩放</option>
+                    <option value="slide_left">左滑入</option>
+                    <option value="slide_right">右滑入</option>
+                    <option value="slide_up">上滑入</option>
+                    <option value="slide_down">下滑入</option>
+                    <option value="zoom_in">放大（Ken Burns）</option>
+                    <option value="zoom_out">缩小</option>
+                    <option value="bounce">弹动</option>
+                    <option value="rotate">旋转入场</option>
+                    <option value="blur">模糊到清晰</option>
+                    <option value="flash">闪白转场</option>
                   </select>
                 </label>
                 <label>片尾片段文件
