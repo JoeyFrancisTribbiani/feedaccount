@@ -4447,7 +4447,7 @@ const presetModalEl = {
   close: null,
   introStart: null, introCount: null, introDuration: null, introEffect: null, introFile: null, introFileInfo: null,
   outroStart: null, outroCount: null, outroDuration: null, outroEffect: null, outroFile: null, outroFileInfo: null,
-  musicVolume: null, musicStart: null,
+  musicVolume: null, musicScope: null, musicLoop: null,
 };
 
 async function openRemixTaskModal() {
@@ -4753,7 +4753,17 @@ function openPresetModal() {
               <div class="preset-config-title">背景音乐配置</div>
               <div class="preset-config-row">
                 <label>音量百分比 <input type="number" id="preset-music-volume" min="1" max="100" value="8" /></label>
-                <label>开始时间（秒） <input type="number" id="preset-music-start" min="0" step="0.1" value="0" /></label>
+                <label>适用范围
+                  <select id="preset-music-scope">
+                    <option value="original">仅原视频部分（默认）</option>
+                    <option value="full">整个成品视频</option>
+                    <option value="intro">仅片头</option>
+                    <option value="outro">仅片尾</option>
+                    <option value="intro_outro">片头+片尾</option>
+                    <option value="none">不加背景音乐</option>
+                  </select>
+                </label>
+                <label>音乐不够长时循环 <input type="checkbox" id="preset-music-loop" checked /></label>
               </div>
             </div>
             <div class="preset-form-actions">
@@ -4789,7 +4799,8 @@ function openPresetModal() {
     presetModalEl.outroFile = overlay.querySelector("#preset-outro-file");
     presetModalEl.outroFileInfo = overlay.querySelector("#preset-outro-file-info");
     presetModalEl.musicVolume = overlay.querySelector("#preset-music-volume");
-    presetModalEl.musicStart = overlay.querySelector("#preset-music-start");
+    presetModalEl.musicScope = overlay.querySelector("#preset-music-scope");
+    presetModalEl.musicLoop = overlay.querySelector("#preset-music-loop");
 
     // 片头/片尾文件上传
     presetModalEl.introFile.addEventListener("change", (e) => handleSegmentFileUpload(e, "intro"));
@@ -4833,7 +4844,8 @@ function collectPresetConfig() {
   };
   const musicConfig = {
     volumePercent: parseInt(presetModalEl.musicVolume?.value) || 8,
-    startTime: parseFloat(presetModalEl.musicStart?.value) || 0,
+    scope: presetModalEl.musicScope?.value || "original",
+    loop: presetModalEl.musicLoop?.checked ?? true,
   };
   return { introConfig, outroConfig, musicConfig };
 }
@@ -4851,7 +4863,8 @@ function fillPresetConfigForm(preset) {
   if (presetModalEl.outroDuration) presetModalEl.outroDuration.value = oc.imageDuration ?? 5;
   if (presetModalEl.outroEffect) presetModalEl.outroEffect.value = oc.effect || "none";
   if (presetModalEl.musicVolume) presetModalEl.musicVolume.value = mc.volumePercent ?? 8;
-  if (presetModalEl.musicStart) presetModalEl.musicStart.value = mc.startTime ?? 0;
+  if (presetModalEl.musicScope) presetModalEl.musicScope.value = mc.scope || "original";
+  if (presetModalEl.musicLoop) presetModalEl.musicLoop.checked = mc.loop ?? true;
   // 显示已绑定的片段文件名
   if (presetModalEl.introFileInfo) {
     const introFile = preset?.files?.find((f) => f.varName === "_intro_segment");
