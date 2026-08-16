@@ -1215,31 +1215,6 @@
             <div id="cdp-scan-list" class="cdp-scan-list"></div>
           </div>
 
-          <!-- ngrok 管理面板 -->
-          <div class="cdp-ngrok-panel" style="padding: 0 24px 16px;">
-            <div style="border:1px solid var(--line);border-radius:var(--radius-md);padding:14px 16px;background:var(--bg-subtle);">
-              <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
-                <strong style="font-size:13px;">ngrok 隧道管理</strong>
-                <span id="cdp-ngrok-status" class="status-pill status-loading">未运行</span>
-              </div>
-              <div class="cdp-form-grid" style="margin-bottom:10px;">
-                <label><span>ngrok 专属 URL（填入后持久化保存）</span><input id="cdp-ngrok-url" type="text" placeholder="https://xxxx.ngrok-free.app" /></label>
-                <label><span>监听端口（daemon 端口）</span><input id="cdp-ngrok-port" type="number" min="1" max="65535" value="9223" /></label>
-                <label style="display:flex;align-items:center;gap:8px;flex-direction:row;padding-top:20px;">
-                  <input id="cdp-ngrok-autostart" type="checkbox" style="width:16px;height:16px;" />
-                  <span style="font-size:12px;font-weight:600;color:var(--text-secondary);">开机自动启动 ngrok</span>
-                </label>
-              </div>
-              <div style="display:flex;gap:8px;">
-                <button id="cdp-ngrok-save" class="button button-secondary" type="button">保存配置</button>
-                <button id="cdp-ngrok-start" class="button button-primary" type="button">启动 ngrok</button>
-                <button id="cdp-ngrok-stop" class="danger-button" type="button">停止 ngrok</button>
-                <button id="cdp-ngrok-check" class="button button-secondary" type="button">刷新状态</button>
-              </div>
-              <div id="cdp-ngrok-logs" style="margin-top:10px;max-height:120px;overflow-y:auto;font-family:var(--font-mono);font-size:11px;line-height:1.5;color:var(--text-muted);background:#fff;border-radius:var(--radius-xs);padding:8px 10px;border:1px solid var(--line);"></div>
-            </div>
-          </div>
-
           <!-- 实例列表 -->
           <div class="table-scroll" style="padding: 0 24px 24px;">
             <table class="history-table" style="width: 100%;">
@@ -1247,58 +1222,15 @@
                 <tr>
                   <th>名称</th>
                   <th>CDP 地址</th>
-                  <th>ngrok</th>
                   <th>守护进程</th>
                   <th>状态</th>
                   <th>操作</th>
                 </tr>
               </thead>
               <tbody id="cdp-instances-body">
-                <tr><td colspan="6" style="text-align:center;color:var(--text-muted);padding:24px;">暂无 Chrome CDP 实例</td></tr>
+                <tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:24px;">暂无 Chrome CDP 实例</td></tr>
               </tbody>
             </table>
-          </div>
-        </article>
-
-        <!-- 实例操作面板 -->
-        <article class="panel" id="cdp-action-panel" style="display:none;">
-          <div class="panel-heading">
-            <div>
-              <p class="section-kicker">实例操作</p>
-              <h2 id="cdp-action-title">ChatGPT 操作</h2>
-            </div>
-            <button id="cdp-action-close" class="text-button" type="button">关闭</button>
-          </div>
-          <div style="padding: 0 24px 24px;">
-            <div class="cdp-action-grid">
-              <button id="cdp-health" class="button button-secondary" type="button">健康检查</button>
-              <button id="cdp-status" class="button button-secondary" type="button">页面状态</button>
-              <button id="cdp-screenshot" class="button button-secondary" type="button">截图</button>
-            </div>
-            <div style="margin-top:16px;">
-              <label class="wide-input">
-                <span>发送消息到 ChatGPT</span>
-                <textarea id="cdp-message" rows="3" placeholder="输入要发送给 ChatGPT 的消息…"></textarea>
-              </label>
-              <button id="cdp-send" class="button button-primary" type="button" style="margin-top:8px;">发送</button>
-            </div>
-            <div style="margin-top:16px;">
-              <label class="wide-input">
-                <span>上传文件到 ChatGPT</span>
-                <input id="cdp-filepath" type="text" placeholder="文件完整路径，如 D:\video.mp4" />
-              </label>
-              <button id="cdp-upload" class="button button-secondary" type="button" style="margin-top:8px;">上传文件</button>
-            </div>
-            <div style="margin-top:16px;">
-              <label class="wide-input">
-                <span>视频分析（上传+发送+等待回复）</span>
-                <input id="cdp-analyze-path" type="text" placeholder="视频文件路径" />
-                <textarea id="cdp-analyze-prompt" rows="2" placeholder="分析提示词" style="margin-top:6px;">请分析这个视频的内容、节奏和亮点，输出JSON格式。</textarea>
-              </label>
-              <button id="cdp-analyze" class="button button-primary" type="button" style="margin-top:8px;">开始分析</button>
-              <button id="cdp-analyze-check" class="button button-secondary" type="button" style="margin-top:8px;">查询结果</button>
-            </div>
-            <div id="cdp-result" class="cdp-result" style="margin-top:16px;"></div>
           </div>
         </article>
 

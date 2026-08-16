@@ -3762,7 +3762,7 @@ function renderCdpInstances() {
   if (!cdpEl.tableBody) return;
   const list = cdpState.instances;
   if (!list.length) {
-    cdpEl.tableBody.innerHTML = `<tr><td colspan="6" style="text-align:center;color:var(--text-muted);padding:24px;">暂无 Chrome CDP 实例</td></tr>`;
+    cdpEl.tableBody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:24px;">暂无 Chrome CDP 实例</td></tr>`;
     return;
   }
   cdpEl.tableBody.innerHTML = list.map(inst => {
@@ -3771,18 +3771,15 @@ function renderCdpInstances() {
     return `<tr>
       <td><strong>${escapeHtml(inst.name)}</strong>${inst.notes ? `<br><small style="color:var(--text-muted)">${escapeHtml(inst.notes)}</small>` : ""}</td>
       <td><code>${escapeHtml(inst.cdpHost)}:${inst.cdpPort}</code></td>
-      <td>${inst.ngrokUrl ? `<code style="font-size:11px;">${escapeHtml(inst.ngrokUrl)}</code>` : '<span style="color:var(--text-muted)">—</span>'}</td>
       <td>
         ${daemonRunning
           ? `<button class="danger-button" style="padding:2px 8px;font-size:11px;" onclick="window.cdpDaemonStop('${escapeHtml(inst.id)}')">停止守护</button>`
           : `<button class="button button-primary" style="padding:2px 8px;font-size:11px;" onclick="window.cdpDaemonStart('${escapeHtml(inst.id)}')">启动守护</button>`
         }
-        <button class="button button-secondary" style="padding:2px 8px;font-size:11px;" onclick="window.cdpDaemonStatus('${escapeHtml(inst.id)}')">状态</button>
       </td>
       <td><span class="status-pill ${statusClass}">${escapeHtml(inst.status)}</span></td>
       <td>
-        <button class="button button-secondary" style="padding:2px 8px;font-size:11px;" onclick="window.cdpSelect('${escapeHtml(inst.id)}')">操作</button>
-        <button class="button button-secondary" style="padding:2px 8px;font-size:11px;" onclick="window.cdpEdit('${escapeHtml(inst.id)}')">编辑</button>
+        <button class="button button-secondary" style="padding:2px 8px;font-size:11px;" onclick="window.cdpDaemonRestart('${escapeHtml(inst.id)}')">重启</button>
         <button class="danger-button" style="padding:2px 8px;font-size:11px;" onclick="window.cdpDelete('${escapeHtml(inst.id)}')">删除</button>
       </td>
     </tr>`;
@@ -3806,6 +3803,17 @@ window.cdpDaemonStop = async function(id) {
   try {
     await request(`/api/cdp/instances/${encodeURIComponent(id)}/daemon-stop`, { method: "POST", body: "{}" });
     showToast("守护进程已停止");
+    await refreshCdpInstances();
+  } catch (e) { showToast(e.message, true); }
+};
+
+window.cdpDaemonRestart = async function(id) {
+  try {
+    showToast("正在重启守护进程...");
+    try { await request(`/api/cdp/instances/${encodeURIComponent(id)}/daemon-stop`, { method: "POST", body: "{}" }); } catch {}
+    await new Promise(r => setTimeout(r, 2000));
+    await request(`/api/cdp/instances/${encodeURIComponent(id)}/daemon-start`, { method: "POST", body: "{}" });
+    showToast("守护进程已重启");
     await refreshCdpInstances();
   } catch (e) { showToast(e.message, true); }
 };

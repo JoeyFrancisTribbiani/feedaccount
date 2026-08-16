@@ -2096,6 +2096,16 @@ if (isMain) {
   }
 
   server.listen(port, host, () => {
+
+  // 主进程退出时杀掉所有 daemon 子进程
+  const killAllDaemons = () => {
+    for (const [id, procInfo] of cdpDaemonProcesses) {
+      try { procInfo.proc.kill("SIGTERM"); } catch {}
+    }
+  };
+  process.on("SIGINT", () => { killAllDaemons(); process.exit(0); });
+  process.on("SIGTERM", () => { killAllDaemons(); process.exit(0); });
+  process.on("exit", killAllDaemons);
     const url = `http://${host}:${port}`;
     console.log(`BitBrowser Reddit 监控面板已启动：${url}`);
     console.log(`BitBrowser Local API：${bitBrowserApiUrl}`);
