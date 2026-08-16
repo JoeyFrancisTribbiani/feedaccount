@@ -3,6 +3,7 @@ import { mkdirSync, existsSync, unlinkSync, writeFileSync, rmSync } from "node:f
 import { readFile, writeFile, unlink } from "node:fs/promises";
 import path from "node:path";
 import crypto from "node:crypto";
+import { fileURLToPath } from "node:url";
 
 const OUTPUT_DIR = path.resolve(process.cwd(), "data", "remix-output");
 const TEMP_DIR = path.resolve(process.cwd(), "data", "remix-tmp");
@@ -632,7 +633,7 @@ async function overlayImagesOnVideo(videoPath, imagePaths, insertStart, imgDurat
   // 先缩放每张图片到目标尺寸
   const filters = [];
   for (let i = 0; i < imagePaths.length; i++) {
-    filters.push(`[${i + 1}:v]scale=${targetW}:${targetH}:flags=bicubic,format=yuva420p,setpts=PTS-STARTPTS=img${i}`);
+    filters.push(`[${i + 1}:v]scale=${targetW}:${targetH}:flags=bicubic,format=yuva420p,setpts=PTS-STARTPTS[img${i}]`);
   }
 
   // 依次 overlay 每张图片
@@ -641,10 +642,10 @@ async function overlayImagesOnVideo(videoPath, imagePaths, insertStart, imgDurat
   for (let i = 0; i < imagePaths.length; i++) {
     const startTs = insertStart + i * imgDuration;
     const endTs = insertStart + (i + 1) * imgDuration;
-    const inputLabel = `img${i}`;
-    const outputLabel = i < imagePaths.length - 1 ? `v${i}` : "vout";
-    filters.push(`${lastLabel}[${inputLabel}]overlay=enable='between(t,${startTs.toFixed(3)},${endTs.toFixed(3)})'[${outputLabel}]`);
-    lastLabel = `[${outputLabel}]`;
+    const inputLabel = `[img${i}]`;
+    const outputLabel = i < imagePaths.length - 1 ? `[v${i}]` : "[vout]";
+    filters.push(`${lastLabel}${inputLabel}overlay=enable='between(t,${startTs.toFixed(3)},${endTs.toFixed(3)})'${outputLabel}`);
+    lastLabel = outputLabel;
   }
 
   // 截断到图片结束时间
@@ -672,12 +673,9 @@ async function overlayImagesOnVideo(videoPath, imagePaths, insertStart, imgDurat
 /** 将 /data/xxx 路径解析为本地文件路径 */
 function resolveLocal(url) {
   if (!url) return null;
-  const fs = require("fs");
-  // 尝试直接作为路径
-  if (fs.existsSync(url)) return url;
-  // 尝试相对于项目根目录
+  if (existsSync(url)) return url;
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
   const local = path.join(root, url.replace(/^\//, ""));
-  if (fs.existsSync(local)) return local;
+  if (existsSync(local)) return local;
   return null;
 }
