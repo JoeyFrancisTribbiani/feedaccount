@@ -870,6 +870,64 @@ async function downloadFile(url, destDir, filename) {
   return { filename, path: destPath, size: buffer.length }
 }
 
+/**
+ * 从 ChatGPT 页面提取所有生成的图片 URL 并下载
+ */
+async function downloadGeneratedImages(destDir) {
+  const { writeFile } = await import('fs/promises')
+  mkdirSync(destDir, { recursive: true })
+  await ensureChatGPT()
+
+  // 在浏览器上下文中提取所有图片 URL（去重）
+  const imageUrls = await page.evaluate(() => {
+    const imgs = document.querySelectorAll('img[src*="estuary/content"], img[src*="oaiusercontent"], img[src*="files."], img[src*="chatgpt"]')
+    const seen = new Set()
+    const urls = []
+    for (const img of imgs) {
+      const src = img.src
+      if (src && !src.includes('favicon') && !src.includes('icon') && !src.includes('avatar') && !src.includes('logo')) {
+        if (!seen.has(src)) { seen.add(src); urls.push(src) }
+      }
+    }
+    return urls
+  })
+
+  log(`找到 ${imageUrls.length} 张图片，开始下载...`)
+  const results = []
+
+  for (let i = 0; i < imageUrls.length; i++) {
+    const url = imageUrls[i]
+    log(`下载图片 ${i + 1}/${imageUrls.length}: ${url.substring(0, 80)}...`)
+    try {
+      // 在浏览器上下文中 fetch 图片（带 Cookie）
+      const base64 = await page.evaluate(async (url) => {
+        const resp = await fetch(url)
+        if (!resp.ok) return null
+        const blob = await resp.blob()
+        const reader = new FileReader()
+        return new Promise((resolve) => {
+          reader.onloadend = () => resolve(reader.result.split(',')[1])
+          reader.readAsDataURL(blob)
+        })
+      }, url)
+
+      if (!base64) { logErr(`图片下载失败 (fetch 返回空): ${url}`); results.push({ url, error: 'fetch failed' }); continue }
+
+      const buffer = Buffer.from(base64, 'base64')
+      const filename = `img_${Date.now()}_${i + 1}.png`
+      const destPath = join(destDir, filename)
+      await writeFile(destPath, buffer)
+      results.push({ url, filename, path: destPath, size: buffer.length, downloadUrl: `/outputs/${filename}` })
+      log(`图片已下载: ${filename} (${buffer.length} bytes)`)
+    } catch (err) {
+      logErr(`图片下载失败: ${url} - ${err.message}`)
+      results.push({ url, error: err.message })
+    }
+  }
+
+  return results
+}
+
 // 注册任务处理器
 registerTaskHandler('chatgpt-analyze-video', handleChatGptAnalyzeVideo)
 registerTaskHandler('chatgpt-chat', handleChatGptChat)
@@ -971,6 +1029,14 @@ async function handleRequest(req, res) {
       const body = await readBody(req)
       const buffer = await page.screenshot({ fullPage: body.fullPage || false, type: body.type || 'png' })
       return sendJSON(res, 200, { ok: true, base64: buffer.toString('base64') })
+    }
+
+    // ===== 下载页面中的生成图片 =====
+    if (path === '/api/download-images' && method === 'POST') {
+      const body = await readBody(req)
+      const destDir = body.destDir || OUTPUTS_DIR
+      const images = await downloadGeneratedImages(destDir)
+      return sendJSON(res, 200, { ok: true, count: images.length, images })
     }
 
     // ===== 404 =====
