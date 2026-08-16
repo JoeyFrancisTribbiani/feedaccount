@@ -1868,7 +1868,10 @@ export function createMonitorServer({
         if (request.method === "POST") {
           const body = await readJson(request);
           if (!body.name || !body.prompt) { sendJson(response, 400, { error: "缺少方案名称或提示词" }); return; }
-          sendJson(response, 200, store.createAiRemixPreset({ name: body.name, prompt: body.prompt, isDefault: body.isDefault || false }));
+          sendJson(response, 200, store.createAiRemixPreset({
+            name: body.name, prompt: body.prompt, isDefault: body.isDefault || false,
+            introConfig: body.introConfig ?? null, outroConfig: body.outroConfig ?? null, musicConfig: body.musicConfig ?? null,
+          }));
           return;
         }
       }
@@ -1880,6 +1883,7 @@ export function createMonitorServer({
           const body = await readJson(request);
           const updated = store.updateAiRemixPreset(presetId, {
             name: body.name, prompt: body.prompt, isDefault: body.isDefault,
+            introConfig: body.introConfig, outroConfig: body.outroConfig, musicConfig: body.musicConfig,
           });
           if (!updated) { sendJson(response, 404, { error: "方案不存在" }); return; }
           sendJson(response, 200, updated);

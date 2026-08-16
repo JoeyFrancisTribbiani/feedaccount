@@ -320,6 +320,9 @@ export class LocalDatabase {
         name TEXT NOT NULL,
         prompt TEXT NOT NULL,
         is_default INTEGER NOT NULL DEFAULT 0,
+        intro_config_json TEXT,
+        outro_config_json TEXT,
+        music_config_json TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
@@ -413,6 +416,9 @@ export class LocalDatabase {
     this.#ensureColumn("reddit_accounts", "action_configs_json", "TEXT NOT NULL DEFAULT '{}'");
     this.#ensureColumn("tiktok_runs", "search_keyword", "TEXT");
     this.#ensureColumn("remix_tasks", "downloaded", "INTEGER NOT NULL DEFAULT 0");
+    this.#ensureColumn("ai_remix_presets", "intro_config_json", "TEXT");
+    this.#ensureColumn("ai_remix_presets", "outro_config_json", "TEXT");
+    this.#ensureColumn("ai_remix_presets", "music_config_json", "TEXT");
   }
 
   #ensureColumn(table, column, definition) {
@@ -1661,13 +1667,28 @@ export class LocalDatabase {
   }
 
   // --- AI 混剪方案管理 ---
-  createAiRemixPreset({ name, prompt, isDefault = false }) {
+  #presetConfigFields(r) {
+    return {
+      introConfig: parseJson(r.intro_config_json, null),
+      outroConfig: parseJson(r.outro_config_json, null),
+      musicConfig: parseJson(r.music_config_json, null),
+    };
+  }
+
+  createAiRemixPreset({ name, prompt, isDefault = false, introConfig = null, outroConfig = null, musicConfig = null }) {
     const id = `ap_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     const ts = nowIso();
     if (isDefault) {
       this.db.exec("UPDATE ai_remix_presets SET is_default = 0");
     }
-    this.db.prepare(`INSERT INTO ai_remix_presets (id, name, prompt, is_default, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`).run(id, name, prompt, booleanInt(isDefault), ts, ts);
+    this.db.prepare(`
+      INSERT INTO ai_remix_presets (id, name, prompt, is_default, intro_config_json, outro_config_json, music_config_json, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, name, prompt, booleanInt(isDefault),
+      introConfig ? JSON.stringify(introConfig) : null,
+      outroConfig ? JSON.stringify(outroConfig) : null,
+      musicConfig ? JSON.stringify(musicConfig) : null,
+      ts, ts);
     return this.getAiRemixPreset(id);
   }
 
@@ -1677,36 +1698,54 @@ export class LocalDatabase {
       id: r.id, name: r.name, prompt: r.prompt,
       isDefault: Boolean(r.is_default), createdAt: r.created_at, updatedAt: r.updated_at,
       files: this.getPresetFiles(r.id),
+      ...this.#presetConfigFields(r),
     }));
   }
 
   getAiRemixPreset(id) {
     const row = this.db.prepare(`SELECT * FROM ai_remix_presets WHERE id = ?`).get(id);
-    return row ? {
+    if (!row) return null;
+    return {
       id: row.id, name: row.name, prompt: row.prompt,
       isDefault: Boolean(row.is_default), createdAt: row.created_at, updatedAt: row.updated_at,
       files: this.getPresetFiles(id),
-    } : null;
+      ...this.#presetConfigFields(row),
+    };
   }
 
   getAiRemixDefaultPreset() {
     const row = this.db.prepare(`SELECT * FROM ai_remix_presets WHERE is_default = 1 LIMIT 1`).get();
-    return row ? {
+    if (!row) return null;
+    return {
       id: row.id, name: row.name, prompt: row.prompt,
       isDefault: Boolean(row.is_default), createdAt: row.created_at, updatedAt: row.updated_at,
-    } : null;
+      files: this.getPresetFiles(row.id),
+      ...this.#presetConfigFields(row),
+    };
   }
 
-  updateAiRemixPreset(id, { name, prompt, isDefault }) {
+  updateAiRemixPreset(id, { name, prompt, isDefault, introConfig, outroConfig, musicConfig }) {
     const ts = nowIso();
     if (isDefault) {
       this.db.exec("UPDATE ai_remix_presets SET is_default = 0");
     }
     this.db.prepare(`
       UPDATE ai_remix_presets
-      SET name = COALESCE(?, name), prompt = COALESCE(?, prompt), is_default = COALESCE(?, is_default), updated_at = ?
+      SET name = COALESCE(?, name),
+          prompt = COALESCE(?, prompt),
+          is_default = COALESCE(?, is_default),
+          intro_config_json = CASE WHEN ? IS NOT NULL THEN ? ELSE intro_config_json END,
+          outro_config_json = CASE WHEN ? IS NOT NULL THEN ? ELSE outro_config_json END,
+          music_config_json = CASE WHEN ? IS NOT NULL THEN ? ELSE music_config_json END,
+          updated_at = ?
       WHERE id = ?
-    `).run(name ?? null, prompt ?? null, isDefault === undefined ? null : booleanInt(isDefault), ts, id);
+    `).run(
+      name ?? null, prompt ?? null, isDefault === undefined ? null : booleanInt(isDefault),
+      introConfig === undefined ? null : 1, introConfig === undefined ? null : (introConfig ? JSON.stringify(introConfig) : null),
+      outroConfig === undefined ? null : 1, outroConfig === undefined ? null : (outroConfig ? JSON.stringify(outroConfig) : null),
+      musicConfig === undefined ? null : 1, musicConfig === undefined ? null : (musicConfig ? JSON.stringify(musicConfig) : null),
+      ts, id,
+    );
     return this.getAiRemixPreset(id);
   }
 

@@ -4445,6 +4445,9 @@ const presetModalEl = {
   save: null,
   cancel: null,
   close: null,
+  introStart: null, introCount: null, introDuration: null, introEffect: null, introFile: null, introFileInfo: null,
+  outroStart: null, outroCount: null, outroDuration: null, outroEffect: null, outroFile: null, outroFileInfo: null,
+  musicVolume: null, musicStart: null,
 };
 
 async function openRemixTaskModal() {
@@ -4689,7 +4692,7 @@ function openPresetModal() {
     overlay.id = "preset-modal";
     overlay.className = "modal-overlay";
     overlay.innerHTML = `
-      <div class="modal-content" style="max-width: 640px;">
+      <div class="modal-content" style="max-width: 680px;">
         <div class="modal-header">
           <h3>管理混剪方案</h3>
           <button id="preset-modal-close" class="modal-close" type="button">×</button>
@@ -4702,6 +4705,57 @@ function openPresetModal() {
               <input type="checkbox" id="preset-form-default" /> 设为默认方案
             </label>
             <div id="preset-form-vars" class="preset-form-vars"></div>
+            <div class="preset-config-section">
+              <div class="preset-config-title">片头配置 (Intro)</div>
+              <div class="preset-config-row">
+                <label>第几秒开始插入图片 <input type="number" id="preset-intro-start" min="0" step="0.1" value="0" /></label>
+                <label>插入图片数量 <input type="number" id="preset-intro-count" min="0" value="8" /></label>
+                <label>每张图片持续秒数 <input type="number" id="preset-intro-duration" min="0.1" step="0.1" value="0.4" /></label>
+              </div>
+              <div class="preset-config-row">
+                <label>图片动效
+                  <select id="preset-intro-effect">
+                    <option value="none">无（硬切）</option>
+                    <option value="fade">淡入淡出</option>
+                    <option value="slide">滑动</option>
+                    <option value="zoom">缩放</option>
+                  </select>
+                </label>
+                <label>片头片段文件
+                  <input type="file" id="preset-intro-file" accept="video/*" />
+                </label>
+              </div>
+              <span id="preset-intro-file-info" class="preset-file-info"></span>
+            </div>
+            <div class="preset-config-section">
+              <div class="preset-config-title">片尾配置 (Outro)</div>
+              <div class="preset-config-row">
+                <label>第几秒开始插入图片 <input type="number" id="preset-outro-start" min="0" step="0.1" value="0" /></label>
+                <label>插入图片数量 <input type="number" id="preset-outro-count" min="0" value="4" /></label>
+                <label>每张图片持续秒数 <input type="number" id="preset-outro-duration" min="0.1" step="0.1" value="5" /></label>
+              </div>
+              <div class="preset-config-row">
+                <label>图片动效
+                  <select id="preset-outro-effect">
+                    <option value="none">无（硬切）</option>
+                    <option value="fade">淡入淡出</option>
+                    <option value="slide">滑动</option>
+                    <option value="zoom">缩放</option>
+                  </select>
+                </label>
+                <label>片尾片段文件
+                  <input type="file" id="preset-outro-file" accept="video/*" />
+                </label>
+              </div>
+              <span id="preset-outro-file-info" class="preset-file-info"></span>
+            </div>
+            <div class="preset-config-section">
+              <div class="preset-config-title">背景音乐配置</div>
+              <div class="preset-config-row">
+                <label>音量百分比 <input type="number" id="preset-music-volume" min="1" max="100" value="8" /></label>
+                <label>开始时间（秒） <input type="number" id="preset-music-start" min="0" step="0.1" value="0" /></label>
+              </div>
+            </div>
             <div class="preset-form-actions">
               <button id="preset-form-add" class="button button-primary" type="button">新增</button>
               <button id="preset-form-update" class="button button-secondary" type="button" disabled>更新选中</button>
@@ -4722,6 +4776,24 @@ function openPresetModal() {
     presetModalEl.save = overlay.querySelector("#preset-form-add");
     presetModalEl.update = overlay.querySelector("#preset-form-update");
     presetModalEl.close = overlay.querySelector("#preset-modal-close");
+    presetModalEl.introStart = overlay.querySelector("#preset-intro-start");
+    presetModalEl.introCount = overlay.querySelector("#preset-intro-count");
+    presetModalEl.introDuration = overlay.querySelector("#preset-intro-duration");
+    presetModalEl.introEffect = overlay.querySelector("#preset-intro-effect");
+    presetModalEl.introFile = overlay.querySelector("#preset-intro-file");
+    presetModalEl.introFileInfo = overlay.querySelector("#preset-intro-file-info");
+    presetModalEl.outroStart = overlay.querySelector("#preset-outro-start");
+    presetModalEl.outroCount = overlay.querySelector("#preset-outro-count");
+    presetModalEl.outroDuration = overlay.querySelector("#preset-outro-duration");
+    presetModalEl.outroEffect = overlay.querySelector("#preset-outro-effect");
+    presetModalEl.outroFile = overlay.querySelector("#preset-outro-file");
+    presetModalEl.outroFileInfo = overlay.querySelector("#preset-outro-file-info");
+    presetModalEl.musicVolume = overlay.querySelector("#preset-music-volume");
+    presetModalEl.musicStart = overlay.querySelector("#preset-music-start");
+
+    // 片头/片尾文件上传
+    presetModalEl.introFile.addEventListener("change", (e) => handleSegmentFileUpload(e, "intro"));
+    presetModalEl.outroFile.addEventListener("change", (e) => handleSegmentFileUpload(e, "outro"));
 
     presetModalEl.close.addEventListener("click", () => { overlay.classList.add("hidden"); fetchAiPresets(); });
     presetModalEl.save.addEventListener("click", handlePresetAdd);
@@ -4736,10 +4808,78 @@ function openPresetModal() {
   presetModalEl.prompt.value = "";
   presetModalEl.isDefault.checked = false;
   presetModalEl.update.disabled = true;
+  currentEditPresetId = null;
+  fillPresetConfigForm(null);
   renderPresetFormVars(null);
 }
 
 let currentEditPresetId = null;
+let pendingSegmentFiles = { intro: null, outro: null };
+
+function collectPresetConfig() {
+  const introConfig = {
+    imageInsertStart: parseFloat(presetModalEl.introStart?.value) || 0,
+    imageCount: parseInt(presetModalEl.introCount?.value) || 0,
+    imageDuration: parseFloat(presetModalEl.introDuration?.value) || 0.4,
+    effect: presetModalEl.introEffect?.value || "none",
+    segmentFile: pendingSegmentFiles.intro || null,
+  };
+  const outroConfig = {
+    imageInsertStart: parseFloat(presetModalEl.outroStart?.value) || 0,
+    imageCount: parseInt(presetModalEl.outroCount?.value) || 0,
+    imageDuration: parseFloat(presetModalEl.outroDuration?.value) || 5,
+    effect: presetModalEl.outroEffect?.value || "none",
+    segmentFile: pendingSegmentFiles.outro || null,
+  };
+  const musicConfig = {
+    volumePercent: parseInt(presetModalEl.musicVolume?.value) || 8,
+    startTime: parseFloat(presetModalEl.musicStart?.value) || 0,
+  };
+  return { introConfig, outroConfig, musicConfig };
+}
+
+function fillPresetConfigForm(preset) {
+  const ic = preset?.introConfig || {};
+  const oc = preset?.outroConfig || {};
+  const mc = preset?.musicConfig || {};
+  if (presetModalEl.introStart) presetModalEl.introStart.value = ic.imageInsertStart ?? 0;
+  if (presetModalEl.introCount) presetModalEl.introCount.value = ic.imageCount ?? 8;
+  if (presetModalEl.introDuration) presetModalEl.introDuration.value = ic.imageDuration ?? 0.4;
+  if (presetModalEl.introEffect) presetModalEl.introEffect.value = ic.effect || "none";
+  if (presetModalEl.outroStart) presetModalEl.outroStart.value = oc.imageInsertStart ?? 0;
+  if (presetModalEl.outroCount) presetModalEl.outroCount.value = oc.imageCount ?? 4;
+  if (presetModalEl.outroDuration) presetModalEl.outroDuration.value = oc.imageDuration ?? 5;
+  if (presetModalEl.outroEffect) presetModalEl.outroEffect.value = oc.effect || "none";
+  if (presetModalEl.musicVolume) presetModalEl.musicVolume.value = mc.volumePercent ?? 8;
+  if (presetModalEl.musicStart) presetModalEl.musicStart.value = mc.startTime ?? 0;
+  // 显示已绑定的片段文件名
+  if (presetModalEl.introFileInfo) {
+    const introFile = preset?.files?.find((f) => f.varName === "_intro_segment");
+    presetModalEl.introFileInfo.textContent = introFile ? `已绑定: ${introFile.filename}` : (ic.segmentFile ? "已上传（待保存）" : "");
+  }
+  if (presetModalEl.outroFileInfo) {
+    const outroFile = preset?.files?.find((f) => f.varName === "_outro_segment");
+    presetModalEl.outroFileInfo.textContent = outroFile ? `已绑定: ${outroFile.filename}` : (oc.segmentFile ? "已上传（待保存）" : "");
+  }
+  pendingSegmentFiles = { intro: null, outro: null };
+}
+
+async function handleSegmentFileUpload(event, type) {
+  const file = event.target.files[0];
+  if (!file) return;
+  try {
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("type", "intro");
+    const res = await fetch("/api/remix/upload", { method: "POST", body: formData });
+    if (!res.ok) throw new Error("上传失败");
+    const data = await res.json();
+    pendingSegmentFiles[type] = { filePath: data.url, filename: file.name };
+    const infoEl = type === "intro" ? presetModalEl.introFileInfo : presetModalEl.outroFileInfo;
+    if (infoEl) infoEl.textContent = `已上传: ${file.name}（保存方案后绑定）`;
+    showToast(`${type === "intro" ? "片头" : "片尾"}片段已上传`);
+  } catch (e) { showToast(e.message, true); }
+}
 
 // 在方案编辑表单中渲染变量上传组件
 function renderPresetFormVars(preset) {
@@ -4834,6 +4974,7 @@ function renderPresetList() {
       presetModalEl.prompt.value = preset.prompt;
       presetModalEl.isDefault.checked = preset.isDefault;
       presetModalEl.update.disabled = false;
+      fillPresetConfigForm(preset);
       renderPresetFormVars(preset);
     });
   });
@@ -4856,8 +4997,12 @@ async function handlePresetAdd() {
   const name = presetModalEl.name.value.trim();
   const prompt = presetModalEl.prompt.value.trim();
   if (!name || !prompt) { showToast("名称和提示词不能为空", true); return; }
+  const { introConfig, outroConfig, musicConfig } = collectPresetConfig();
   try {
-    const created = await request("/api/ai-presets", { method: "POST", body: JSON.stringify({ name, prompt, isDefault: presetModalEl.isDefault.checked }) });
+    const created = await request("/api/ai-presets", {
+      method: "POST",
+      body: JSON.stringify({ name, prompt, isDefault: presetModalEl.isDefault.checked, introConfig, outroConfig, musicConfig }),
+    });
     // 绑定暂存的变量文件
     if (pendingVarFiles.size > 0) {
       for (const [varName, { filePath, filename }] of pendingVarFiles) {
@@ -4868,6 +5013,18 @@ async function handlePresetAdd() {
       }
       pendingVarFiles.clear();
     }
+    // 绑定片头/片尾片段文件
+    if (pendingSegmentFiles.intro) {
+      await request(`/api/ai-presets/${encodeURIComponent(created.id)}/files`, {
+        method: "POST", body: JSON.stringify({ varName: "_intro_segment", filePath: pendingSegmentFiles.intro.filePath, filename: pendingSegmentFiles.intro.filename }),
+      });
+    }
+    if (pendingSegmentFiles.outro) {
+      await request(`/api/ai-presets/${encodeURIComponent(created.id)}/files`, {
+        method: "POST", body: JSON.stringify({ varName: "_outro_segment", filePath: pendingSegmentFiles.outro.filePath, filename: pendingSegmentFiles.outro.filename }),
+      });
+    }
+    pendingSegmentFiles = { intro: null, outro: null };
     showToast("方案已新增");
     currentEditPresetId = created.id;
     presetModalEl.name.value = "";
@@ -4875,6 +5032,7 @@ async function handlePresetAdd() {
     presetModalEl.isDefault.checked = false;
     presetModalEl.update.disabled = true;
     await refreshPresetData();
+    fillPresetConfigForm(null);
     renderPresetFormVars(null);
   } catch (e) { showToast(e.message, true); }
 }
@@ -4883,13 +5041,28 @@ async function handlePresetUpdate() {
   const name = presetModalEl.name.value.trim();
   const prompt = presetModalEl.prompt.value.trim();
   if (!currentEditPresetId) { showToast("请先点击方案列表中的「编辑」", true); return; }
+  const { introConfig, outroConfig, musicConfig } = collectPresetConfig();
   try {
     await request(`/api/ai-presets/${encodeURIComponent(currentEditPresetId)}`, {
       method: "PUT",
-      body: JSON.stringify({ name, prompt, isDefault: presetModalEl.isDefault.checked }),
+      body: JSON.stringify({ name, prompt, isDefault: presetModalEl.isDefault.checked, introConfig, outroConfig, musicConfig }),
     });
+    // 绑定新上传的片头/片尾片段文件
+    if (pendingSegmentFiles.intro) {
+      await request(`/api/ai-presets/${encodeURIComponent(currentEditPresetId)}/files`, {
+        method: "POST", body: JSON.stringify({ varName: "_intro_segment", filePath: pendingSegmentFiles.intro.filePath, filename: pendingSegmentFiles.intro.filename }),
+      });
+    }
+    if (pendingSegmentFiles.outro) {
+      await request(`/api/ai-presets/${encodeURIComponent(currentEditPresetId)}/files`, {
+        method: "POST", body: JSON.stringify({ varName: "_outro_segment", filePath: pendingSegmentFiles.outro.filePath, filename: pendingSegmentFiles.outro.filename }),
+      });
+    }
+    pendingSegmentFiles = { intro: null, outro: null };
     showToast("方案已更新");
     await refreshPresetData();
+    const preset = aiPresets.find((p) => p.id === currentEditPresetId);
+    if (preset) fillPresetConfigForm(preset);
   } catch (e) { showToast(e.message, true); }
 }
 

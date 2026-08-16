@@ -4320,6 +4320,51 @@ footer span {
   color: var(--green-dark, #047857);
   flex-shrink: 0;
 }
+
+/* 片头/片尾/音乐配置 */
+.preset-config-section {
+  border: 1px solid var(--line, #e2e8f0);
+  border-radius: var(--radius-xs, 6px);
+  padding: 10px 12px;
+  background: var(--surface, #fff);
+}
+.preset-config-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-secondary, #475569);
+  margin-bottom: 8px;
+}
+.preset-config-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+.preset-config-row label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted, #64748b);
+  flex: 1;
+  min-width: 120px;
+}
+.preset-config-row input,
+.preset-config-row select {
+  font-size: 12px;
+  padding: 4px 8px;
+  min-height: 32px;
+}
+.preset-config-row input[type="file"] {
+  padding: 2px;
+  font-size: 11px;
+}
+.preset-file-info {
+  font-size: 11px;
+  color: var(--green-dark, #047857);
+  font-weight: 500;
+}
 .preset-list {
   display: flex;
   flex-direction: column;
