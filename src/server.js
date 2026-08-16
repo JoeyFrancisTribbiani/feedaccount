@@ -781,7 +781,17 @@ export function createMonitorServer({
         const child = spawn(chromePath, args, { detached: true, stdio: "ignore", windowsHide: false });
         child.unref();
 
-        sendJson(response, 200, { ok: true, pid: child.pid, chromePath, cdpPort, profilePath });
+        // 启动成功后自动注册 CDP 实例到数据库
+        const instance = store.upsertChromeInstance({
+          name: `Chrome调试 (${cdpPort})`,
+          cdpHost: "127.0.0.1",
+          cdpPort: cdpPort,
+          daemonPort: cdpPort + 1,
+          profilePath: profilePath,
+        });
+        store.logCdpEvent(instance.id, "info", `Chrome 调试实例已启动 (PID=${child.pid}, 端口=${cdpPort})`);
+
+        sendJson(response, 200, { ok: true, pid: child.pid, chromePath, cdpPort, profilePath, instanceId: instance.id });
         return;
       }
 
