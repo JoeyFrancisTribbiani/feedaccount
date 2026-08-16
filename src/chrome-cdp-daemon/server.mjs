@@ -391,72 +391,26 @@ async function chatgptUploadFile(filePath, opts = {}) {
 
   await dismissModal()
 
-  // 方式1: 点击 plus 按钮 → 点击弹出菜单的第一项「添加照片和文件」→ filechooser
-  const plusBtnSelectors = [
-    'button[data-testid="composer-plus-btn"]',
-    'button[aria-label*="Attach"]',
-    'button[aria-label*="attach"]',
-    'button[aria-label*="添加"]',
-  ]
-  for (const sel of plusBtnSelectors) {
-    try {
-      const count = await page.locator(sel).count()
-      if (count > 0) {
-        // 点击 plus 按钮弹出菜单
-        await page.click(sel, { timeout: 5000 })
-        await page.waitForTimeout(800)
+  // 方式1: 点击 plus 按钮 → 点击弹出菜单第一项 → filechooser
+  try {
+    const plusBtn = page.locator('button[data-testid="composer-plus-btn"]')
+    if (await plusBtn.count() > 0) {
+      await plusBtn.click({ timeout: 5000 })
+      await page.waitForTimeout(1000)
 
-        // 点击弹出菜单的第一项（添加照片和文件 / Add photos and files）
-        // 注意：不能调用 dismissModal()，否则会把弹出的菜单关掉
-        const menuItemSelectors = [
-          'div[role="menu"] [role="menuitem"]',
-          'div[class*="popover"] button',
-          'div[class*="dropdown"] button',
-          'div[role="menu"] button',
-        ]
-        let clicked = false
-        for (const miSel of menuItemSelectors) {
-          try {
-            const items = page.locator(miSel)
-            const itemCount = await items.count()
-            for (let i = 0; i < itemCount; i++) {
-              const text = (await items.nth(i).textContent()).trim()
-              if (text.includes('添加') || text.includes('文件') || text.includes('照片') || text.includes('Add') || text.includes('Upload') || text.includes('photos')) {
-                const fileChooserPromise = page.waitForEvent('filechooser', { timeout: 10000 })
-                await items.nth(i).click({ timeout: 5000 })
-                const fileChooser = await fileChooserPromise
-                await fileChooser.setFiles(filePath)
-                await page.waitForTimeout(2000)
-                await dismissModal()
-                const attached = await page.evaluate(() => document.querySelectorAll('[class*="file-tile"]').length > 0)
-                if (attached) { log('文件已上传 (plus menu → filechooser):', filePath); return { ok: true, method: 'plus-menu-filechooser' } }
-                clicked = true
-                break
-              }
-            }
-            if (clicked) break
-          } catch (err) { if (DEBUG) log('菜单项点击失败:', miSel, err.message); await dismissModal() }
-        }
-
-        // 如果没找到带文字的菜单项，直接点第一个
-        if (!clicked) {
-          try {
-            const firstItem = page.locator('div[role="menu"] [role="menuitem"]').first()
-            if (await firstItem.count() > 0) {
-              const fileChooserPromise = page.waitForEvent('filechooser', { timeout: 10000 })
-              await firstItem.click({ timeout: 5000 })
-              const fileChooser = await fileChooserPromise
-              await fileChooser.setFiles(filePath)
-              await page.waitForTimeout(2000)
-              await dismissModal()
-              const attached = await page.evaluate(() => document.querySelectorAll('[class*="file-tile"]').length > 0)
-              if (attached) { log('文件已上传 (plus menu first item):', filePath); return { ok: true, method: 'plus-menu-first' } }
-            }
-          } catch (err) { if (DEBUG) log('第一项点击失败:', err.message); await dismissModal() }
-        }
+      // ChatGPT 的弹出菜单项是 div.__menu-item，不是标准 role=menuitem
+      const menuItem = page.locator('div[class*="__menu-item"]').first()
+      if (await menuItem.count() > 0) {
+        const fileChooserPromise = page.waitForEvent('filechooser', { timeout: 10000 })
+        await menuItem.click({ timeout: 5000 })
+        const fileChooser = await fileChooserPromise
+        await fileChooser.setFiles(filePath)
+        await page.waitForTimeout(2000)
+        const attached = await page.evaluate(() => document.querySelectorAll('[class*="file-tile"]').length > 0)
+        if (attached) { log('文件已上传 (plus menu → filechooser):', filePath); return { ok: true, method: 'plus-menu-filechooser' } }
       }
-    } catch (err) { if (DEBUG) log('plus 按钮方式失败:', sel, err.message); await dismissModal() }
-  }
+    }
+  } catch (err) { if (DEBUG) log('plus 菜单方式失败:', err.message) }
 
   // 方式2: 直接用 setInputFiles 操作隐藏的 input#upload-files
   const directInputSelectors = ['input#upload-files', 'input[type="file"]:not([accept])', 'input[type="file"]']
@@ -466,11 +420,10 @@ async function chatgptUploadFile(filePath, opts = {}) {
       if (await locator.count() > 0) {
         await locator.first().setInputFiles(filePath)
         await page.waitForTimeout(2000)
-        await dismissModal()
         const attached = await page.evaluate(() => document.querySelectorAll('[class*="file-tile"]').length > 0)
         if (attached) { log('文件已上传 (setInputFiles):', filePath); return { ok: true, method: 'input-direct' } }
       }
-    } catch (err) { if (DEBUG) log('setInputFiles 方式失败:', sel, err.message); await dismissModal() }
+    } catch (err) { if (DEBUG) log('setInputFiles 方式失败:', sel, err.message) }
   }
 
   await dismissModal()
