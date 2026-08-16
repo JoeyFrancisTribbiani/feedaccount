@@ -1497,14 +1497,8 @@ export function createMonitorServer({
               ratio: ratio || "9:16",
             });
 
-            // 收集要上传的文件路径：原视频 + 方案绑定的文件
+            // AI混剪只上传原视频，方案绑定的文件用于后续拼接不上传给ChatGPT
             const filesToUpload = [resolveLocal(video.url)];
-            if (presetFiles.length) {
-              for (const pf of presetFiles) {
-                const localPath = resolveLocal(pf.filePath);
-                if (localPath) filesToUpload.push(localPath);
-              }
-            }
 
             // 提交到 AI 混剪队列（异步处理）
             aiRemixQueue.push({
