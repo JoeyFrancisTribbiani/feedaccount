@@ -40,7 +40,9 @@ if exist "%DAEMON_DIR%\server.mjs" (
     popd
   )
   echo [CDP Daemon] 正在后台启动...
-  start "Chrome CDP Daemon" /min "%NODE_EXE%" "%DAEMON_DIR%\server.mjs"
+  pushd "%DAEMON_DIR%"
+  start "Chrome CDP Daemon" "%NODE_EXE%" server.mjs
+  popd
   timeout /t 2 /nobreak >nul
 ) else (
   echo [CDP Daemon] 未找到 src\chrome-cdp-daemon\server.mjs，跳过
