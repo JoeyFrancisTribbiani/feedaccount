@@ -4883,7 +4883,6 @@ async function handleSegmentFileUpload(event, type) {
   try {
     const formData = new FormData();
     formData.append("file", file);
-    formData.append("type", "intro");
     const res = await fetch("/api/remix/upload", { method: "POST", body: formData });
     if (!res.ok) throw new Error("上传失败");
     const data = await res.json();
