@@ -4448,8 +4448,6 @@ const presetModalEl = {
   isDefault: null,
   vars: null,
   save: null,
-  cancel: null,
-  close: null,
   introStart: null, introCount: null, introDuration: null, introEffect: null, introFile: null, introFileInfo: null,
   outroStart: null, outroCount: null, outroDuration: null, outroEffect: null, outroFile: null, outroFileInfo: null,
   musicVolume: null, musicScope: null, musicLoop: null, musicFile: null, musicFileInfo: null,
@@ -4711,175 +4709,165 @@ modalEl.presetSave?.addEventListener("click", async () => {
   } catch (e) { showToast(e.message, true); }
 });
 
-// 管理方案弹框
-modalEl.presetManage?.addEventListener("click", () => openPresetModal());
+// 管理方案弹框 — 列表
+modalEl.presetManage?.addEventListener("click", () => openPresetListModal());
 
-function openPresetModal() {
-  let overlay = document.querySelector("#preset-modal");
+function openPresetListModal() {
+  let overlay = document.querySelector("#preset-list-modal");
   if (!overlay) {
     overlay = document.createElement("div");
-    overlay.id = "preset-modal";
+    overlay.id = "preset-list-modal";
     overlay.className = "modal-overlay";
     overlay.innerHTML = `
-      <div class="modal-content" style="max-width: 680px;">
+      <div class="modal-content" style="max-width: 560px;">
         <div class="modal-header">
-          <h3>管理混剪方案</h3>
-          <button id="preset-modal-close" class="modal-close" type="button">×</button>
+          <h3>混剪方案管理</h3>
+          <button id="preset-list-close" class="modal-close" type="button">×</button>
         </div>
         <div class="modal-body">
-          <div class="preset-form">
-            <input type="text" id="preset-form-name" placeholder="方案名称" />
-            <textarea id="preset-form-prompt" rows="5" placeholder="提示词内容，使用 {{变量名}} 定义需要上传的资源变量"></textarea>
-            <label class="preset-default-label">
-              <input type="checkbox" id="preset-form-default" /> 设为默认方案
-            </label>
-            <div id="preset-form-vars" class="preset-form-vars"></div>
-            <div class="preset-config-section">
-              <div class="preset-config-title">片头配置 (Intro)</div>
-              <div class="preset-config-row">
-                <label>开始插入图片时间 <input type="text" id="preset-intro-start" value="00:00:00:00" placeholder="时:分:秒:帧" pattern="\d{2}:\d{2}:\d{2}:\d{2}" /></label>
-                <label>插入图片数量 <input type="number" id="preset-intro-count" min="0" value="8" /></label>
-                <label>每张图片持续 <input type="text" id="preset-intro-duration" value="00:00:00:12" placeholder="时:分:秒:帧" pattern="\d{2}:\d{2}:\d{2}:\d{2}" /></label>
-              </div>
-              <div class="preset-config-row">
-                <label>图片动效
-                  <select id="preset-intro-effect">
-                    <option value="none">硬切（无动效）</option>
-                    <option value="fade">淡入淡出</option>
-                    <option value="slide_left">左滑入</option>
-                    <option value="slide_right">右滑入</option>
-                    <option value="slide_up">上滑入</option>
-                    <option value="slide_down">下滑入</option>
-                    <option value="zoom_in">放大（Ken Burns）</option>
-                    <option value="zoom_out">缩小</option>
-                    <option value="bounce">弹动</option>
-                    <option value="rotate">旋转入场</option>
-                    <option value="blur">模糊到清晰</option>
-                    <option value="flash">闪白转场</option>
-                  </select>
-                </label>
-                <label>片头片段文件
-                  <input type="file" id="preset-intro-file" accept="video/*" />
-                </label>
-              </div>
-              <span id="preset-intro-file-info" class="preset-file-info"></span>
-            </div>
-            <div class="preset-config-section">
-              <div class="preset-config-title">片尾配置 (Outro)</div>
-              <div class="preset-config-row">
-                <label>开始插入图片时间 <input type="text" id="preset-outro-start" value="00:00:00:00" placeholder="时:分:秒:帧" pattern="\d{2}:\d{2}:\d{2}:\d{2}" /></label>
-                <label>插入图片数量 <input type="number" id="preset-outro-count" min="0" value="4" /></label>
-                <label>每张图片持续 <input type="text" id="preset-outro-duration" value="00:00:05:00" placeholder="时:分:秒:帧" pattern="\d{2}:\d{2}:\d{2}:\d{2}" /></label>
-              </div>
-              <div class="preset-config-row">
-                <label>图片动效
-                  <select id="preset-outro-effect">
-                    <option value="none">硬切（无动效）</option>
-                    <option value="fade">淡入淡出</option>
-                    <option value="slide_left">左滑入</option>
-                    <option value="slide_right">右滑入</option>
-                    <option value="slide_up">上滑入</option>
-                    <option value="slide_down">下滑入</option>
-                    <option value="zoom_in">放大（Ken Burns）</option>
-                    <option value="zoom_out">缩小</option>
-                    <option value="bounce">弹动</option>
-                    <option value="rotate">旋转入场</option>
-                    <option value="blur">模糊到清晰</option>
-                    <option value="flash">闪白转场</option>
-                  </select>
-                </label>
-                <label>片尾片段文件
-                  <input type="file" id="preset-outro-file" accept="video/*" />
-                </label>
-              </div>
-              <span id="preset-outro-file-info" class="preset-file-info"></span>
-            </div>
-            <div class="preset-config-section">
-              <div class="preset-config-title">背景音乐配置</div>
-              <div class="preset-config-row">
-                <label>音量百分比 <input type="number" id="preset-music-volume" min="1" max="100" value="8" /></label>
-                <label>适用范围
-                  <select id="preset-music-scope">
-                    <option value="original">仅原视频部分（默认）</option>
-                    <option value="full">整个成品视频</option>
-                    <option value="intro">仅片头</option>
-                    <option value="outro">仅片尾</option>
-                    <option value="intro_outro">片头+片尾</option>
-                    <option value="none">不加背景音乐</option>
-                  </select>
-                </label>
-                <label>音乐不够长时循环 <input type="checkbox" id="preset-music-loop" checked /></label>
-              </div>
-              <div class="preset-config-row">
-                <label>背景音乐文件
-                  <input type="file" id="preset-music-file" accept="audio/*" />
-                </label>
-              </div>
-              <span id="preset-music-file-info" class="preset-file-info"></span>
-            </div>
-            <div class="preset-form-actions">
-              <button id="preset-form-add" class="button button-primary" type="button">新增</button>
-              <button id="preset-form-update" class="button button-secondary" type="button" disabled>更新选中</button>
-            </div>
+          <div style="margin-bottom: 12px;">
+            <button id="preset-list-add-btn" class="button button-primary" type="button">+ 新增方案</button>
           </div>
-          <div id="preset-list" class="preset-list"></div>
+          <div id="preset-list-container" class="preset-list"></div>
         </div>
       </div>
     `;
     document.body.appendChild(overlay);
+    overlay.querySelector("#preset-list-close").addEventListener("click", () => { overlay.classList.add("hidden"); fetchAiPresets(); });
+    overlay.querySelector("#preset-list-add-btn").addEventListener("click", () => openPresetEditModal(null));
+    presetModalEl.list = overlay.querySelector("#preset-list-container");
+  }
+  overlay.classList.remove("hidden");
+  renderPresetList();
+}
 
-    presetModalEl.overlay = overlay;
-    presetModalEl.list = overlay.querySelector("#preset-list");
-    presetModalEl.name = overlay.querySelector("#preset-form-name");
-    presetModalEl.prompt = overlay.querySelector("#preset-form-prompt");
-    presetModalEl.isDefault = overlay.querySelector("#preset-form-default");
-    presetModalEl.vars = overlay.querySelector("#preset-form-vars");
-    presetModalEl.save = overlay.querySelector("#preset-form-add");
-    presetModalEl.update = overlay.querySelector("#preset-form-update");
-    presetModalEl.close = overlay.querySelector("#preset-modal-close");
-    presetModalEl.introStart = overlay.querySelector("#preset-intro-start");
-    presetModalEl.introCount = overlay.querySelector("#preset-intro-count");
-    presetModalEl.introDuration = overlay.querySelector("#preset-intro-duration");
-    presetModalEl.introEffect = overlay.querySelector("#preset-intro-effect");
-    presetModalEl.introFile = overlay.querySelector("#preset-intro-file");
-    presetModalEl.introFileInfo = overlay.querySelector("#preset-intro-file-info");
-    presetModalEl.outroStart = overlay.querySelector("#preset-outro-start");
-    presetModalEl.outroCount = overlay.querySelector("#preset-outro-count");
-    presetModalEl.outroDuration = overlay.querySelector("#preset-outro-duration");
-    presetModalEl.outroEffect = overlay.querySelector("#preset-outro-effect");
-    presetModalEl.outroFile = overlay.querySelector("#preset-outro-file");
-    presetModalEl.outroFileInfo = overlay.querySelector("#preset-outro-file-info");
-    presetModalEl.musicVolume = overlay.querySelector("#preset-music-volume");
-    presetModalEl.musicScope = overlay.querySelector("#preset-music-scope");
-    presetModalEl.musicLoop = overlay.querySelector("#preset-music-loop");
-    presetModalEl.musicFile = overlay.querySelector("#preset-music-file");
-    presetModalEl.musicFileInfo = overlay.querySelector("#preset-music-file-info");
+function openPresetEditModal(preset) {
+  const isEdit = !!preset;
+  const existing = document.querySelector("#preset-edit-modal");
+  if (existing) existing.remove();
 
-    // 片头/片尾/音乐文件上传
-    presetModalEl.introFile.addEventListener("change", (e) => handleSegmentFileUpload(e, "intro"));
-    presetModalEl.outroFile.addEventListener("change", (e) => handleSegmentFileUpload(e, "outro"));
-    presetModalEl.musicFile.addEventListener("change", (e) => handleSegmentFileUpload(e, "music"));
+  const overlay = document.createElement("div");
+  overlay.id = "preset-edit-modal";
+  overlay.className = "modal-overlay";
 
-    presetModalEl.close.addEventListener("click", () => { overlay.classList.add("hidden"); fetchAiPresets(); });
-    presetModalEl.save.addEventListener("click", handlePresetAdd);
-    presetModalEl.update.addEventListener("click", handlePresetUpdate);
-    // 输入提示词时实时解析变量
-    presetModalEl.prompt.addEventListener("input", () => renderPresetFormVars(null));
+  const EFFECTS = `<option value="none">硬切（无动效）</option><option value="fade">淡入淡出</option><option value="slide_left">左滑入</option><option value="slide_right">右滑入</option><option value="slide_up">上滑入</option><option value="slide_down">下滑入</option><option value="zoom_in">放大（Ken Burns）</option><option value="zoom_out">缩小</option><option value="bounce">弹动</option><option value="rotate">旋转入场</option><option value="blur">模糊到清晰</option><option value="flash">闪白转场</option>`;
+
+  overlay.innerHTML = `
+    <div class="modal-content" style="max-width: 680px;">
+      <div class="modal-header">
+        <h3>${isEdit ? "编辑方案" : "新增方案"}</h3>
+        <button id="preset-edit-close" class="modal-close" type="button">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="preset-form">
+          <input type="text" id="preset-form-name" placeholder="方案名称" value="${isEdit ? escapeHtml(preset.name) : ""}" />
+          <textarea id="preset-form-prompt" rows="5" placeholder="提示词内容，使用 {{变量名}} 定义需要上传的资源变量">${isEdit ? escapeHtml(preset.prompt) : ""}</textarea>
+          <label class="preset-default-label">
+            <input type="checkbox" id="preset-form-default" ${isEdit && preset.isDefault ? "checked" : ""} /> 设为默认方案
+          </label>
+          <div id="preset-form-vars" class="preset-form-vars"></div>
+          <div class="preset-config-section">
+            <div class="preset-config-title">片头配置 (Intro)</div>
+            <div class="preset-config-row">
+              <label>开始插入图片时间 <input type="text" id="preset-intro-start" value="00:00:00:00" placeholder="时:分:秒:帧" /></label>
+              <label>插入图片数量 <input type="number" id="preset-intro-count" min="0" value="8" /></label>
+              <label>每张图片持续 <input type="text" id="preset-intro-duration" value="00:00:00:12" placeholder="时:分:秒:帧" /></label>
+            </div>
+            <div class="preset-config-row">
+              <label>图片动效 <select id="preset-intro-effect">${EFFECTS}</select></label>
+              <label>片头片段文件 <input type="file" id="preset-intro-file" accept="video/*" /></label>
+            </div>
+            <span id="preset-intro-file-info" class="preset-file-info"></span>
+          </div>
+          <div class="preset-config-section">
+            <div class="preset-config-title">片尾配置 (Outro)</div>
+            <div class="preset-config-row">
+              <label>开始插入图片时间 <input type="text" id="preset-outro-start" value="00:00:00:00" placeholder="时:分:秒:帧" /></label>
+              <label>插入图片数量 <input type="number" id="preset-outro-count" min="0" value="4" /></label>
+              <label>每张图片持续 <input type="text" id="preset-outro-duration" value="00:00:05:00" placeholder="时:分:秒:帧" /></label>
+            </div>
+            <div class="preset-config-row">
+              <label>图片动效 <select id="preset-outro-effect">${EFFECTS}</select></label>
+              <label>片尾片段文件 <input type="file" id="preset-outro-file" accept="video/*" /></label>
+            </div>
+            <span id="preset-outro-file-info" class="preset-file-info"></span>
+          </div>
+          <div class="preset-config-section">
+            <div class="preset-config-title">背景音乐配置</div>
+            <div class="preset-config-row">
+              <label>音量百分比 <input type="number" id="preset-music-volume" min="1" max="100" value="8" /></label>
+              <label>适用范围
+                <select id="preset-music-scope">
+                  <option value="original">仅原视频部分（默认）</option>
+                  <option value="full">整个成品视频</option>
+                  <option value="intro">仅片头</option>
+                  <option value="outro">仅片尾</option>
+                  <option value="intro_outro">片头+片尾</option>
+                  <option value="none">不加背景音乐</option>
+                </select>
+              </label>
+              <label>音乐不够长时循环 <input type="checkbox" id="preset-music-loop" checked /></label>
+            </div>
+            <div class="preset-config-row">
+              <label>背景音乐文件 <input type="file" id="preset-music-file" accept="audio/*" /></label>
+            </div>
+            <span id="preset-music-file-info" class="preset-file-info"></span>
+          </div>
+          <div class="preset-form-actions">
+            <button id="preset-form-save" class="button button-primary" type="button">${isEdit ? "保存修改" : "创建方案"}</button>
+            <button id="preset-form-cancel" class="button button-secondary" type="button">取消</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  presetModalEl.overlay = overlay;
+  presetModalEl.name = overlay.querySelector("#preset-form-name");
+  presetModalEl.prompt = overlay.querySelector("#preset-form-prompt");
+  presetModalEl.isDefault = overlay.querySelector("#preset-form-default");
+  presetModalEl.vars = overlay.querySelector("#preset-form-vars");
+  presetModalEl.save = overlay.querySelector("#preset-form-save");
+  presetModalEl.introStart = overlay.querySelector("#preset-intro-start");
+  presetModalEl.introCount = overlay.querySelector("#preset-intro-count");
+  presetModalEl.introDuration = overlay.querySelector("#preset-intro-duration");
+  presetModalEl.introEffect = overlay.querySelector("#preset-intro-effect");
+  presetModalEl.introFile = overlay.querySelector("#preset-intro-file");
+  presetModalEl.introFileInfo = overlay.querySelector("#preset-intro-file-info");
+  presetModalEl.outroStart = overlay.querySelector("#preset-outro-start");
+  presetModalEl.outroCount = overlay.querySelector("#preset-outro-count");
+  presetModalEl.outroDuration = overlay.querySelector("#preset-outro-duration");
+  presetModalEl.outroEffect = overlay.querySelector("#preset-outro-effect");
+  presetModalEl.outroFile = overlay.querySelector("#preset-outro-file");
+  presetModalEl.outroFileInfo = overlay.querySelector("#preset-outro-file-info");
+  presetModalEl.musicVolume = overlay.querySelector("#preset-music-volume");
+  presetModalEl.musicScope = overlay.querySelector("#preset-music-scope");
+  presetModalEl.musicLoop = overlay.querySelector("#preset-music-loop");
+  presetModalEl.musicFile = overlay.querySelector("#preset-music-file");
+  presetModalEl.musicFileInfo = overlay.querySelector("#preset-music-file-info");
+
+  overlay.querySelector("#preset-edit-close").addEventListener("click", () => overlay.remove());
+  overlay.querySelector("#preset-form-cancel").addEventListener("click", () => overlay.remove());
+  presetModalEl.save.addEventListener("click", () => isEdit ? handlePresetUpdate() : handlePresetAdd());
+  presetModalEl.prompt.addEventListener("input", () => renderPresetFormVars(isEdit ? preset : null));
+  presetModalEl.introFile.addEventListener("change", (e) => handleSegmentFileUpload(e, "intro"));
+  presetModalEl.outroFile.addEventListener("change", (e) => handleSegmentFileUpload(e, "outro"));
+  presetModalEl.musicFile.addEventListener("change", (e) => handleSegmentFileUpload(e, "music"));
+
+  currentEditPresetId = isEdit ? preset.id : null;
+  pendingSegmentFiles = { intro: null, outro: null, music: null };
+  pendingVarFiles.clear();
+  if (isEdit) {
+    fillPresetConfigForm(preset);
+    renderPresetFormVars(preset);
+  } else {
+    fillPresetConfigForm(null);
+    renderPresetFormVars(null);
   }
 
   overlay.classList.remove("hidden");
-  renderPresetList();
-  presetModalEl.name.value = "";
-  presetModalEl.prompt.value = "";
-  presetModalEl.isDefault.checked = false;
-  presetModalEl.update.disabled = true;
-  currentEditPresetId = null;
-  fillPresetConfigForm(null);
-  renderPresetFormVars(null);
 }
-
-let currentEditPresetId = null;
-let pendingSegmentFiles = { intro: null, outro: null, music: null };
 
 // 时间码 HH:MM:SS:FF (30fps) → 秒
 function timecodeToSeconds(tc) {
@@ -5032,10 +5020,6 @@ const pendingVarFiles = new Map();
 
 async function refreshPresetData() {
   await fetchAiPresets();
-  if (currentEditPresetId) {
-    const preset = aiPresets.find((p) => p.id === currentEditPresetId);
-    if (preset) renderPresetFormVars(preset);
-  }
   renderPresetList();
 }
 
@@ -5062,13 +5046,7 @@ function renderPresetList() {
     btn.addEventListener("click", () => {
       const preset = aiPresets.find((p) => p.id === btn.dataset.edit);
       if (!preset) return;
-      currentEditPresetId = preset.id;
-      presetModalEl.name.value = preset.name;
-      presetModalEl.prompt.value = preset.prompt;
-      presetModalEl.isDefault.checked = preset.isDefault;
-      presetModalEl.update.disabled = false;
-      fillPresetConfigForm(preset);
-      renderPresetFormVars(preset);
+      openPresetEditModal(preset);
     });
   });
   presetModalEl.list.querySelectorAll("[data-del]").forEach((btn) => {
@@ -5077,11 +5055,6 @@ function renderPresetList() {
       await request(`/api/ai-presets/${encodeURIComponent(btn.dataset.del)}`, { method: "DELETE" });
       await fetchAiPresets();
       renderPresetList();
-      // 清空表单
-      presetModalEl.name.value = "";
-      presetModalEl.prompt.value = "";
-      presetModalEl.isDefault.checked = false;
-      presetModalEl.update.disabled = true;
     });
   });
 }
@@ -5124,14 +5097,10 @@ async function handlePresetAdd() {
     }
     pendingSegmentFiles = { intro: null, outro: null, music: null };
     showToast("方案已新增");
-    currentEditPresetId = created.id;
-    presetModalEl.name.value = "";
-    presetModalEl.prompt.value = "";
-    presetModalEl.isDefault.checked = false;
-    presetModalEl.update.disabled = true;
-    await refreshPresetData();
-    fillPresetConfigForm(null);
-    renderPresetFormVars(null);
+    // 关闭编辑弹框，刷新列表
+    presetModalEl.overlay?.remove();
+    await fetchAiPresets();
+    renderPresetList();
   } catch (e) { showToast(e.message, true); }
 }
 
@@ -5163,9 +5132,9 @@ async function handlePresetUpdate() {
     }
     pendingSegmentFiles = { intro: null, outro: null, music: null };
     showToast("方案已更新");
-    await refreshPresetData();
-    const preset = aiPresets.find((p) => p.id === currentEditPresetId);
-    if (preset) fillPresetConfigForm(preset);
+    presetModalEl.overlay?.remove();
+    await fetchAiPresets();
+    renderPresetList();
   } catch (e) { showToast(e.message, true); }
 }
 
