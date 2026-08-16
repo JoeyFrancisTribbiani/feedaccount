@@ -915,9 +915,12 @@ async function downloadGeneratedImages(destDir) {
     var urls = [];
     for (var img of imgs) {
       var src = img.src;
-      if (src && !src.includes('favicon') && !src.includes('icon') && !src.includes('avatar') && !src.includes('logo')) {
-        if (!seen.has(src)) { seen.add(src); urls.push(src) }
-      }
+      // 过滤掉图标、头像等非内容图片
+      if (!src || src.includes('favicon') || src.includes('icon') || src.includes('avatar') || src.includes('logo')) continue;
+      // 只取主图（宽高 > 100px），跳过缩略图
+      var rect = img.getBoundingClientRect();
+      if (rect.width < 100 || rect.height < 100) continue;
+      if (!seen.has(src)) { seen.add(src); urls.push(src) }
     }
     return urls
   })

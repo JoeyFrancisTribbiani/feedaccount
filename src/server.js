@@ -403,7 +403,7 @@ export function createMonitorServer({
     if (aiRemixProcessing) return;
     aiRemixProcessing = true;
     while (aiRemixQueue.length > 0) {
-      const { taskId, daemonUrl, filesToUpload, prompt, matrixIds, creatorId, sourceVideoId, videoTitle, presetId } = aiRemixQueue.shift();
+      const { taskId, daemonUrl, filesToUpload, prompt, matrixIds, creatorId, sourceVideoId, videoTitle, presetId, mainVideoLocalPath } = aiRemixQueue.shift();
       store.updateRemixTask(taskId, { status: "PROCESSING" });
       try {
         // Step 1: 上传文件到 daemon
@@ -478,19 +478,13 @@ export function createMonitorServer({
               // 用方案配置拼接：图片覆盖到片头/片尾视频上
               const preset = presetId ? store.getAiRemixPreset(presetId) : null;
 
-              // 获取方案绑定的片头/片尾/音乐文件
-              const presetFiles = presetId ? store.getPresetFiles(presetId) : [];
-
               store.logCdpEvent(null, "info", `AI混剪合成: ${imagePaths.length}张图片, 方案=${preset?.name || "默认"}`);
 
-              // 获取原视频路径
-              const sourceVideo = videos.find(v => v.id === sourceVideoId);
-              const mainVideoPath = sourceVideo ? resolveLocal(sourceVideo.url) : null;
-
-              if (mainVideoPath && existsSync(mainVideoPath)) {
+              // 使用队列中传递的原视频本地路径
+              if (mainVideoLocalPath && existsSync(mainVideoLocalPath)) {
                 // 用 composeAiRemixVideo 合成
                 const finalOut = await composeAiRemixVideo(
-                  mainVideoPath,
+                  mainVideoLocalPath,
                   imagePaths,
                   {
                     introConfig: preset?.introConfig || {},
@@ -1562,13 +1556,15 @@ export function createMonitorServer({
             });
 
             // AI混剪只上传原视频，方案绑定的文件用于后续拼接不上传给ChatGPT
-            const filesToUpload = [resolveLocal(video.url)];
+            const mainVideoLocalPath = resolveLocal(video.url);
+            const filesToUpload = [mainVideoLocalPath];
 
             // 提交到 AI 混剪队列（异步处理）
             aiRemixQueue.push({
               taskId: task.id, daemonUrl, filesToUpload, prompt: prompt || "",
               matrixIds, creatorId, sourceVideoId: video.id, videoTitle: video.title,
               presetId: presetId || null,
+              mainVideoLocalPath,
             });
             processAiRemixQueue();
 
