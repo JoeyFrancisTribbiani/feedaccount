@@ -391,6 +391,22 @@ async function chatgptUploadFile(filePath, opts = {}) {
 
   await dismissModal()
 
+  // 方式1: 直接用 setInputFiles 操作隐藏的 input#upload-files（最可靠）
+  const directInputSelectors = ['input#upload-files', 'input[type="file"]:not([accept])', 'input[type="file"]']
+  for (const sel of directInputSelectors) {
+    try {
+      const locator = page.locator(sel)
+      if (await locator.count() > 0) {
+        await locator.first().setInputFiles(filePath)
+        await page.waitForTimeout(2000)
+        await dismissModal()
+        const attached = await page.evaluate(() => document.querySelectorAll('[class*="file-tile"]').length > 0)
+        if (attached) { log('文件已上传 (setInputFiles):', filePath); return { ok: true, method: 'input-direct' } }
+      }
+    } catch (err) { if (DEBUG) log('setInputFiles 方式失败:', sel, err.message); await dismissModal() }
+  }
+
+  // 方式2: 点击 plus 按钮触发 filechooser
   const plusBtnSelectors = [
     'button[data-testid="composer-plus-btn"]',
     'button[aria-label*="Attach"]',
@@ -411,38 +427,8 @@ async function chatgptUploadFile(filePath, opts = {}) {
           const attached = await page.evaluate(() => document.querySelectorAll('[class*="file-tile"]').length > 0)
           if (attached) { log('文件已上传 (filechooser):', filePath); return { ok: true, method: 'filechooser' } }
         } catch (err) { if (DEBUG) log('filechooser 方式失败:', err.message); await dismissModal() }
-        try {
-          await page.click(sel, { timeout: 5000 })
-          await page.waitForTimeout(500)
-          const fileInput = page.locator('input#upload-files')
-          if (await fileInput.count() > 0) {
-            await fileInput.setInputFiles(filePath)
-            await page.waitForTimeout(2000)
-            await dismissModal()
-            const attached = await page.evaluate(() => document.querySelectorAll('[class*="file-tile"]').length > 0)
-            if (attached) { log('文件已上传 (+ button → input#upload-files):', filePath); return { ok: true, method: 'plus-button' } }
-          }
-        } catch (err) { if (DEBUG) log('+ button input 方式失败:', err.message); await dismissModal() }
       }
     } catch (err) { if (DEBUG) log('上传尝试失败 (+ button):', sel, err.message); await dismissModal() }
-  }
-
-  const fileInputSelectors = ['input#upload-files', 'input[type="file"]:not([accept])', 'input[type="file"]']
-  for (const sel of fileInputSelectors) {
-    try {
-      const count = await page.locator(sel).count()
-      if (count > 0) {
-        await page.setInputFiles(sel, filePath)
-        await page.evaluate((selector) => {
-          const input = document.querySelector(selector)
-          if (input) { const event = new Event('change', { bubbles: true }); input.dispatchEvent(event) }
-        }, sel)
-        await page.waitForTimeout(2000)
-        await dismissModal()
-        const attached = await page.evaluate(() => document.querySelectorAll('[class*="file-tile"]').length > 0)
-        if (attached) { log('文件已上传 (setInputFiles + change event):', filePath); return { ok: true, method: 'input' } }
-      }
-    } catch (err) { if (DEBUG) log('上传尝试失败:', sel, err.message); await dismissModal() }
   }
 
   await dismissModal()

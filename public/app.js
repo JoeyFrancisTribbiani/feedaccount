@@ -5149,6 +5149,12 @@ modalEl.start?.addEventListener("click", async () => {
   const ratio = modalEl.ratio.value;
   const mode = modalState.mode;
 
+  // 进入 loading 状态
+  const origText = modalEl.start.textContent;
+  modalEl.start.disabled = true;
+  modalEl.start.textContent = "提交中…";
+  modalEl.start.classList.add("loading");
+
   try {
     if (mode === "ai") {
       // AI 混剪
@@ -5209,7 +5215,13 @@ modalEl.start?.addEventListener("click", async () => {
       await fetchRemixVideos(remix.selectedCreatorId);
       await fetchRemixCreators();
     }
-  } catch (e) { showToast(e.message, true); }
+  } catch (e) {
+    showToast(e.message, true);
+  } finally {
+    modalEl.start.disabled = false;
+    modalEl.start.textContent = origText;
+    modalEl.start.classList.remove("loading");
+  }
 });
 fetchRemixCreators();
 fetchRemixTasks();
