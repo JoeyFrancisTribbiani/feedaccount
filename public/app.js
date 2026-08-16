@@ -4490,6 +4490,11 @@ async function openRemixTaskModal() {
 
 async function loadModalCdpInstances() {
   try {
+    // 先扫描端口发现运行中的 Chrome 实例，自动注册到数据库
+    try {
+      await request("/api/cdp/scan", { method: "POST", body: JSON.stringify({ host: "localhost", portStart: 9222, portEnd: 9232 }) });
+    } catch {}
+    // 再从数据库加载（包含刚扫描注册的）
     const res = await request("/api/cdp/instances");
     const instances = res.instances || [];
     modalEl.cdpInstance.innerHTML = instances.length
@@ -4502,7 +4507,7 @@ async function loadModalCdpInstances() {
 }
 
 modalEl.cdpRefresh?.addEventListener("click", async () => {
-  modalEl.cdpRefresh.textContent = "刷新中…";
+  modalEl.cdpRefresh.textContent = "扫描中…";
   modalEl.cdpRefresh.disabled = true;
   await loadModalCdpInstances();
   modalEl.cdpRefresh.textContent = "刷新";
