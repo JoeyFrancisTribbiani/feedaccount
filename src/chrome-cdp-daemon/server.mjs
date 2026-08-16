@@ -878,13 +878,28 @@ async function downloadGeneratedImages(destDir) {
   mkdirSync(destDir, { recursive: true })
   await ensureChatGPT()
 
-  // 在浏览器上下文中提取所有图片 URL（去重）
+  // 在浏览器上下文中提取最后一条助手回复中的图片 URL（去重）
   const imageUrls = await page.evaluate(() => {
-    const imgs = document.querySelectorAll('img[src*="estuary/content"], img[src*="oaiusercontent"], img[src*="files."], img[src*="chatgpt"]')
-    const seen = new Set()
-    const urls = []
-    for (const img of imgs) {
-      const src = img.src
+    // 找所有对话 turn，排除用户消息
+    var turns = document.querySelectorAll('[data-testid^="conversation-turn-"]');
+    var lastAssistantTurn = null;
+    for (var i = turns.length - 1; i >= 0; i--) {
+      var role = turns[i].getAttribute('data-message-author-role');
+      if (role !== 'user') { lastAssistantTurn = turns[i]; break; }
+    }
+    // 如果没找到 role 标记，用最后一个包含图片且不是用户消息的 turn
+    if (!lastAssistantTurn) {
+      for (var i = turns.length - 1; i >= 0; i--) {
+        var userEl = turns[i].querySelector('[data-message-author-role="user"]');
+        if (!userEl && turns[i].querySelectorAll('img').length > 0) { lastAssistantTurn = turns[i]; break; }
+      }
+    }
+    if (!lastAssistantTurn) return [];
+    var imgs = lastAssistantTurn.querySelectorAll('img');
+    var seen = new Set();
+    var urls = [];
+    for (var img of imgs) {
+      var src = img.src;
       if (src && !src.includes('favicon') && !src.includes('icon') && !src.includes('avatar') && !src.includes('logo')) {
         if (!seen.has(src)) { seen.add(src); urls.push(src) }
       }
