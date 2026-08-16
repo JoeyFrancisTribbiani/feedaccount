@@ -396,14 +396,33 @@ export function createMonitorServer({
     remixProcessing = false;
   }
 
-  // AI 混剪队列
+  // AI 混剪队列（最多3个并发，间隔1分钟启动）
   const aiRemixQueue = [];
-  let aiRemixProcessing = false;
+  let aiRemixActiveCount = 0;
+  const AI_REMIX_MAX_CONCURRENT = 3;
+  const AI_REMIX_START_INTERVAL = 60000; // 任务启动间隔60秒
+
   async function processAiRemixQueue() {
-    if (aiRemixProcessing) return;
-    aiRemixProcessing = true;
-    while (aiRemixQueue.length > 0) {
-      const { taskId, daemonUrl, filesToUpload, prompt, matrixIds, creatorId, sourceVideoId, videoTitle, presetId, mainVideoLocalPath } = aiRemixQueue.shift();
+    while (aiRemixQueue.length > 0 && aiRemixActiveCount < AI_REMIX_MAX_CONCURRENT) {
+      const taskData = aiRemixQueue.shift();
+      aiRemixActiveCount++;
+
+      // 异步执行单个任务（不阻塞队列调度）
+      processSingleAiRemixTask(taskData).finally(() => {
+        aiRemixActiveCount--;
+        // 任务完成后尝试启动下一个
+        processAiRemixQueue();
+      });
+
+      // 如果队列还有任务，等待60秒再启动下一个
+      if (aiRemixQueue.length > 0 && aiRemixActiveCount < AI_REMIX_MAX_CONCURRENT) {
+        await new Promise(r => setTimeout(r, AI_REMIX_START_INTERVAL));
+      }
+    }
+  }
+
+  async function processSingleAiRemixTask(taskData) {
+    const { taskId, daemonUrl, filesToUpload, prompt, matrixIds, creatorId, sourceVideoId, videoTitle, presetId, mainVideoLocalPath } = taskData;
       store.updateRemixTask(taskId, { status: "PROCESSING" });
       try {
         // Step 1: 上传文件到 daemon
@@ -450,7 +469,7 @@ export function createMonitorServer({
 
         if (!completed || !daemonTask) {
           store.updateRemixTask(taskId, { status: "FAILED", errorMessage: "AI 混剪任务超时或失败", completedAt: nowIso() });
-          continue;
+          return;
         }
 
         // Step 4: 从 daemon 输出中找到文件（视频或图片）并下载到本地
@@ -531,8 +550,6 @@ export function createMonitorServer({
       } catch (e) {
         store.updateRemixTask(taskId, { status: "FAILED", errorMessage: e.message, completedAt: nowIso() });
       }
-    }
-    aiRemixProcessing = false;
   }
 
   const broadcast = (jobList) => {

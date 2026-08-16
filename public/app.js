@@ -5296,7 +5296,10 @@ modalEl.start?.addEventListener("click", async () => {
         body: JSON.stringify({ matrixIds, creatorId, videoIds, cdpInstanceId, prompt, ratio, presetId }),
       });
       modalEl.overlay.classList.add("hidden");
-      showToast(`已创建 ${res.count} 个 AI 混剪任务，正在处理…（预计需要较长时间）`);
+      const msg = res.count > 1
+        ? `已创建 ${res.count} 个 AI 混剪任务，最多同时运行 3 个，每个任务间隔 1 分钟启动`
+        : `已创建 1 个 AI 混剪任务，正在处理…`;
+      showToast(msg);
     } else {
       // 素材直接拼接
       const res = await request("/api/remix/matrix-task", {
