@@ -4433,8 +4433,6 @@ const modalEl = {
   cdpInstance: document.querySelector("#modal-cdp-instance"),
   cdpRefresh: document.querySelector("#modal-cdp-refresh"),
   aiPrompt: document.querySelector("#modal-ai-prompt"),
-  modeStitchLabel: document.querySelector("#modal-mode-stitch-label"),
-  modeAiLabel: document.querySelector("#modal-mode-ai-label"),
   aiPreset: document.querySelector("#modal-ai-preset"),
   presetSave: document.querySelector("#modal-preset-save"),
   presetManage: document.querySelector("#modal-preset-manage"),
@@ -4464,12 +4462,11 @@ async function openRemixTaskModal(presetMode = "stitch") {
   modalState.selectedVideoIds.clear();
   modalState.mode = presetMode;
 
-  // 根据按钮来源预设模式
+  // 根据按钮来源设置标题和 AI 配置区域
   const isAi = presetMode === "ai";
-  document.querySelector(`input[name="modal-mode"][value="${presetMode}"]`).checked = true;
-  modalEl.modeStitchLabel.classList.toggle("checked", !isAi);
-  modalEl.modeAiLabel.classList.toggle("checked", isAi);
-  modalEl.aiConfig.classList.toggle("hidden", !isAi);
+  const titleEl = document.querySelector("#remix-task-modal-title");
+  if (titleEl) titleEl.textContent = isAi ? "新建 AI 混剪任务" : "新建拼接混剪任务";
+  modalEl.aiConfig?.classList.toggle("hidden", !isAi);
 
   // 加载矩阵列表
   try {
@@ -4657,17 +4654,6 @@ function updateModalStartBtn() {
   }
   modalEl.start.disabled = !(baseReady && aiReady);
 }
-
-// 模式切换
-document.querySelectorAll('input[name="modal-mode"]').forEach((rb) => {
-  rb.addEventListener("change", () => {
-    modalState.mode = rb.value;
-    modalEl.modeStitchLabel.classList.toggle("checked", rb.value === "stitch");
-    modalEl.modeAiLabel.classList.toggle("checked", rb.value === "ai");
-    modalEl.aiConfig.classList.toggle("hidden", rb.value !== "ai");
-    updateModalStartBtn();
-  });
-});
 
 modalEl.cdpInstance?.addEventListener("change", updateModalStartBtn);
 

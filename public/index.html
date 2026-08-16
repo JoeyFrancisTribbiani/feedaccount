@@ -1395,30 +1395,10 @@
       <div id="remix-task-modal" class="modal-overlay hidden">
         <div class="modal-content">
           <div class="modal-header">
-            <h3>新建混剪任务</h3>
+            <h3 id="remix-task-modal-title">新建混剪任务</h3>
             <button id="remix-task-modal-close" class="modal-close" type="button">×</button>
           </div>
           <div class="modal-body">
-            <!-- 模式选择 -->
-            <div class="modal-step">
-              <div class="modal-step-head">
-                <span class="modal-step-num">·</span>
-                <strong>混剪模式</strong>
-              </div>
-              <div class="modal-mode-toggle">
-                <label class="modal-mode-option" id="modal-mode-ai-label">
-                  <input type="radio" name="modal-mode" value="ai" />
-                  <span class="modal-mode-name">AI 自动生成</span>
-                  <span class="modal-mode-desc">上传文件到 ChatGPT，由 AI 生成成品视频</span>
-                </label>
-                <label class="modal-mode-option checked" id="modal-mode-stitch-label">
-                  <input type="radio" name="modal-mode" value="stitch" checked />
-                  <span class="modal-mode-name">素材直接拼接</span>
-                  <span class="modal-mode-desc">从达人资源中随机选取开头/结尾/音乐，本地 FFmpeg 拼接</span>
-                </label>
-              </div>
-            </div>
-
             <!-- Step 1: 选择社媒矩阵 -->
             <div class="modal-step">
               <div class="modal-step-head">
