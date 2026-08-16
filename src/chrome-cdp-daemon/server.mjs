@@ -481,12 +481,23 @@ async function chatgptWaitForResponse(opts = {}) {
   if (!newResponseStarted) { log('警告: 未检测到新回复开始'); return { ok: false, text: preText, timeout: true, reason: 'response_not_started' } }
 
   let lastText = ''
+  let lastImgCount = 0
   let stableIterations = 0
 
   while (Date.now() - startTime < timeout) {
     const currentText = await getLastAssistantText()
     const stillGenerating = await isStillGenerating()
-    if (DEBUG) log(`轮询: textLen=${currentText.length} stable=${stableIterations}/${stableCount} generating=${stillGenerating}`)
+    // 检测图片数量（图片生成任务回复的是图片不是文本）
+    const currentImgCount = await page.evaluate(() => {
+      var turns = document.querySelectorAll('[data-testid^="conversation-turn-"]')
+      var lastTurn = null
+      for (var i = turns.length - 1; i >= 0; i--) {
+        if (turns[i].getAttribute('data-message-author-role') !== 'user') { lastTurn = turns[i]; break }
+      }
+      if (!lastTurn) return 0
+      return lastTurn.querySelectorAll('img[src*="estuary/content"], img[src*="oaiusercontent"], img[src*="files."]').length
+    }).catch(() => 0)
+    if (DEBUG) log(`轮询: textLen=${currentText.length} imgCount=${currentImgCount} stable=${stableIterations}/${stableCount} generating=${stillGenerating}`)
 
     // 检测 ChatGPT 错误提示
     if (currentText && (currentText.includes('出了点问题') || currentText.includes('请重试') || currentText.includes('Something went wrong') || currentText.includes('try again'))) {
@@ -494,9 +505,15 @@ async function chatgptWaitForResponse(opts = {}) {
       return { ok: false, text: currentText, error: true, reason: 'chatgpt_error', duration: Date.now() - startTime }
     }
 
-    if (currentText === lastText) {
+    // 文本和图片数量都没变化时认为稳定
+    const textStable = currentText === lastText
+    const imgStable = currentImgCount === lastImgCount
+    if (textStable && imgStable) {
       if (!stillGenerating) {
-        if (minResponseLength > 0 && currentText.length < minResponseLength) {
+        // 有图片时跳过文本长度检查
+        if (currentImgCount > 0) {
+          stableIterations++
+        } else if (minResponseLength > 0 && currentText.length < minResponseLength) {
           if (DEBUG) log(`响应过短, 继续等待...`)
         } else if (minResponseLength > 0 && !currentText.includes('{')) {
           if (DEBUG) log(`回复无 JSON 内容, 继续等待...`)
@@ -514,6 +531,7 @@ async function chatgptWaitForResponse(opts = {}) {
     } else {
       stableIterations = 0
       lastText = currentText
+      lastImgCount = currentImgCount
     }
     await page.waitForTimeout(pollInterval)
   }
