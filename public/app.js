@@ -4447,7 +4447,7 @@ const presetModalEl = {
   close: null,
   introStart: null, introCount: null, introDuration: null, introEffect: null, introFile: null, introFileInfo: null,
   outroStart: null, outroCount: null, outroDuration: null, outroEffect: null, outroFile: null, outroFileInfo: null,
-  musicVolume: null, musicScope: null, musicLoop: null,
+  musicVolume: null, musicScope: null, musicLoop: null, musicFile: null, musicFileInfo: null,
 };
 
 async function openRemixTaskModal() {
@@ -4781,6 +4781,12 @@ function openPresetModal() {
                 </label>
                 <label>音乐不够长时循环 <input type="checkbox" id="preset-music-loop" checked /></label>
               </div>
+              <div class="preset-config-row">
+                <label>背景音乐文件
+                  <input type="file" id="preset-music-file" accept="audio/*" />
+                </label>
+              </div>
+              <span id="preset-music-file-info" class="preset-file-info"></span>
             </div>
             <div class="preset-form-actions">
               <button id="preset-form-add" class="button button-primary" type="button">新增</button>
@@ -4817,10 +4823,13 @@ function openPresetModal() {
     presetModalEl.musicVolume = overlay.querySelector("#preset-music-volume");
     presetModalEl.musicScope = overlay.querySelector("#preset-music-scope");
     presetModalEl.musicLoop = overlay.querySelector("#preset-music-loop");
+    presetModalEl.musicFile = overlay.querySelector("#preset-music-file");
+    presetModalEl.musicFileInfo = overlay.querySelector("#preset-music-file-info");
 
-    // 片头/片尾文件上传
+    // 片头/片尾/音乐文件上传
     presetModalEl.introFile.addEventListener("change", (e) => handleSegmentFileUpload(e, "intro"));
     presetModalEl.outroFile.addEventListener("change", (e) => handleSegmentFileUpload(e, "outro"));
+    presetModalEl.musicFile.addEventListener("change", (e) => handleSegmentFileUpload(e, "music"));
 
     presetModalEl.close.addEventListener("click", () => { overlay.classList.add("hidden"); fetchAiPresets(); });
     presetModalEl.save.addEventListener("click", handlePresetAdd);
@@ -4841,7 +4850,7 @@ function openPresetModal() {
 }
 
 let currentEditPresetId = null;
-let pendingSegmentFiles = { intro: null, outro: null };
+let pendingSegmentFiles = { intro: null, outro: null, music: null };
 
 function collectPresetConfig() {
   const introConfig = {
@@ -4862,6 +4871,7 @@ function collectPresetConfig() {
     volumePercent: parseInt(presetModalEl.musicVolume?.value) || 8,
     scope: presetModalEl.musicScope?.value || "original",
     loop: presetModalEl.musicLoop?.checked ?? true,
+    segmentFile: pendingSegmentFiles.music || null,
   };
   return { introConfig, outroConfig, musicConfig };
 }
@@ -4890,7 +4900,11 @@ function fillPresetConfigForm(preset) {
     const outroFile = preset?.files?.find((f) => f.varName === "_outro_segment");
     presetModalEl.outroFileInfo.textContent = outroFile ? `已绑定: ${outroFile.filename}` : (oc.segmentFile ? "已上传（待保存）" : "");
   }
-  pendingSegmentFiles = { intro: null, outro: null };
+  if (presetModalEl.musicFileInfo) {
+    const musicFile = preset?.files?.find((f) => f.varName === "_music_segment");
+    presetModalEl.musicFileInfo.textContent = musicFile ? `已绑定: ${musicFile.filename}` : (mc.segmentFile ? "已上传（待保存）" : "");
+  }
+  pendingSegmentFiles = { intro: null, outro: null, music: null };
 }
 
 async function handleSegmentFileUpload(event, type) {
@@ -4903,9 +4917,10 @@ async function handleSegmentFileUpload(event, type) {
     if (!res.ok) throw new Error("上传失败");
     const data = await res.json();
     pendingSegmentFiles[type] = { filePath: data.url, filename: file.name };
-    const infoEl = type === "intro" ? presetModalEl.introFileInfo : presetModalEl.outroFileInfo;
+    const infoEl = { intro: presetModalEl.introFileInfo, outro: presetModalEl.outroFileInfo, music: presetModalEl.musicFileInfo }[type];
+    const label = { intro: "片头", outro: "片尾", music: "背景音乐" }[type];
     if (infoEl) infoEl.textContent = `已上传: ${file.name}（保存方案后绑定）`;
-    showToast(`${type === "intro" ? "片头" : "片尾"}片段已上传`);
+    showToast(`${label}文件已上传`);
   } catch (e) { showToast(e.message, true); }
 }
 
@@ -5052,7 +5067,12 @@ async function handlePresetAdd() {
         method: "POST", body: JSON.stringify({ varName: "_outro_segment", filePath: pendingSegmentFiles.outro.filePath, filename: pendingSegmentFiles.outro.filename }),
       });
     }
-    pendingSegmentFiles = { intro: null, outro: null };
+    if (pendingSegmentFiles.music) {
+      await request(`/api/ai-presets/${encodeURIComponent(created.id)}/files`, {
+        method: "POST", body: JSON.stringify({ varName: "_music_segment", filePath: pendingSegmentFiles.music.filePath, filename: pendingSegmentFiles.music.filename }),
+      });
+    }
+    pendingSegmentFiles = { intro: null, outro: null, music: null };
     showToast("方案已新增");
     currentEditPresetId = created.id;
     presetModalEl.name.value = "";
@@ -5086,7 +5106,12 @@ async function handlePresetUpdate() {
         method: "POST", body: JSON.stringify({ varName: "_outro_segment", filePath: pendingSegmentFiles.outro.filePath, filename: pendingSegmentFiles.outro.filename }),
       });
     }
-    pendingSegmentFiles = { intro: null, outro: null };
+    if (pendingSegmentFiles.music) {
+      await request(`/api/ai-presets/${encodeURIComponent(currentEditPresetId)}/files`, {
+        method: "POST", body: JSON.stringify({ varName: "_music_segment", filePath: pendingSegmentFiles.music.filePath, filename: pendingSegmentFiles.music.filename }),
+      });
+    }
+    pendingSegmentFiles = { intro: null, outro: null, music: null };
     showToast("方案已更新");
     await refreshPresetData();
     const preset = aiPresets.find((p) => p.id === currentEditPresetId);
