@@ -1402,6 +1402,21 @@ export function createMonitorServer({
           return;
         }
 
+        // ---- Remix: 探测视频时长 ----
+        if (request.method === "GET" && pathname === "/api/remix/probe") {
+          const filePath = url.searchParams.get("path");
+          if (!filePath) { sendJson(response, 400, { error: "缺少 path 参数" }); return; }
+          const localPath = filePath.startsWith("/") ? path.join(process.cwd(), filePath) : filePath;
+          if (!existsSync(localPath)) { sendJson(response, 404, { error: "文件不存在" }); return; }
+          try {
+            const meta = await probeVideo(localPath);
+            sendJson(response, 200, { duration: meta?.duration || 0, width: meta?.width, height: meta?.height });
+          } catch (e) {
+            sendJson(response, 400, { error: e.message });
+          }
+          return;
+        }
+
         // ---- Remix: 上传 ----
         if (request.method === "POST" && pathname === "/api/remix/upload") {
           const contentType = request.headers["content-type"] || "";

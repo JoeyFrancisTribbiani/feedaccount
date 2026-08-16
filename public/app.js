@@ -5099,11 +5099,38 @@ function renderPresetList() {
   });
 }
 
+// 获取视频/音频文件时长（秒），通过后端 API
+async function getVideoDuration(filePath) {
+  try {
+    const res = await request(`/api/remix/probe?path=${encodeURIComponent(filePath)}`);
+    return res.duration || 0;
+  } catch { return 0; }
+}
+
 async function handlePresetAdd() {
   const name = presetModalEl.name.value.trim();
   const prompt = presetModalEl.prompt.value.trim();
   if (!name || !prompt) { showToast("名称和提示词不能为空", true); return; }
   const { introConfig, outroConfig, musicConfig } = collectPresetConfig();
+  // 校验：图片开始时间+总持续时间不能超过片段时长
+  const introTotal = (introConfig.imageInsertStart || 0) + (introConfig.imageCount || 0) * (introConfig.imageDuration || 0);
+  const outroTotal = (outroConfig.imageInsertStart || 0) + (outroConfig.imageCount || 0) * (outroConfig.imageDuration || 0);
+  if (introConfig.segmentFile && introTotal <= 0) { showToast("片头图片配置无效：开始时间+图片总时长必须大于0", true); return; }
+  if (outroConfig.segmentFile && outroTotal <= 0) { showToast("片尾图片配置无效：开始时间+图片总时长必须大于0", true); return; }
+  if (introConfig.segmentFile) {
+    const segDur = await getVideoDuration(introConfig.segmentFile.filePath);
+    if (segDur > 0 && introTotal > segDur) {
+      showToast(`片头图片总时长(${introTotal.toFixed(1)}秒)超出片头视频时长(${segDur.toFixed(1)}秒)，请调整图片数量或持续时间`, true);
+      return;
+    }
+  }
+  if (outroConfig.segmentFile) {
+    const segDur = await getVideoDuration(outroConfig.segmentFile.filePath);
+    if (segDur > 0 && outroTotal > segDur) {
+      showToast(`片尾图片总时长(${outroTotal.toFixed(1)}秒)超出片尾视频时长(${segDur.toFixed(1)}秒)，请调整图片数量或持续时间`, true);
+      return;
+    }
+  }
   try {
     const created = await request("/api/ai-presets", {
       method: "POST",
@@ -5149,6 +5176,25 @@ async function handlePresetUpdate() {
   const prompt = presetModalEl.prompt.value.trim();
   if (!currentEditPresetId) { showToast("请先点击方案列表中的「编辑」", true); return; }
   const { introConfig, outroConfig, musicConfig } = collectPresetConfig();
+  // 校验：图片开始时间+总持续时间不能超过片段时长
+  const introTotal = (introConfig.imageInsertStart || 0) + (introConfig.imageCount || 0) * (introConfig.imageDuration || 0);
+  const outroTotal = (outroConfig.imageInsertStart || 0) + (outroConfig.imageCount || 0) * (outroConfig.imageDuration || 0);
+  if (introConfig.segmentFile && introTotal <= 0) { showToast("片头图片配置无效：开始时间+图片总时长必须大于0", true); return; }
+  if (outroConfig.segmentFile && outroTotal <= 0) { showToast("片尾图片配置无效：开始时间+图片总时长必须大于0", true); return; }
+  if (introConfig.segmentFile) {
+    const segDur = await getVideoDuration(introConfig.segmentFile.filePath);
+    if (segDur > 0 && introTotal > segDur) {
+      showToast(`片头图片总时长(${introTotal.toFixed(1)}秒)超出片头视频时长(${segDur.toFixed(1)}秒)，请调整图片数量或持续时间`, true);
+      return;
+    }
+  }
+  if (outroConfig.segmentFile) {
+    const segDur = await getVideoDuration(outroConfig.segmentFile.filePath);
+    if (segDur > 0 && outroTotal > segDur) {
+      showToast(`片尾图片总时长(${outroTotal.toFixed(1)}秒)超出片尾视频时长(${segDur.toFixed(1)}秒)，请调整图片数量或持续时间`, true);
+      return;
+    }
+  }
   try {
     await request(`/api/ai-presets/${encodeURIComponent(currentEditPresetId)}`, {
       method: "PUT",

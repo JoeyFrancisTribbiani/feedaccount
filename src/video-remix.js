@@ -648,17 +648,23 @@ async function overlayImagesOnVideo(videoPath, imagePaths, insertStart, imgDurat
     lastLabel = outputLabel;
   }
 
-  // 截断到图片结束时间
+  const normMeta = await probeVideo(normalizedPath);
+  const hasAudio = normMeta?.hasAudio;
+
+  // 截断到图片结束时间（视频和音频都截断）
   filters.push(`[vout]trim=duration=${totalImgDuration.toFixed(3)},setpts=PTS-STARTPTS[vfinal]`);
+  if (hasAudio) {
+    filters.push(`[0:a]atrim=duration=${totalImgDuration.toFixed(3)},asetpts=PTS-STARTPTS[afinal]`);
+  }
 
   const args = [
     ...inputs,
     "-filter_complex", filters.join(";"),
     "-map", "[vfinal]",
-    "-map", "0:a?",
+    ...(hasAudio ? ["-map", "[afinal]"] : []),
     "-c:v", "libx264", "-crf", "23", "-preset", "veryfast",
     "-pix_fmt", "yuv420p",
-    "-c:a", "aac", "-b:a", "128k",
+    ...(hasAudio ? ["-c:a", "aac", "-b:a", "128k"] : ["-an"]),
     "-movflags", "+faststart",
     "-y", path.join(TEMP_DIR, `ai_${label}_overlay_${id}.mp4`),
   ];
