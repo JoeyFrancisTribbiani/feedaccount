@@ -4712,6 +4712,10 @@ modalEl.presetSave?.addEventListener("click", async () => {
 // 管理方案弹框 — 列表
 modalEl.presetManage?.addEventListener("click", () => openPresetListModal());
 
+let currentEditPresetId = null;
+let pendingSegmentFiles = { intro: null, outro: null, music: null };
+const pendingVarFiles = new Map();
+
 async function openPresetListModal() {
   let overlay = document.querySelector("#preset-list-modal");
   if (!overlay) {
@@ -5022,8 +5026,6 @@ function renderPresetFormVars(preset) {
     });
   });
 }
-
-const pendingVarFiles = new Map();
 
 async function refreshPresetData() {
   await fetchAiPresets();
