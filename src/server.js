@@ -519,8 +519,21 @@ export function createMonitorServer({
             if (imagePaths.length > 0) {
               // 用方案配置拼接：图片覆盖到片头/片尾视频上
               const preset = presetId ? store.getAiRemixPreset(presetId) : null;
+              const presetFiles = presetId ? store.getPresetFiles(presetId) : [];
 
-              store.logCdpEvent(null, "info", `AI混剪合成: ${imagePaths.length}张图片, 方案=${preset?.name || "默认"}`, taskId);
+              // 把绑定的文件路径填入配置的 segmentFile
+              const findFile = (varName) => {
+                const f = presetFiles.find(f => f.varName === varName);
+                return f ? f.filePath : null;
+              };
+              const introConfig = preset?.introConfig || {};
+              const outroConfig = preset?.outroConfig || {};
+              const musicConfig = preset?.musicConfig || {};
+              if (!introConfig.segmentFile) introConfig.segmentFile = findFile("_intro_segment");
+              if (!outroConfig.segmentFile) outroConfig.segmentFile = findFile("_outro_segment");
+              if (!musicConfig.segmentFile) musicConfig.segmentFile = findFile("_music_segment");
+
+              store.logCdpEvent(null, "info", `AI混剪合成: ${imagePaths.length}张图片, 方案=${preset?.name || "默认"}, 片头=${introConfig.segmentFile ? "有" : "无"}, 片尾=${outroConfig.segmentFile ? "有" : "无"}, 音乐=${musicConfig.segmentFile ? "有" : "无"}`, taskId);
 
               // 使用队列中传递的原视频本地路径
               if (mainVideoLocalPath && existsSync(mainVideoLocalPath)) {
@@ -529,9 +542,9 @@ export function createMonitorServer({
                   mainVideoLocalPath,
                   imagePaths,
                   {
-                    introConfig: preset?.introConfig || {},
-                    outroConfig: preset?.outroConfig || {},
-                    musicConfig: preset?.musicConfig || {},
+                    introConfig,
+                    outroConfig,
+                    musicConfig,
                   },
                   "9:16"
                 );
