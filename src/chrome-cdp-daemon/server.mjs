@@ -334,19 +334,42 @@ async function chatgptSendMessage(text, opts = {}) {
   await ensureChatGPT()
   const inputSel = getInputSelector()
   await page.waitForSelector(inputSel, { timeout: 15000, state: 'visible' })
-  await page.click(inputSel)
-  await page.waitForTimeout(200)
-  await page.keyboard.press('Control+a')
-  await page.keyboard.press('Backspace')
-  await page.waitForTimeout(100)
-  await page.evaluate((text) => navigator.clipboard.writeText(text), text)
-  await page.click(inputSel)
-  await page.waitForTimeout(100)
-  await page.keyboard.press('Control+a')
-  await page.keyboard.press('Backspace')
-  await page.waitForTimeout(100)
-  await page.keyboard.press('Control+v')
-  await page.waitForTimeout(800)
+
+  // 方案1: 用 page.evaluate 直接设置 React textarea 的值并触发 input 事件（最快，瞬间完成）
+  let filled = false
+  try {
+    filled = await page.evaluate((sel, content) => {
+      const textarea = document.querySelector(sel)
+      if (!textarea) return false
+      // React 需要用 native setter 设置 value
+      const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set
+      nativeInputValueSetter.call(textarea, content)
+      textarea.dispatchEvent(new Event('input', { bubbles: true }))
+      textarea.dispatchEvent(new Event('change', { bubbles: true }))
+      return true
+    }, inputSel, text)
+  } catch (e) { log('evaluate 方式填充失败: ' + e.message) }
+
+  // 方案2: 如果 evaluate 没成功，用 fill
+  if (!filled) {
+    try {
+      await page.click(inputSel)
+      await page.waitForTimeout(100)
+      await page.fill(inputSel, text)
+    } catch (e) {
+      // 方案3: 最后回退到剪贴板粘贴
+      log('fill 方式失败，回退到剪贴板: ' + e.message)
+      await page.click(inputSel)
+      await page.keyboard.press('Control+a')
+      await page.keyboard.press('Backspace')
+      await page.evaluate((t) => navigator.clipboard.writeText(t), text)
+      await page.click(inputSel)
+      await page.waitForTimeout(100)
+      await page.keyboard.press('Control+v')
+    }
+  }
+
+  await page.waitForTimeout(500)
 
   const sendSel = 'button[aria-label="发送提示"], button[aria-label="Send"], button[data-testid="send-button"]'
   let sent = false
