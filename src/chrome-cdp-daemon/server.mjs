@@ -414,26 +414,25 @@ async function chatgptUploadFile(filePath, opts = {}) {
 
   await dismissModal()
 
-  // 方式1: 点击 plus 按钮 → 点击弹出菜单中"添加照片和文件" → filechooser
+  // 方式1: 点击 plus 按钮 → 点击"添加照片和文件"菜单项 → filechooser
   try {
     const plusBtn = page.locator('button[data-testid="composer-plus-btn"]')
     if (await plusBtn.count() > 0) {
-      // 用 filechooser 事件 + 直接点击菜单项的方式
       const fileChooserPromise = page.waitForEvent('filechooser', { timeout: 15000 })
       
-      // 点击 plus 按钮弹出菜单
       await plusBtn.click({ timeout: 5000 })
       await page.waitForTimeout(1000)
       
-      // 直接点击 popover 中的第一个 __menu-item（添加照片和文件）
-      const menuItem = page.locator('div[class*="popover"] div[class*="__menu-item"]').first()
-      await menuItem.click({ timeout: 5000 })
-      
-      const fileChooser = await fileChooserPromise
-      await fileChooser.setFiles(filePath)
-      await page.waitForTimeout(3000)
-      const attached = await page.evaluate(() => document.querySelectorAll('[class*="file-tile"]').length > 0)
-      if (attached) { log('文件已上传 (plus menu → filechooser):', filePath); return { ok: true, method: 'plus-menu-filechooser' } }
+      // 用文字匹配"添加照片和文件"菜单项
+      const menuItem = page.locator('div[class*="__menu-item"]').filter({ hasText: '添加照片和文件' }).first()
+      if (await menuItem.count() > 0) {
+        await menuItem.click({ timeout: 5000 })
+        const fileChooser = await fileChooserPromise
+        await fileChooser.setFiles(filePath)
+        await page.waitForTimeout(3000)
+        const attached = await page.evaluate(() => document.querySelectorAll('[class*="file-tile"]').length > 0)
+        if (attached) { log('文件已上传 (plus menu → filechooser):', filePath); return { ok: true, method: 'plus-menu-filechooser' } }
+      }
     }
   } catch (err) { if (DEBUG) log('plus 菜单方式失败:', err.message) }
 
