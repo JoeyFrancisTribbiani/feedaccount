@@ -444,8 +444,10 @@ export function createMonitorServer({
 
   async function processSingleAiRemixTask(taskData) {
     const { taskId, daemonUrl, filesToUpload, prompt, matrixIds, creatorId, sourceVideoId, videoTitle, presetId, mainVideoLocalPath } = taskData;
-      store.updateRemixTask(taskId, { status: "PROCESSING" });
-      try {
+    console.log(`[AI混剪] 任务开始: ${taskId}, daemonUrl=${daemonUrl}, files=${filesToUpload?.length}, prompt=${(prompt||'').slice(0,50)}`);
+    store.updateRemixTask(taskId, { status: "PROCESSING" });
+    store.logCdpEvent(null, "info", `AI混剪任务开始: ${taskId}`, null, taskId);
+    try {
         // Step 1: 上传文件到 daemon
         const fileIds = [];
         for (const filePath of filesToUpload) {
@@ -569,8 +571,11 @@ export function createMonitorServer({
           }
         }
       } catch (e) {
+        console.error(`[AI混剪] 任务失败: ${taskId}`, e.message, e.stack);
         store.updateRemixTask(taskId, { status: "FAILED", errorMessage: e.message, completedAt: nowIso() });
+        store.logCdpEvent(null, "error", `AI混剪任务失败: ${e.message}`, null, taskId);
       }
+    console.log(`[AI混剪] 任务结束: ${taskId}`);
   }
 
   const broadcast = (jobList) => {
