@@ -545,9 +545,14 @@ async function chatgptWaitForResponse(opts = {}) {
     const imgStable = currentImgCount === lastImgCount
     if (textStable && imgStable) {
       if (!stillGenerating) {
-        // 有图片时跳过文本长度检查
+        // 有图片时跳过文本长度检查，稳定2次即可（6秒）
         if (currentImgCount > 0) {
           stableIterations++
+          if (stableIterations >= 2) {
+            const duration = Date.now() - startTime
+            log(`图片回复完成 (${currentImgCount}张图片, ${Math.round(duration / 1000)}s)`)
+            return { ok: true, text: currentText, duration }
+          }
         } else if (minResponseLength > 0 && currentText.length < minResponseLength) {
           if (DEBUG) log(`响应过短, 继续等待...`)
         } else if (minResponseLength > 0 && !currentText.includes('{')) {
@@ -563,15 +568,8 @@ async function chatgptWaitForResponse(opts = {}) {
           return { ok: true, text: currentText, duration }
         }
       } else {
-        // isStillGenerating 返回 true 但内容一直没变——可能是误判
-        // 有图片且稳定超过 15 次（45秒）直接认为完成
-        if (currentImgCount > 0) {
-          stableIterations++
-          if (stableIterations >= 15) {
-            log(`图片已稳定 ${stableIterations} 次，强制完成（isStillGenerating 可能误判）`)
-            return { ok: true, text: currentText, duration: Date.now() - startTime }
-          }
-        }
+        // isStillGenerating 返回 true（还在生成中），重置稳定计数
+        stableIterations = 0
       }
     } else {
       stableIterations = 0
