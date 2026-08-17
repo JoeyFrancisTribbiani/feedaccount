@@ -746,7 +746,7 @@ async function handleChatGptAnalyzeVideo(taskNo, params) {
 
   // Step 3: 发送分析提示词
   log('Step 3: 发送分析提示词...')
-  await chatgptSendMessageWithFile(prompt)
+  await chatgptSendMessage(prompt)
 
   taskStore.set(taskNo, { status: 'running', outputs: [], error: null, progress: '60%', startedAt: taskStore.get(taskNo).startedAt })
 
@@ -866,7 +866,7 @@ async function handleChatGptAiRemix(taskNo, params) {
   // Step 2: 发送提示词
   log('Step 2: 发送提示词...')
   const promptText = prompt || '请根据上传的文件生成混剪视频'
-  await chatgptSendMessageWithFile(promptText)
+  await chatgptSendMessage(promptText)
 
   taskStore.set(taskNo, { status: 'running', outputs: [], error: null, progress: '50%', startedAt: taskStore.get(taskNo).startedAt })
 
