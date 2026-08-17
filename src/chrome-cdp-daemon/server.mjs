@@ -418,23 +418,22 @@ async function chatgptUploadFile(filePath, opts = {}) {
   try {
     const plusBtn = page.locator('button[data-testid="composer-plus-btn"]')
     if (await plusBtn.count() > 0) {
+      // 用 filechooser 事件 + 直接点击菜单项的方式
+      const fileChooserPromise = page.waitForEvent('filechooser', { timeout: 15000 })
+      
+      // 点击 plus 按钮弹出菜单
       await plusBtn.click({ timeout: 5000 })
-      await page.waitForTimeout(1500)
-
-      // ChatGPT 的弹出菜单：class 包含 popover 的 div，内有 __menu-item
-      const popover = page.locator('div[class*="popover"]').filter({ has: page.locator('div[class*="__menu-item"]') })
-      if (await popover.count() > 0) {
-        const menuItem = popover.locator('div[class*="__menu-item"]').first()
-        if (await menuItem.count() > 0) {
-          const fileChooserPromise = page.waitForEvent('filechooser', { timeout: 10000 })
-          await menuItem.click({ timeout: 5000 })
-          const fileChooser = await fileChooserPromise
-          await fileChooser.setFiles(filePath)
-          await page.waitForTimeout(3000)
-          const attached = await page.evaluate(() => document.querySelectorAll('[class*="file-tile"]').length > 0)
-          if (attached) { log('文件已上传 (plus menu → filechooser):', filePath); return { ok: true, method: 'plus-menu-filechooser' } }
-        }
-      }
+      await page.waitForTimeout(1000)
+      
+      // 直接点击 popover 中的第一个 __menu-item（添加照片和文件）
+      const menuItem = page.locator('div[class*="popover"] div[class*="__menu-item"]').first()
+      await menuItem.click({ timeout: 5000 })
+      
+      const fileChooser = await fileChooserPromise
+      await fileChooser.setFiles(filePath)
+      await page.waitForTimeout(3000)
+      const attached = await page.evaluate(() => document.querySelectorAll('[class*="file-tile"]').length > 0)
+      if (attached) { log('文件已上传 (plus menu → filechooser):', filePath); return { ok: true, method: 'plus-menu-filechooser' } }
     }
   } catch (err) { if (DEBUG) log('plus 菜单方式失败:', err.message) }
 
