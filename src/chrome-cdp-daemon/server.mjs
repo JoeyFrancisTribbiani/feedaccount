@@ -650,6 +650,15 @@ async function handleChatGptAnalyzeVideo(taskNo, params) {
   await page.goto(CHATGPT_URL, { waitUntil: 'domcontentloaded', timeout: 15000 })
   await page.waitForTimeout(3000)
   for (let i = 0; i < 3; i++) { await dismissModal(); await page.waitForTimeout(1000) }
+  // 点击「新聊天」按钮确保是新会话
+  try {
+    const newChatBtn = page.locator('a[href="/"], button:has-text("New chat"), button:has-text("新对话")').first()
+    if (await newChatBtn.count() > 0) {
+      await newChatBtn.click({ timeout: 5000 })
+      await page.waitForTimeout(2000)
+      log('已点击新对话按钮')
+    }
+  } catch (e) { log('未找到新对话按钮，继续...') }
 
   taskStore.set(taskNo, { status: 'running', outputs: [], error: null, progress: '20%', startedAt: taskStore.get(taskNo).startedAt })
 
@@ -758,6 +767,15 @@ async function handleChatGptAiRemix(taskNo, params) {
   await page.goto(CHATGPT_URL, { waitUntil: 'domcontentloaded', timeout: 15000 })
   await page.waitForTimeout(3000)
   for (let i = 0; i < 3; i++) { await dismissModal(); await page.waitForTimeout(1000) }
+  // 点击「新聊天」按钮确保是新会话
+  try {
+    const newChatBtn = page.locator('a[href="/"], button:has-text("New chat"), button:has-text("新对话")').first()
+    if (await newChatBtn.count() > 0) {
+      await newChatBtn.click({ timeout: 5000 })
+      await page.waitForTimeout(2000)
+      log('已点击新对话按钮')
+    }
+  } catch (e) { log('未找到新对话按钮，继续...') }
 
   taskStore.set(taskNo, { status: 'running', outputs: [], error: null, progress: '15%', startedAt: taskStore.get(taskNo).startedAt })
 
