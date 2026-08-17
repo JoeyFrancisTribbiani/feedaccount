@@ -1156,7 +1156,7 @@
                 <li>粘贴到下方文本框中，或新建一个独立目录如 <code>C:\chrome-cdp</code></li>
               </ol>
               <p class="cdp-launch-guide-warn">⚠️ 如果使用正在使用的 Chrome profile，需先完全关闭 Chrome 再启动调试实例，否则 CDP 端口不会生效。建议使用独立的新目录。</p>
-              <p class="cdp-launch-guide-warn">⚠️ 如果要复用已有登录态：路径应填 User Data 目录（不含 <code>\Default</code> 后缀），并在下方 Profile 目录填写对应的 Profile 名称（如 <code>Default</code> 或 <code>Profile 17</code>）。复制时需复制整个 User Data 目录（含 <code>Local State</code> 文件），否则登录态会丢失。</p>
+              <p class="cdp-launch-guide-warn">⚠️ 如果要复用已有登录态：路径填 User Data 目录（不含 <code>\Default</code> 后缀），Profile 目录名填对应的 Profile（如 <code>Default</code> 或 <code>Profile 17</code>）。复制时只需复制 3 样东西到新目录：<code>Local State</code> 文件（含解密密钥）、<code>First Run</code> 文件（如有）、以及你要用的 Profile 目录（如 <code>Profile 17</code>）。不需要复制其他 Profile 目录。缺少 <code>Local State</code> 会导致登录态丢失。</p>
             </div>
             <div class="cdp-launch-form">
               <label class="wide-input">
