@@ -26,35 +26,35 @@ if errorlevel 1 goto node_too_old
 goto node_ready
 
 :node_missing
-echo [无法启动] 未找到可用的 Node.js。
-echo 如果已安装 Node.js，请检查 PATH，或在「设置 > 应用 > 应用执行别名」中关闭 node 别名。
-echo 请安装当前 Node.js LTS 版本后重试：https://nodejs.org/
+echo [ERROR] Node.js not found.
+echo If Node.js is installed, check PATH, or disable node alias in Settings > Apps > App execution aliases.
+echo Please install the current Node.js LTS version: https://nodejs.org/
 goto launch_failed
 
 :node_too_old
-echo [无法启动] 当前 Node.js 版本过低，需要 22.5 或更高版本。
-echo 当前路径：!NODE_EXE!
-echo 请升级到当前 Node.js LTS 版本后重试：https://nodejs.org/
+echo [ERROR] Node.js version too old, requires 22.5 or higher.
+echo Current path: !NODE_EXE!
+echo Please upgrade to the current Node.js LTS version: https://nodejs.org/
 goto launch_failed
 
 :node_ready
 
 where ffmpeg >nul 2>nul
 if errorlevel 1 (
-  echo [检测到未安装 FFmpeg]
+  echo [INFO] FFmpeg not found.
   where winget >nul 2>nul
   if errorlevel 1 (
-    echo [提示] 系统未安装 winget，无法自动安装 FFmpeg
-    echo 请手动安装：https://ffmpeg.org/download.html
-    echo 将尝试继续启动...
+    echo [HINT] winget not available, cannot auto-install FFmpeg.
+    echo Please install manually: https://ffmpeg.org/download.html
+    echo Continuing without FFmpeg...
   ) else (
-    echo 正在通过 winget 自动安装 FFmpeg...
+    echo Installing FFmpeg via winget...
     winget install Gyan.FFmpeg --accept-package-agreements --accept-source-agreements -h >nul 2>nul
     if errorlevel 1 (
-      echo [警告] FFmpeg 自动安装失败，请手动安装：https://ffmpeg.org/download.html
-      echo 将尝试继续启动...
+      echo [WARN] FFmpeg auto-install failed. Please install manually: https://ffmpeg.org/download.html
+      echo Continuing without FFmpeg...
     ) else (
-      echo [成功] FFmpeg 已安装，正在刷新环境变量...
+      echo [OK] FFmpeg installed, refreshing PATH...
       set "FRESH_PATH="
       for /f "usebackq tokens=2,*" %%A in (`reg query "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment" /v Path 2^>nul`) do set "FRESH_PATH=%%B"
       for /f "usebackq tokens=2,*" %%A in (`reg query "HKCU\Environment" /v Path 2^>nul`) do set "FRESH_PATH=!FRESH_PATH!;%%B"
@@ -64,7 +64,7 @@ if errorlevel 1 (
 ) else (
   where ffprobe >nul 2>nul
   if errorlevel 1 (
-    echo [提示] FFprobe 未在 PATH 中，视频去重将使用降级模式
+    echo [HINT] FFprobe not in PATH, video dedup will use fallback mode.
   )
 )
 
@@ -73,7 +73,7 @@ set "APP_EXIT=!ERRORLEVEL!"
 if "!APP_EXIT!"=="0" goto finished
 
 echo.
-echo [程序异常退出] 请查看上方的错误提示。
+echo [ERROR] Application exited unexpectedly. Check error messages above.
 
 :launch_failed
 echo.
