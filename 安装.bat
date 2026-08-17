@@ -49,17 +49,31 @@ if %errorlevel% neq 0 (
 echo.
 echo [3/4] Checking dependencies...
 if not exist "node_modules" (
-  echo  Installing npm packages...
+  echo  Installing main dependencies...
   call npm install
   if !errorlevel! neq 0 (
     echo  ERROR: npm install failed.
     pause
     exit /b 1
   )
-  echo  Dependencies installed.
+  echo  Main dependencies installed.
 ) else (
-  echo  Dependencies: OK ^(node_modules exists^)
+  echo  Main dependencies: OK
 )
+echo  Installing daemon dependencies...
+cd "src\chrome-cdp-daemon"
+if not exist "node_modules" (
+  call npm install
+  if !errorlevel! neq 0 (
+    echo  ERROR: daemon npm install failed.
+    pause
+    exit /b 1
+  )
+  echo  Daemon dependencies installed.
+) else (
+  echo  Daemon dependencies: OK
+)
+cd /d "%~dp0"
 
 :: ===== 4. Initialize database =====
 echo.
