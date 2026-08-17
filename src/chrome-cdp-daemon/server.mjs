@@ -473,29 +473,17 @@ async function getLastAssistantText() {
 
 async function isStillGenerating() {
   return await page.evaluate(() => {
-    // 方式1: 标准 stop-button
+    // 方式1: 标准 stop-button（ChatGPT 生成中会显示这个按钮）
     const stopBtns = document.querySelectorAll(
       'button[data-testid="stop-button"], button[aria-label="停止生成"], button[aria-label="Stop"], button[aria-label="停止"]'
     )
     for (const btn of stopBtns) { if (btn.offsetParent !== null) return true }
 
     // 方式2: 提交按钮变成停止按钮时，aria-label 会变化
-    // 生成中时提交按钮不再是"发送"而是停止相关的标签
     const submitBtn = document.querySelector('button[class*="composer-submit-button"]')
     if (submitBtn) {
       const aria = submitBtn.getAttribute('aria-label') || ''
-      // 生成中时按钮会显示为停止/暂停相关的标签
       if (aria.includes('停止') || aria.includes('Stop') || aria.includes('中断') || aria.includes('Cancel')) return true
-    }
-
-    // 方式3: 检测页面上的停止生成按钮（圆形+方块图标）
-    const allBtns = document.querySelectorAll('button')
-    for (const btn of allBtns) {
-      const rect = btn.getBoundingClientRect()
-      if (rect.top > window.innerHeight * 0.7 && rect.width > 20 && rect.width < 60) {
-        const aria = btn.getAttribute('aria-label') || ''
-        if (aria.includes('停止') || aria.includes('Stop') || aria.includes('中断')) return true
-      }
     }
 
     return false
@@ -570,6 +558,16 @@ async function chatgptWaitForResponse(opts = {}) {
           const duration = Date.now() - startTime
           log(`回复完成 (${(currentText.length / 1000).toFixed(1)}K chars, ${Math.round(duration / 1000)}s)`)
           return { ok: true, text: currentText, duration }
+        }
+      } else {
+        // isStillGenerating 返回 true 但内容一直没变——可能是误判
+        // 有图片且稳定超过 15 次（45秒）直接认为完成
+        if (currentImgCount > 0) {
+          stableIterations++
+          if (stableIterations >= 15) {
+            log(`图片已稳定 ${stableIterations} 次，强制完成（isStillGenerating 可能误判）`)
+            return { ok: true, text: currentText, duration: Date.now() - startTime }
+          }
         }
       }
     } else {

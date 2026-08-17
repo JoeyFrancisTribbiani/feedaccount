@@ -2166,11 +2166,18 @@ export function createMonitorServer({
       // ---- 静态文件: remix 输出 ----
       if (pathname.startsWith("/data/remix-output/")) {
         const filename = path.basename(pathname);
-        const filePath = path.join(REMIX_OUTPUT_DIR, filename);
+        const { getOutputDir } = await import("./video-remix.js");
+        const outputDir = getOutputDir();
+        const filePath = path.join(outputDir, filename);
         if (!existsSync(filePath)) { sendJson(response, 404, { error: "文件不存在" }); return; }
-        const data = await readFile(filePath);
-        response.writeHead(200, { "Content-Type": "video/mp4", "Content-Length": data.length, "Cache-Control": "public, max-age=3600" });
-        response.end(data);
+        const statResult = await stat(filePath);
+        response.writeHead(200, {
+          "Content-Type": "video/mp4",
+          "Content-Length": statResult.size,
+          "Content-Disposition": `attachment; filename="${encodeURIComponent(filename)}"`,
+          "Cache-Control": "public, max-age=3600",
+        });
+        createReadStream(filePath).pipe(response);
         return;
       }
 
