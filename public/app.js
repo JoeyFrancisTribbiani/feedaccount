@@ -3540,6 +3540,30 @@ function renderRemixTasks() {
   bindRemixDownloadLinks(remixEl.tasksList);
 }
 
+// 路径配置
+async function loadPathConfig() {
+  try {
+    const cfg = await request("/api/path-config");
+    const uploadEl = document.querySelector("#path-config-upload");
+    const outputEl = document.querySelector("#path-config-output");
+    if (uploadEl) uploadEl.value = cfg.videoUploadPath || "";
+    if (outputEl) outputEl.value = cfg.outputPath || "";
+  } catch {}
+}
+loadPathConfig();
+
+document.querySelector("#path-config-save")?.addEventListener("click", async () => {
+  const uploadEl = document.querySelector("#path-config-upload");
+  const outputEl = document.querySelector("#path-config-output");
+  try {
+    await request("/api/path-config", {
+      method: "POST",
+      body: JSON.stringify({ videoUploadPath: uploadEl?.value.trim() || "", outputPath: outputEl?.value.trim() || "" }),
+    });
+    showToast("路径配置已保存");
+  } catch (e) { showToast(e.message, true); }
+});
+
 // 达人添加
 remixEl.addCreatorBtn.addEventListener("click", () => remixEl.addCreatorForm.classList.toggle("hidden"));
 

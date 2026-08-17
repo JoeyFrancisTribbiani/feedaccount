@@ -19,7 +19,7 @@ import { TiktokJobManager, TIKTOK_DEFAULT_OPTIONS } from "./tiktok/tiktok-job-ma
 import { TiktokPublishManager } from "./tiktok/tiktok-publish-manager.js";
 import { RotationScheduler, SCHEDULER_DEFAULTS } from "./scheduler.js";
 import { checkIpGeoViaSocks5 } from "./socks5-check.js";
-import { DEDUP_PRESETS, dedupVideo, stitchVideos, probeVideo, remixVideoWithResources, composeAiRemixVideo, OUTPUT_DIR as REMIX_OUTPUT_DIR } from "./video-remix.js";
+import { DEDUP_PRESETS, dedupVideo, stitchVideos, probeVideo, remixVideoWithResources, composeAiRemixVideo, setOutputDir, setUploadDir, OUTPUT_DIR as REMIX_OUTPUT_DIR } from "./video-remix.js";
 
 const THIS_DIR = path.dirname(fileURLToPath(import.meta.url));
 const CDP_DAEMON_DIR = path.resolve(THIS_DIR, "chrome-cdp-daemon");
@@ -349,6 +349,11 @@ export function createMonitorServer({
   const api = bitBrowserApi || new BitBrowserApi(bitBrowserApiUrl);
   const store = database || new LocalDatabase(databasePath);
   _store = store; // 让模块级函数（startCdpDaemon 等）也能访问
+
+  // 应用全局路径配置
+  const pathCfg = store.getPathConfig();
+  if (pathCfg.outputPath) setOutputDir(pathCfg.outputPath);
+  if (pathCfg.videoUploadPath) setUploadDir(pathCfg.videoUploadPath);
   ngrokStore = store;
   globalThis.__ngrokDb = store.db;
   const jobs = jobManager || new JobManager({ bitBrowserApi: api, persistence: store });
@@ -606,7 +611,26 @@ export function createMonitorServer({
           savedOptions: store.getSavedOptions(),
           databaseFile:
             store.filename === ":memory:" ? ":memory:" : path.basename(store.filename || databasePath),
+          pathConfig: store.getPathConfig(),
         });
+        return;
+      }
+
+      // 全局路径配置
+      if (request.method === "GET" && pathname === "/api/path-config") {
+        sendJson(response, 200, store.getPathConfig());
+        return;
+      }
+      if (request.method === "POST" && pathname === "/api/path-config") {
+        const body = await readJson(request);
+        const config = store.savePathConfig({
+          videoUploadPath: body.videoUploadPath || "",
+          outputPath: body.outputPath || "",
+        });
+        // 实时应用路径
+        setOutputDir(config.outputPath || null);
+        setUploadDir(config.videoUploadPath || null);
+        sendJson(response, 200, config);
         return;
       }
 

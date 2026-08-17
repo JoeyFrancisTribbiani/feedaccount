@@ -10,6 +10,31 @@ const TEMP_DIR = path.resolve(process.cwd(), "data", "remix-tmp");
 mkdirSync(OUTPUT_DIR, { recursive: true });
 mkdirSync(TEMP_DIR, { recursive: true });
 
+let customOutputDir = null;
+let customUploadDir = null;
+
+export function setOutputDir(dir) {
+  if (dir) {
+    customOutputDir = path.resolve(dir);
+    mkdirSync(customOutputDir, { recursive: true });
+  } else {
+    customOutputDir = null;
+  }
+}
+
+export function setUploadDir(dir) {
+  if (dir) {
+    customUploadDir = path.resolve(dir);
+    mkdirSync(customUploadDir, { recursive: true });
+  } else {
+    customUploadDir = null;
+  }
+}
+
+export function getOutputDir() {
+  return customOutputDir || OUTPUT_DIR;
+}
+
 let ffprobePath = null;
 try {
   const ffmpegPath = execSync('where ffmpeg', { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).trim().split(/\r?\n/)[0];
@@ -329,7 +354,7 @@ export async function dedupVideo(inputPath, ratio = null, options = {}) {
 
   const baseName = path.basename(inputPath, path.extname(inputPath));
   const cleanName = baseName.startsWith("dedup_") ? baseName.slice(6) : baseName;
-  const outputPath = path.join(OUTPUT_DIR, `dedup_${cleanName}.mp4`);
+  const outputPath = path.join(getOutputDir(), `dedup_${cleanName}.mp4`);
   await processSingleVideo(inputPath, outputPath, meta, { ...options, ratio });
   return outputPath;
 }
@@ -356,7 +381,7 @@ export async function stitchVideos(inputPaths, ratio = null, options = {}) {
     });
     const cleanName = baseNames.join("_");
     const safeName = cleanName.length > 120 ? cleanName.slice(0, 120) : cleanName;
-    const outputPath = path.join(OUTPUT_DIR, `stitch_${safeName}.mp4`);
+    const outputPath = path.join(getOutputDir(), `stitch_${safeName}.mp4`);
     await concatVideos(processedPaths, outputPath);
     return outputPath;
   } finally {
@@ -422,7 +447,7 @@ export async function remixVideoWithResources(inputPath, resources = {}, ratio =
     // 4. 叠加背景音乐
     const baseName = path.basename(inputPath, path.extname(inputPath));
     const cleanName = baseName.startsWith("remix_") ? baseName.slice(6) : baseName;
-    const outputPath = path.join(OUTPUT_DIR, `remix_${cleanName}_${id}.mp4`);
+    const outputPath = path.join(getOutputDir(), `remix_${cleanName}_${id}.mp4`);
 
     if (musicPath && existsSync(musicPath)) {
       await mixBackgroundMusic(concatenatedPath, musicPath, outputPath);
@@ -597,7 +622,7 @@ export async function composeAiRemixVideo(mainVideoPath, imagePaths, config = {}
     }
 
     // 叠加背景音乐
-    const outputPath = path.join(OUTPUT_DIR, `ai_remix_${id}.mp4`);
+    const outputPath = path.join(getOutputDir(), `ai_remix_${id}.mp4`);
     const musicPath = musicConfig.segmentFile ? resolveLocal(musicConfig.segmentFile.filePath) : null;
 
     if (musicConfig.enabled !== false && musicPath && existsSync(musicPath) && musicConfig.scope !== "none") {

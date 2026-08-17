@@ -736,6 +736,21 @@ export class LocalDatabase {
     };
   }
 
+  // --- 全局路径配置 ---
+  getPathConfig() {
+    const row = this.db.prepare("SELECT value_json FROM app_settings WHERE key = 'path_config'").get();
+    return parseJson(row?.value_json, { videoUploadPath: "", outputPath: "" });
+  }
+
+  savePathConfig(config) {
+    this.db.prepare(`
+      INSERT INTO app_settings (key, value_json, updated_at)
+      VALUES ('path_config', ?, ?)
+      ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at
+    `).run("path_config", JSON.stringify(config), nowIso());
+    return config;
+  }
+
   saveTiktokOptions(profileId, options) {
     const key = profileId ? `tiktok_options:${profileId}` : "tiktok_options";
     this.db
