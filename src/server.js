@@ -452,7 +452,7 @@ export function createMonitorServer({
         const fileIds = [];
         for (const filePath of filesToUpload) {
           if (!filePath || !existsSync(filePath)) {
-            store.logCdpEvent(null, "warning", `AI混剪: 文件不存在，跳过: ${filePath}`, taskId);
+            store.logCdpEvent(null, "warning", `AI混剪: 文件不存在，跳过: ${filePath}`, null, taskId);
             continue;
           }
           const fileBuffer = await readFile(filePath);
@@ -472,9 +472,9 @@ export function createMonitorServer({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ type: "chatgpt-ai-remix", params: { prompt, fileIds, options: { responseTimeout: 1800000, taskId } } }),
         });
-        const taskData = await taskRes.json();
-        if (!taskRes.ok || !taskData.taskNo) throw new Error(`提交 AI 混剪任务失败: ${taskData.error}`);
-        const daemonTaskNo = taskData.taskNo;
+        const daemonResData = await taskRes.json();
+        if (!taskRes.ok || !daemonResData.taskNo) throw new Error(`提交 AI 混剪任务失败: ${daemonResData.error}`);
+        const daemonTaskNo = daemonResData.taskNo;
 
         // Step 3: 轮询任务状态
         let completed = false;
