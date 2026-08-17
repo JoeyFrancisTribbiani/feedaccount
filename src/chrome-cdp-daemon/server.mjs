@@ -21,7 +21,7 @@
 
 import http from 'http'
 import { chromium } from 'playwright'
-import { existsSync, writeFileSync, mkdirSync, unlinkSync, createReadStream } from 'fs'
+import { existsSync, writeFileSync, mkdirSync, unlinkSync, createReadStream, readFileSync } from 'fs'
 import { resolve, dirname, join } from 'path'
 import { fileURLToPath } from 'url'
 
@@ -414,17 +414,42 @@ async function chatgptUploadFile(filePath, opts = {}) {
 
   await dismissModal()
 
-  // 方式1: 直接用 setInputFiles 操作 input#upload-files
+  // 方式1: 直接用 setInputFiles 操作 input#upload-files（小文件可用）
   try {
     const fileInput = page.locator('input#upload-files')
     const inputCount = await fileInput.count()
     log(`input#upload-files 找到 ${inputCount} 个`)
     if (inputCount > 0) {
-      await fileInput.first().setInputFiles(filePath)
-      await page.waitForTimeout(3000)
-      const attached = await page.evaluate(() => document.querySelectorAll('[class*="file-tile"]').length > 0)
-      log(`setInputFiles 完成, attached=${attached}`)
-      if (attached) { log('文件已上传 (input#upload-files):', filePath); return { ok: true, method: 'input-direct' } }
+      // 先尝试 setInputFiles（小文件有效）
+      try {
+        await fileInput.first().setInputFiles(filePath)
+        await page.waitForTimeout(3000)
+        const attached = await page.evaluate(() => document.querySelectorAll('[class*="file-tile"]').length > 0)
+        log(`setInputFiles 完成, attached=${attached}`)
+        if (attached) { log('文件已上传 (input#upload-files):', filePath); return { ok: true, method: 'input-direct' } }
+      } catch (sizeErr) {
+        log(`setInputFiles 失败(可能文件过大): ${sizeErr.message.substring(0, 80)}`)
+        // 大文件: 用 CDP 的 Page.handleFileChooser 或直接操作 input
+        // 通过 evaluate 设置 input 的 files 属性
+        const fileName = filePath.split(/[/\\]/).pop()
+        const fileBuffer = readFileSync(filePath)
+        const base64 = fileBuffer.toString('base64')
+        await page.evaluate(async ({ b64, name }) => {
+          const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0))
+          const blob = new Blob([bytes], { type: 'video/mp4' })
+          const file = new File([blob], name, { type: 'video/mp4' })
+          const dt = new DataTransfer()
+          dt.items.add(file)
+          const input = document.querySelector('input#upload-files')
+          input.files = dt.files
+          input.dispatchEvent(new Event('change', { bubbles: true }))
+          input.dispatchEvent(new Event('input', { bubbles: true }))
+        }, { b64: base64, name: fileName })
+        await page.waitForTimeout(3000)
+        const attached2 = await page.evaluate(() => document.querySelectorAll('[class*="file-tile"]').length > 0)
+        log(`DataTransfer 方式完成, attached=${attached2}`)
+        if (attached2) { log('文件已上传 (DataTransfer):', filePath); return { ok: true, method: 'datatransfer' } }
+      }
     }
   } catch (err) { log('setInputFiles 方式失败: ' + err.message) }
 
