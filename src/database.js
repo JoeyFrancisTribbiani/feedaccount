@@ -429,6 +429,17 @@ export class LocalDatabase {
     this.#ensureColumn("reddit_accounts", "action_configs_json", "TEXT NOT NULL DEFAULT '{}'");
     this.#ensureColumn("tiktok_runs", "search_keyword", "TEXT");
     this.#ensureColumn("remix_tasks", "downloaded", "INTEGER NOT NULL DEFAULT 0");
+    this.#ensureColumn("remix_tasks", "creator_id", "TEXT");
+    this.#ensureColumn("remix_tasks", "matrix_ids_json", "TEXT");
+    this.#ensureColumn("remix_tasks", "preset_id", "TEXT");
+    this.#ensureColumn("remix_tasks", "prompt", "TEXT");
+    this.#ensureColumn("remix_tasks", "intro_enabled", "INTEGER DEFAULT 1");
+    this.#ensureColumn("remix_tasks", "outro_enabled", "INTEGER DEFAULT 1");
+    this.#ensureColumn("remix_tasks", "music_enabled", "INTEGER DEFAULT 1");
+    this.#ensureColumn("remix_tasks", "intro_id", "TEXT");
+    this.#ensureColumn("remix_tasks", "outro_id", "TEXT");
+    this.#ensureColumn("remix_tasks", "music_id", "TEXT");
+    this.#ensureColumn("remix_tasks", "cdp_instance_id", "TEXT");
     this.#ensureColumn("ai_remix_presets", "intro_config_json", "TEXT");
     this.#ensureColumn("ai_remix_presets", "outro_config_json", "TEXT");
     this.#ensureColumn("ai_remix_presets", "music_config_json", "TEXT");
