@@ -1586,7 +1586,13 @@ export function createMonitorServer({
         // ---- Remix: AI 自动视频混剪任务 ----
         if (request.method === "POST" && pathname === "/api/remix/ai-remix-task") {
           const body = await readJson(request);
-          const { matrixIds, creatorId, videoIds, cdpInstanceId, prompt, ratio, presetId } = body;
+          const { matrixIds, creatorId, videoIds, cdpInstanceId, ratio, presetId } = body;
+          // 从方案获取提示词
+          let prompt = body.prompt;
+          if (!prompt && presetId) {
+            const preset = store.getAiRemixPreset(presetId);
+            if (preset) prompt = preset.prompt;
+          }
           if (!matrixIds?.length) { sendJson(response, 400, { error: "请选择至少一个社媒矩阵" }); return; }
           if (!creatorId) { sendJson(response, 400, { error: "请选择达人" }); return; }
           if (!videoIds?.length) { sendJson(response, 400, { error: "请选择至少一个视频" }); return; }
