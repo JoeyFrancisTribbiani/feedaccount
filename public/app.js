@@ -3853,12 +3853,21 @@ const cdpEl = {
 const cdpState = { instances: [], selectedId: null, analyzeJobId: null };
 
 async function refreshCdpInstances() {
-  try {
-    const res = await request("/api/cdp/instances");
-    cdpState.instances = res.instances || [];
-    renderCdpInstances();
-    refreshCdpLogs();
-  } catch (e) { showToast("CDP 实例加载失败：" + e.message, true); }
+try {
+  const res = await request("/api/cdp/instances");
+  cdpState.instances = res.instances || [];
+  // 检查每个实例的实际 daemon 状态
+  for (const inst of cdpState.instances) {
+    try {
+      const statusRes = await request(`/api/cdp/instances/${encodeURIComponent(inst.id)}/daemon-status`);
+      if (!statusRes.running && inst.status === "running") {
+        inst.status = "stopped";
+      }
+    } catch {}
+  }
+  renderCdpInstances();
+  refreshCdpLogs();
+} catch (e) { showToast("CDP 实例加载失败：" + e.message, true); }
 }
 
 function renderCdpInstances() {
@@ -5447,11 +5456,11 @@ modalEl.start?.addEventListener("click", async () => {
         }
       }
 
-      // 检查 CDP 实例的 daemon 是否在运行（不检查 Chrome 端口，任务会排队等待）
+      // 检查 CDP 实例的 daemon 是否在运行
       let daemonRunning = false;
       try {
-        await request(`/api/cdp/instances/${encodeURIComponent(cdpInstanceId)}/daemon-status`);
-        daemonRunning = true;
+        const statusRes = await request(`/api/cdp/instances/${encodeURIComponent(cdpInstanceId)}/daemon-status`);
+        daemonRunning = statusRes.running === true;
       } catch {}
       if (!daemonRunning) {
         showToast("CDP 守护进程未运行，请先到 CDP Tab 启动守护进程", true);
