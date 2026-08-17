@@ -1020,16 +1020,15 @@ async function downloadGeneratedImages(destDir) {
     }
     if (!lastAssistantTurn) return [];
     var imgs = lastAssistantTurn.querySelectorAll('img');
-    var seen = new Set();
+    var seenIds = new Set();
     var urls = [];
     for (var img of imgs) {
       var src = img.src;
-      // 过滤掉图标、头像等非内容图片
       if (!src || src.includes('favicon') || src.includes('icon') || src.includes('avatar') || src.includes('logo')) continue;
-      // 只取主图（宽高 > 100px），跳过缩略图
-      var rect = img.getBoundingClientRect();
-      if (rect.width < 100 || rect.height < 100) continue;
-      if (!seen.has(src)) { seen.add(src); urls.push(src) }
+      // 从 URL 提取 file_id 去重（estuary/content?id=xxx）
+      var idMatch = src.match(/[?&]id=([^&]+)/);
+      var fileId = idMatch ? idMatch[1] : src;
+      if (!seenIds.has(fileId)) { seenIds.add(fileId); urls.push(src) }
     }
     return urls
   })
