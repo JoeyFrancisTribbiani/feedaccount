@@ -335,38 +335,53 @@ async function chatgptSendMessage(text, opts = {}) {
   const inputSel = getInputSelector()
   await page.waitForSelector(inputSel, { timeout: 15000, state: 'visible' })
 
-  // 方案1: 用 page.evaluate 直接设置 React textarea 的值并触发 input 事件（最快，瞬间完成）
+  // ChatGPT 输入框是 ProseMirror contenteditable div，不是 textarea
+  // 方案1: 聚焦输入框 → 清空 → 用 insertText 命令插入文本（瞬间完成）
   let filled = false
   try {
-    filled = await page.evaluate((sel, content) => {
-      const textarea = document.querySelector(sel)
-      if (!textarea) return false
-      // React 需要用 native setter 设置 value
-      const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set
-      nativeInputValueSetter.call(textarea, content)
-      textarea.dispatchEvent(new Event('input', { bubbles: true }))
-      textarea.dispatchEvent(new Event('change', { bubbles: true }))
-      return true
-    }, inputSel, text)
-  } catch (e) { log('evaluate 方式填充失败: ' + e.message) }
+    await page.click(inputSel)
+    await page.waitForTimeout(200)
+    // 清空已有内容
+    await page.keyboard.press('Control+a')
+    await page.waitForTimeout(50)
+    // 用 document.execCommand('insertText') 插入（ProseMirror 支持）
+    filled = await page.evaluate((content) => {
+      const editor = document.querySelector('#prompt-textarea')
+      if (!editor) return false
+      editor.focus()
+      // 清空
+      const sel = window.getSelection()
+      sel.selectAllChildren(editor)
+      sel.deleteFromDocument()
+      // 插入文本
+      return document.execCommand('insertText', false, content)
+    }, text)
+    if (filled) log('提示词已通过 insertText 填充')
+  } catch (e) { log('insertText 方式失败: ' + e.message) }
 
-  // 方案2: 如果 evaluate 没成功，用 fill
+  // 方案2: 如果 insertText 失败，用 page.fill
   if (!filled) {
     try {
       await page.click(inputSel)
       await page.waitForTimeout(100)
       await page.fill(inputSel, text)
+      log('提示词已通过 fill 填充')
+      filled = true
     } catch (e) {
-      // 方案3: 最后回退到剪贴板粘贴
-      log('fill 方式失败，回退到剪贴板: ' + e.message)
-      await page.click(inputSel)
-      await page.keyboard.press('Control+a')
-      await page.keyboard.press('Backspace')
-      await page.evaluate((t) => navigator.clipboard.writeText(t), text)
-      await page.click(inputSel)
-      await page.waitForTimeout(100)
-      await page.keyboard.press('Control+v')
+      log('fill 方式失败: ' + e.message)
     }
+  }
+
+  // 方案3: 最后回退到剪贴板粘贴
+  if (!filled) {
+    log('回退到剪贴板粘贴')
+    await page.click(inputSel)
+    await page.keyboard.press('Control+a')
+    await page.keyboard.press('Backspace')
+    await page.evaluate((t) => navigator.clipboard.writeText(t), text)
+    await page.click(inputSel)
+    await page.waitForTimeout(100)
+    await page.keyboard.press('Control+v')
   }
 
   await page.waitForTimeout(500)
