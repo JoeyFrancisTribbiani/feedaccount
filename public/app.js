@@ -4022,12 +4022,30 @@ cdpEl.ngrokStop?.addEventListener("click", async () => {
 
 cdpEl.ngrokCheck?.addEventListener("click", refreshNgrokStatus);
 
+// 恢复上次保存的启动配置
+  if (cdpEl.launchPath) {
+    const savedPath = localStorage.getItem("cdp-launch-profilePath");
+    const savedPort = localStorage.getItem("cdp-launch-port");
+    const savedProxy = localStorage.getItem("cdp-launch-proxy");
+    const savedProfileDir = localStorage.getItem("cdp-launch-profileDir");
+    if (savedPath) cdpEl.launchPath.value = savedPath;
+    if (savedPort) cdpEl.launchPort.value = savedPort;
+    if (savedProxy) cdpEl.launchProxy.value = savedProxy;
+    const profileDirInput = document.querySelector("#cdp-launch-profile-dir");
+    if (profileDirInput && savedProfileDir) profileDirInput.value = savedProfileDir;
+  }
+
 cdpEl.launchBtn?.addEventListener("click", async () => {
   const profilePath = cdpEl.launchPath.value.trim();
   if (!profilePath) { showToast("请填写 Chrome User Data 路径", true); return; }
   const port = cdpEl.launchPort.value || "9222";
   const proxy = cdpEl.launchProxy.value.trim() || null;
   const profileDirectory = document.querySelector("#cdp-launch-profile-dir")?.value.trim() || null;
+  // 保存配置到 localStorage
+  localStorage.setItem("cdp-launch-profilePath", profilePath);
+  localStorage.setItem("cdp-launch-port", port);
+  localStorage.setItem("cdp-launch-proxy", proxy || "");
+  localStorage.setItem("cdp-launch-profileDir", profileDirectory || "Default");
   cdpEl.launchBtn.disabled = true;
   cdpEl.launchBtn.textContent = "启动中…";
   cdpEl.launchResult.textContent = "";
