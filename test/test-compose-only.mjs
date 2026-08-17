@@ -27,15 +27,15 @@ const introConfig = JSON.parse(preset.intro_config_json || "{}");
 const outroConfig = JSON.parse(preset.outro_config_json || "{}");
 const musicConfig = JSON.parse(preset.music_config_json || "{}");
 
-// 3. 从 ai_preset_files 填充 segmentFile
+// 3. 从 ai_preset_files 填充 segmentFilePath
 const presetFiles = db.prepare("SELECT * FROM ai_preset_files WHERE preset_id = ?").all(task.preset_id);
 const findFile = (varName) => {
   const f = presetFiles.find(f => f.var_name === varName);
   return f ? f.file_path : null;
 };
-if (!introConfig.segmentFile) introConfig.segmentFile = findFile("_intro_segment");
-if (!outroConfig.segmentFile) outroConfig.segmentFile = findFile("_outro_segment");
-if (!musicConfig.segmentFile) musicConfig.segmentFile = findFile("_music_segment");
+if (!introConfig.segmentFilePath) introConfig.segmentFilePath = findFile("_intro_segment");
+if (!outroConfig.segmentFilePath) outroConfig.segmentFilePath = findFile("_outro_segment");
+if (!musicConfig.segmentFilePath) musicConfig.segmentFilePath = findFile("_music_segment");
 
 console.log("\n方案配置:");
 console.log("  片头:", introConfig);
@@ -50,9 +50,9 @@ console.log("\n原视频路径:", mainVideoPath, "| 存在:", existsSync(mainVid
 
 // 5. 解析片头/片尾/音乐本地路径
 const resolveResource = (fp) => fp ? path.resolve(ROOT, fp.replace(/^\//, "")) : null;
-const introPath = resolveResource(introConfig.segmentFile);
-const outroPath = resolveResource(outroConfig.segmentFile);
-const musicPath = resolveResource(musicConfig.segmentFile);
+const introPath = resolveResource(introConfig.segmentFilePath);
+const outroPath = resolveResource(outroConfig.segmentFilePath);
+const musicPath = resolveResource(musicConfig.segmentFilePath);
 console.log("片头路径:", introPath, "| 存在:", introPath ? existsSync(introPath) : false);
 console.log("片尾路径:", outroPath, "| 存在:", outroPath ? existsSync(outroPath) : false);
 console.log("音乐路径:", musicPath, "| 存在:", musicPath ? existsSync(musicPath) : false);

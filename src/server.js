@@ -524,7 +524,7 @@ export function createMonitorServer({
               const preset = presetId ? store.getAiRemixPreset(presetId) : null;
               const presetFiles = presetId ? store.getPresetFiles(presetId) : [];
 
-              // 把绑定的文件路径填入配置的 segmentFile
+              // 把绑定的文件路径填入配置的 segmentFilePath
               const findFile = (varName) => {
                 const f = presetFiles.find(f => f.varName === varName);
                 return f ? f.filePath : null;
@@ -532,11 +532,11 @@ export function createMonitorServer({
               const introConfig = preset?.introConfig || {};
               const outroConfig = preset?.outroConfig || {};
               const musicConfig = preset?.musicConfig || {};
-              if (!introConfig.segmentFile) introConfig.segmentFile = findFile("_intro_segment");
-              if (!outroConfig.segmentFile) outroConfig.segmentFile = findFile("_outro_segment");
-              if (!musicConfig.segmentFile) musicConfig.segmentFile = findFile("_music_segment");
+              if (!introConfig.segmentFilePath) introConfig.segmentFilePath = findFile("_intro_segment");
+              if (!outroConfig.segmentFilePath) outroConfig.segmentFilePath = findFile("_outro_segment");
+              if (!musicConfig.segmentFilePath) musicConfig.segmentFilePath = findFile("_music_segment");
 
-              store.logCdpEvent(null, "info", `AI混剪合成: ${imagePaths.length}张图片, 方案=${preset?.name || "默认"}, 片头=${introConfig.segmentFile ? "有" : "无"}, 片尾=${outroConfig.segmentFile ? "有" : "无"}, 音乐=${musicConfig.segmentFile ? "有" : "无"}`, taskId);
+              store.logCdpEvent(null, "info", `AI混剪合成: ${imagePaths.length}张图片, 方案=${preset?.name || "默认"}, 片头=${introConfig.segmentFilePath ? "有" : "无"}, 片尾=${outroConfig.segmentFilePath ? "有" : "无"}, 音乐=${musicConfig.segmentFilePath ? "有" : "无"}`, taskId);
 
               // 使用队列中传递的原视频本地路径
               if (mainVideoLocalPath && existsSync(mainVideoLocalPath)) {

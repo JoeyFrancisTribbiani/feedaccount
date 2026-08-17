@@ -5135,7 +5135,7 @@ function collectPresetConfig() {
     imageDuration: timecodeToSeconds(presetModalEl.introDuration?.value),
     effect: presetModalEl.introEffect?.value || "none",
     transition: presetModalEl.introTransition?.value || "none",
-    segmentFile: pendingSegmentFiles.intro ? pendingSegmentFiles.intro.filePath : null,
+    segmentFilePath: pendingSegmentFiles.intro ? pendingSegmentFiles.intro.filePath : null,
   };
   const outroConfig = {
     enabled: presetModalEl.outroEnabled?.checked ?? true,
@@ -5144,14 +5144,14 @@ function collectPresetConfig() {
     imageDuration: timecodeToSeconds(presetModalEl.outroDuration?.value),
     effect: presetModalEl.outroEffect?.value || "none",
     transition: presetModalEl.outroTransition?.value || "none",
-    segmentFile: pendingSegmentFiles.outro ? pendingSegmentFiles.outro.filePath : null,
+    segmentFilePath: pendingSegmentFiles.outro ? pendingSegmentFiles.outro.filePath : null,
   };
   const musicConfig = {
     enabled: presetModalEl.musicEnabled?.checked ?? true,
     volumePercent: parseInt(presetModalEl.musicVolume?.value) || 8,
     scope: presetModalEl.musicScope?.value || "original",
     loop: presetModalEl.musicLoop?.checked ?? true,
-    segmentFile: pendingSegmentFiles.music ? pendingSegmentFiles.music.filePath : null,
+    segmentFilePath: pendingSegmentFiles.music ? pendingSegmentFiles.music.filePath : null,
   };
   return { introConfig, outroConfig, musicConfig };
 }
@@ -5179,15 +5179,15 @@ function fillPresetConfigForm(preset) {
   // 显示已绑定的片段文件名
   if (presetModalEl.introFileInfo) {
     const introFile = preset?.files?.find((f) => f.varName === "_intro_segment");
-    presetModalEl.introFileInfo.textContent = introFile ? `已绑定: ${introFile.filename}` : (ic.segmentFile ? "已上传（待保存）" : "");
+    presetModalEl.introFileInfo.textContent = introFile ? `已绑定: ${introFile.filename}` : (ic.segmentFilePath ? "已上传（待保存）" : "");
   }
   if (presetModalEl.outroFileInfo) {
     const outroFile = preset?.files?.find((f) => f.varName === "_outro_segment");
-    presetModalEl.outroFileInfo.textContent = outroFile ? `已绑定: ${outroFile.filename}` : (oc.segmentFile ? "已上传（待保存）" : "");
+    presetModalEl.outroFileInfo.textContent = outroFile ? `已绑定: ${outroFile.filename}` : (oc.segmentFilePath ? "已上传（待保存）" : "");
   }
   if (presetModalEl.musicFileInfo) {
     const musicFile = preset?.files?.find((f) => f.varName === "_music_segment");
-    presetModalEl.musicFileInfo.textContent = musicFile ? `已绑定: ${musicFile.filename}` : (mc.segmentFile ? "已上传（待保存）" : "");
+    presetModalEl.musicFileInfo.textContent = musicFile ? `已绑定: ${musicFile.filename}` : (mc.segmentFilePath ? "已上传（待保存）" : "");
   }
   pendingSegmentFiles = { intro: null, outro: null, music: null };
 }
@@ -5320,17 +5320,17 @@ async function handlePresetAdd() {
   // 校验：图片开始时间+总持续时间不能超过片段时长
   const introTotal = (introConfig.imageInsertStart || 0) + (introConfig.imageCount || 0) * (introConfig.imageDuration || 0);
   const outroTotal = (outroConfig.imageInsertStart || 0) + (outroConfig.imageCount || 0) * (outroConfig.imageDuration || 0);
-  if (introConfig.segmentFile && introTotal <= 0) { showToast("片头图片配置无效：开始时间+图片总时长必须大于0", true); return; }
-  if (outroConfig.segmentFile && outroTotal <= 0) { showToast("片尾图片配置无效：开始时间+图片总时长必须大于0", true); return; }
-  if (introConfig.segmentFile) {
-    const segDur = await getVideoDuration(introConfig.segmentFile);
+  if (introConfig.segmentFilePath && introTotal <= 0) { showToast("片头图片配置无效：开始时间+图片总时长必须大于0", true); return; }
+  if (outroConfig.segmentFilePath && outroTotal <= 0) { showToast("片尾图片配置无效：开始时间+图片总时长必须大于0", true); return; }
+  if (introConfig.segmentFilePath) {
+    const segDur = await getVideoDuration(introConfig.segmentFilePath);
     if (segDur > 0 && introTotal > segDur) {
       showToast(`片头图片总时长(${introTotal.toFixed(1)}秒)超出片头视频时长(${segDur.toFixed(1)}秒)，请调整图片数量或持续时间`, true);
       return;
     }
   }
-  if (outroConfig.segmentFile) {
-    const segDur = await getVideoDuration(outroConfig.segmentFile);
+  if (outroConfig.segmentFilePath) {
+    const segDur = await getVideoDuration(outroConfig.segmentFilePath);
     if (segDur > 0 && outroTotal > segDur) {
       showToast(`片尾图片总时长(${outroTotal.toFixed(1)}秒)超出片尾视频时长(${segDur.toFixed(1)}秒)，请调整图片数量或持续时间`, true);
       return;
@@ -5384,17 +5384,17 @@ async function handlePresetUpdate() {
   // 校验：图片开始时间+总持续时间不能超过片段时长
   const introTotal = (introConfig.imageInsertStart || 0) + (introConfig.imageCount || 0) * (introConfig.imageDuration || 0);
   const outroTotal = (outroConfig.imageInsertStart || 0) + (outroConfig.imageCount || 0) * (outroConfig.imageDuration || 0);
-  if (introConfig.segmentFile && introTotal <= 0) { showToast("片头图片配置无效：开始时间+图片总时长必须大于0", true); return; }
-  if (outroConfig.segmentFile && outroTotal <= 0) { showToast("片尾图片配置无效：开始时间+图片总时长必须大于0", true); return; }
-  if (introConfig.segmentFile) {
-    const segDur = await getVideoDuration(introConfig.segmentFile);
+  if (introConfig.segmentFilePath && introTotal <= 0) { showToast("片头图片配置无效：开始时间+图片总时长必须大于0", true); return; }
+  if (outroConfig.segmentFilePath && outroTotal <= 0) { showToast("片尾图片配置无效：开始时间+图片总时长必须大于0", true); return; }
+  if (introConfig.segmentFilePath) {
+    const segDur = await getVideoDuration(introConfig.segmentFilePath);
     if (segDur > 0 && introTotal > segDur) {
       showToast(`片头图片总时长(${introTotal.toFixed(1)}秒)超出片头视频时长(${segDur.toFixed(1)}秒)，请调整图片数量或持续时间`, true);
       return;
     }
   }
-  if (outroConfig.segmentFile) {
-    const segDur = await getVideoDuration(outroConfig.segmentFile);
+  if (outroConfig.segmentFilePath) {
+    const segDur = await getVideoDuration(outroConfig.segmentFilePath);
     if (segDur > 0 && outroTotal > segDur) {
       showToast(`片尾图片总时长(${outroTotal.toFixed(1)}秒)超出片尾视频时长(${segDur.toFixed(1)}秒)，请调整图片数量或持续时间`, true);
       return;
