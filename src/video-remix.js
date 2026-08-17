@@ -410,8 +410,9 @@ export async function remixVideoWithResources(inputPath, resources = {}, ratio =
     }
 
     // 3. 拼接
-    const concatenatedPath = path.join(TEMP_DIR, `remix_concat_${id}.mp4`);
+    let concatenatedPath;
     if (segments.length > 1) {
+      concatenatedPath = path.join(TEMP_DIR, `remix_concat_${id}.mp4`);
       await concatVideos(segments, concatenatedPath);
       tempPaths.push(concatenatedPath);
     } else {
