@@ -3585,7 +3585,7 @@ function openTaskLogModal(taskId) {
       logs.reverse();
       list.innerHTML = logs.map((l) => {
         const color = l.level === "error" ? "#dc2626" : l.level === "warning" ? "#d97706" : "inherit";
-        return `<li style="color:${color};"><span class="muted-activity">${l.createdAt?.substring(11, 19) || ""}</span> ${escapeHtml(l.message)}</li>`;
+        return `<li style="color:${color};"><span class="muted-activity">${toCST(l.createdAt)}</span> ${escapeHtml(l.message)}</li>`;
       }).join("");
     })
     .catch(() => {
@@ -4163,6 +4163,16 @@ cdpEl.analyzeCheck?.addEventListener("click", async () => {
   }
 });
 
+// UTC ISO 时间转东八区 HH:MM:SS
+function toCST(isoStr) {
+  if (!isoStr) return "";
+  try {
+    const d = new Date(isoStr);
+    const utc = d.getTime() + d.getTimezoneOffset() * 60000;
+    return new Date(utc + 8 * 3600000).toISOString().substring(11, 19);
+  } catch { return isoStr.substring(11, 19) || ""; }
+}
+
 async function refreshCdpLogs() {
   try {
     const instanceId = cdpEl.logFilter?.value || null;
@@ -4176,7 +4186,7 @@ async function refreshCdpLogs() {
       const inst = cdpState.instances.find(i => i.id === l.instanceId);
       const instName = inst?.name || l.instanceId?.substring(0, 8) || "系统";
       return `<li class="cdp-log-item cdp-log-${escapeHtml(l.level)}">
-        <span class="cdp-log-time">${formatDateTime(l.createdAt)}</span>
+        <span class="cdp-log-time">${toCST(l.createdAt)}</span>
         <span class="cdp-log-inst">${escapeHtml(instName)}</span>
         <span class="cdp-log-level">${escapeHtml(l.level)}</span>
         <span class="cdp-log-msg">${escapeHtml(l.message)}</span>

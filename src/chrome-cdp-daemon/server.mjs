@@ -45,10 +45,10 @@ function ts() {
   const utc = d.getTime() + d.getTimezoneOffset() * 60000
   return new Date(utc + 8 * 3600000).toISOString().replace('Z', '+08:00')
 }
-function log(...args) {
+let log = function(...args) {
   console.log(`[${ts()}]`, ...args)
 }
-function logErr(...args) {
+let logErr = function(...args) {
   console.error(`[${ts()}]`, ...args)
 }
 
@@ -721,6 +721,17 @@ async function handleChatGptChat(taskNo, params) {
 async function handleChatGptAiRemix(taskNo, params) {
   const { prompt, fileIds = [], options = {} } = params
   const responseTimeout = options.responseTimeout || 1800000
+  const serverTaskId = options.taskId || null
+
+  // 临时覆盖 log 函数，让每条日志带上 serverTaskId
+  const origLog = log
+  const origLogErr = logErr
+  if (serverTaskId) {
+    log = (...args) => console.log(`[${ts()}]`, `[TASK:${serverTaskId}]`, ...args)
+    logErr = (...args) => console.error(`[${ts()}]`, `[TASK:${serverTaskId}]`, ...args)
+  }
+
+  try {
 
   if (!fileIds.length) throw new Error('fileIds is required')
 
@@ -843,6 +854,11 @@ async function handleChatGptAiRemix(taskNo, params) {
     startedAt: taskStore.get(taskNo).startedAt, completedAt: Date.now(),
   })
   log('=== AI 视频混剪完成 ===')
+  } finally {
+    // 恢复原始 log 函数
+    log = origLog
+    logErr = origLogErr
+  }
 }
 
 /**

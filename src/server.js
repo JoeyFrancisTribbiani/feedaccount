@@ -125,9 +125,17 @@ function startCdpDaemon(instance) {
   const pushLog = (level, msg) => {
     const line = msg.trim();
     if (!line) return;
-    procInfo.logs.push({ at: new Date().toISOString(), level, message: line });
+    // 解析 [TASK:xxx] 前缀提取 taskId
+    let taskId = null;
+    let cleanLine = line;
+    const taskMatch = line.match(/\[TASK:([^\]]+)\]/);
+    if (taskMatch) {
+      taskId = taskMatch[1];
+      cleanLine = line.replace(/\[TASK:[^\]]+\]\s*/, '');
+    }
+    procInfo.logs.push({ at: new Date().toISOString(), level, message: cleanLine });
     if (procInfo.logs.length > 200) procInfo.logs.shift();
-    if (_store) _store.logCdpEvent(instance.id, level, line);
+    if (_store) _store.logCdpEvent(instance.id, level, cleanLine, null, taskId);
   };
 
   proc.stdout.on("data", (d) => pushLog("info", d.toString()));
@@ -451,11 +459,11 @@ export function createMonitorServer({
 
         if (!fileIds.length) throw new Error("没有可上传的文件");
 
-        // Step 2: 提交 AI 混剪任务
+        // Step 2: 提交 AI 混剪任务（传入 taskId 让 daemon 日志能关联）
         const taskRes = await fetch(`${daemonUrl}/api/tasks`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ type: "chatgpt-ai-remix", params: { prompt, fileIds, options: { responseTimeout: 1800000 } } }),
+          body: JSON.stringify({ type: "chatgpt-ai-remix", params: { prompt, fileIds, options: { responseTimeout: 1800000, taskId } } }),
         });
         const taskData = await taskRes.json();
         if (!taskRes.ok || !taskData.taskNo) throw new Error(`提交 AI 混剪任务失败: ${taskData.error}`);
