@@ -34,7 +34,7 @@ const HOST = process.env.DAEMON_HOST || '0.0.0.0'
 const CHATGPT_URL = process.env.CHATGPT_URL || 'https://chatgpt.com'
 const DEBUG = process.argv.includes('--debug')
 const TMP_DIR = join(__dirname, 'tmp')
-const OUTPUTS_DIR = join(__dirname, 'outputs')
+const OUTPUTS_DIR = process.env.DAEMON_OUTPUTS_DIR || join(__dirname, 'outputs')
 
 // Ensure directories exist
 mkdirSync(TMP_DIR, { recursive: true })

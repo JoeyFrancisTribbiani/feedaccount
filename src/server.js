@@ -111,6 +111,9 @@ function startCdpDaemon(instance) {
     DAEMON_PORT: String(instance.daemonPort),
     DAEMON_HOST: "127.0.0.1",
   };
+  // 传全局路径配置给 daemon
+  const pathCfg = _store?.getPathConfig?.() || {};
+  if (pathCfg.outputPath) env.DAEMON_OUTPUTS_DIR = pathCfg.outputPath;
 
   const proc = spawn("node", ["--no-warnings", CDP_DAEMON_SCRIPT], {
     cwd: CDP_DAEMON_DIR,
