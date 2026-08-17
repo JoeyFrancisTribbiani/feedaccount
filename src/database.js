@@ -1252,7 +1252,7 @@ export class LocalDatabase {
   // --- Chrome CDP 实例管理 ---
   upsertChromeInstance(data) {
     const ts = nowIso();
-    const host = data.cdpHost || "localhost";
+    const host = (data.cdpHost || "localhost").replace("127.0.0.1", "localhost");
     const port = Number(data.cdpPort || 9222);
 
     // 如果没传 id，先按 host+port 查找已有实例
