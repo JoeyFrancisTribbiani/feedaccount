@@ -2255,7 +2255,7 @@ footer span {
   position: fixed;
   bottom: 24px;
   right: 24px;
-  z-index: 100;
+  z-index: 10000;
   padding: 12px 20px;
   border-radius: var(--radius-sm);
   background: #0f172a;
