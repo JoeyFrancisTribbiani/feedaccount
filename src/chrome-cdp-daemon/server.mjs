@@ -473,18 +473,23 @@ async function getLastAssistantText() {
 
 async function isStillGenerating() {
   return await page.evaluate(() => {
-    // 方式1: 标准 stop-button（ChatGPT 生成中会显示这个按钮）
-    const stopBtns = document.querySelectorAll(
-      'button[data-testid="stop-button"], button[aria-label="停止生成"], button[aria-label="Stop"], button[aria-label="停止"]'
-    )
+    // 方式1: 标准 stop-button 存在且可见（生成中会显示）
+    const stopBtns = document.querySelectorAll('button[data-testid="stop-button"]')
     for (const btn of stopBtns) { if (btn.offsetParent !== null) return true }
 
-    // 方式2: 提交按钮变成停止按钮时，aria-label 会变化
+    // 方式2: composer-submit-button 的 aria-label 判断
     const submitBtn = document.querySelector('button[class*="composer-submit-button"]')
     if (submitBtn) {
-      const aria = submitBtn.getAttribute('aria-label') || ''
-      if (aria.includes('停止') || aria.includes('Stop') || aria.includes('中断') || aria.includes('Cancel')) return true
+      const aria = (submitBtn.getAttribute('aria-label') || '').toLowerCase()
+      // 生成中: aria-label 包含停止/stop
+      if (aria.includes('停止') || aria.includes('stop') || aria.includes('中断') || aria.includes('cancel')) return true
+      // 已完成: aria-label 是发送/语音功能 → 明确不在生成
+      if (aria.includes('发送') || aria.includes('send') || aria.includes('语音') || aria.includes('voice')) return false
     }
+
+    // 默认: 没有停止按钮也没有明确的完成信号，检查是否有 stop 相关 class
+    const allStopLike = document.querySelectorAll('button[class*="stop"], button[data-testid*="stop"]')
+    for (const btn of allStopLike) { if (btn.offsetParent !== null) return true }
 
     return false
   })
