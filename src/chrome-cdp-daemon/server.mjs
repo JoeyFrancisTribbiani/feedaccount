@@ -948,6 +948,13 @@ async function handleChatGptAiRemix(taskNo, params) {
     logErr(`任务异常: ${err.message}`)
     throw err
   } finally {
+    // 关闭本次任务的标签页（释放浏览器资源，不影响 CDP 连接）
+    try {
+      if (page) {
+        await page.close()
+        log('已关闭本次任务标签页')
+      }
+    } catch (e) { /* 页面可能已关闭，忽略 */ }
     // 恢复原始 log 函数
     log = origLog
     logErr = origLogErr
