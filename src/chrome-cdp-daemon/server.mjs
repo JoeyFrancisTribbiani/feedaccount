@@ -414,7 +414,18 @@ async function chatgptUploadFile(filePath, opts = {}) {
 
   await dismissModal()
 
-  // 方式1: 点击 plus 按钮 → 点击"添加照片和文件"菜单项 → filechooser
+  // 方式1: 直接用 setInputFiles 操作 input#upload-files
+  try {
+    const fileInput = page.locator('input#upload-files')
+    if (await fileInput.count() > 0) {
+      await fileInput.setInputFiles(filePath)
+      await page.waitForTimeout(3000)
+      const attached = await page.evaluate(() => document.querySelectorAll('[class*="file-tile"]').length > 0)
+      if (attached) { log('文件已上传 (input#upload-files):', filePath); return { ok: true, method: 'input-direct' } }
+    }
+  } catch (err) { if (DEBUG) log('setInputFiles 方式失败:', err.message) }
+
+  // 方式2: 点击 plus 按钮 → 点击"添加照片和文件"菜单项 → filechooser
   try {
     const plusBtn = page.locator('button[data-testid="composer-plus-btn"]')
     if (await plusBtn.count() > 0) {
@@ -435,20 +446,6 @@ async function chatgptUploadFile(filePath, opts = {}) {
       }
     }
   } catch (err) { if (DEBUG) log('plus 菜单方式失败:', err.message) }
-
-  // 方式2: 直接用 setInputFiles 操作隐藏的 input#upload-files
-  const directInputSelectors = ['input#upload-files', 'input[type="file"]:not([accept])', 'input[type="file"]']
-  for (const sel of directInputSelectors) {
-    try {
-      const locator = page.locator(sel)
-      if (await locator.count() > 0) {
-        await locator.first().setInputFiles(filePath)
-        await page.waitForTimeout(3000)
-        const attached = await page.evaluate(() => document.querySelectorAll('[class*="file-tile"]').length > 0)
-        if (attached) { log('文件已上传 (setInputFiles):', filePath); return { ok: true, method: 'input-direct' } }
-      }
-    } catch (err) { if (DEBUG) log('setInputFiles 方式失败:', sel, err.message) }
-  }
 
   await dismissModal()
   await page.waitForTimeout(1000)
