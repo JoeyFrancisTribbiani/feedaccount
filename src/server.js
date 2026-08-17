@@ -1881,6 +1881,21 @@ export function createMonitorServer({
           }
         }
 
+        // 中止任务
+        const remixAbortMatch = pathname.match(/^\/api\/remix\/tasks\/([^/]+)\/abort$/);
+        if (request.method === "POST" && remixAbortMatch) {
+          const taskId = decodeURIComponent(remixAbortMatch[1]);
+          store.updateRemixTask(taskId, { status: "FAILED", errorMessage: "用户手动中止", completedAt: nowIso() });
+          store.logCdpEvent(null, "warning", "任务被用户中止", null, taskId);
+          // 从队列中移除
+          const aiIdx = aiRemixQueue.findIndex(q => q.taskId === taskId);
+          if (aiIdx !== -1) aiRemixQueue.splice(aiIdx, 1);
+          const remixIdx = remixQueue.findIndex(q => q.taskId === taskId);
+          if (remixIdx !== -1) remixQueue.splice(remixIdx, 1);
+          sendJson(response, 200, { ok: true });
+          return;
+        }
+
         // 重试任务
         const remixRetryMatch = pathname.match(/^\/api\/remix\/tasks\/([^/]+)\/retry$/);
         if (request.method === "POST" && remixRetryMatch) {

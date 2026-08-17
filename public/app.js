@@ -3508,6 +3508,7 @@ function renderRemixTasks() {
         </div>
         <div class="remix-task-actions">
           <button class="button button-secondary task-log-btn" data-task-id="${escapeHtml(t.id)}" style="font-size: 11px; padding:2px 8px;">日志</button>
+          ${(t.status === "PENDING" || t.status === "PROCESSING") ? `<button class="danger-button task-abort-btn" data-task-id="${escapeHtml(t.id)}" style="font-size: 11px; padding:2px 8px;">中止</button>` : ""}
           ${(t.status === "FAILED" || t.status === "DONE") ? `<button class="button button-secondary task-retry-btn" data-task-id="${escapeHtml(t.id)}" style="font-size: 11px; padding:2px 8px;">重试</button>` : ""}
           ${t.status === "DONE" && t.outputUrl ? `<a href="${escapeHtml(t.outputUrl)}" target="_blank" class="button button-secondary" style="font-size: 11px;">预览</a>` : ""}
           ${t.status === "DONE" && t.outputUrl ? `<a href="${escapeHtml(t.outputUrl)}" download data-task-id="${escapeHtml(t.id)}" data-out-url="${escapeHtml(t.outputUrl)}" class="button button-primary" style="font-size: 11px;">${t.downloaded ? "已下载 ✓" : "下载"}</a>` : ""}
@@ -3533,6 +3534,16 @@ function renderRemixTasks() {
         showToast("正在重试任务...");
         await request(`/api/remix/tasks/${encodeURIComponent(btn.dataset.taskId)}/retry`, { method: "POST", body: "{}" });
         showToast("任务已重新提交");
+        await fetchRemixTasks();
+      } catch (e) { showToast(e.message, true); }
+    });
+  });
+  // 中止按钮
+  remixEl.tasksList.querySelectorAll(".task-abort-btn").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      try {
+        await request(`/api/remix/tasks/${encodeURIComponent(btn.dataset.taskId)}/abort`, { method: "POST", body: "{}" });
+        showToast("任务已中止");
         await fetchRemixTasks();
       } catch (e) { showToast(e.message, true); }
     });
@@ -5435,13 +5446,6 @@ modalEl.start?.addEventListener("click", async () => {
       const presetId = modalEl.aiPreset.value || null;
       if (!cdpInstanceId) { showToast("请选择 CDP 实例", true); return; }
 
-      // 从方案中获取提示词
-      let prompt = "";
-      if (presetId) {
-        const preset = aiPresets.find((p) => p.id === presetId);
-        if (preset) prompt = preset.prompt;
-      }
-
       // 检查方案变量是否都已绑定文件
       if (presetId) {
         const preset = aiPresets.find((p) => p.id === presetId);
@@ -5469,7 +5473,7 @@ modalEl.start?.addEventListener("click", async () => {
 
       const res = await request("/api/remix/ai-remix-task", {
         method: "POST",
-        body: JSON.stringify({ matrixIds, creatorId, videoIds, cdpInstanceId, prompt, ratio, presetId }),
+        body: JSON.stringify({ matrixIds, creatorId, videoIds, cdpInstanceId, ratio, presetId }),
       });
       modalEl.overlay.classList.add("hidden");
       const msg = res.count > 1
