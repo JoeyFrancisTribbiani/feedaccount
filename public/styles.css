@@ -2558,6 +2558,10 @@ footer span {
   padding: 20px 24px;
 }
 
+#remix-workspace-modal .modal-body { padding: 12px 20px; }
+#remix-workspace-modal .remix-video-head { margin-bottom: 8px; }
+#remix-workspace-modal .remix-video-area { padding: 0; }
+
 .remix-video-head {
   display: flex;
   align-items: center;
