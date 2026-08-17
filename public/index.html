@@ -1011,7 +1011,7 @@
 
       <!-- ====== Remix: 视频去重与混剪面板 ====== -->
       <section class="remix-panel remix-tab">
-        <!-- 路径配置 -->
+        <!-- 路径配置 + 按钮 -->
         <div style="display:flex;gap:12px;align-items:center;padding:8px 16px;border-bottom:1px solid var(--line);font-size:12px;">
           <label style="display:flex;align-items:center;gap:4px;">
             <span style="color:var(--text-muted);white-space:nowrap;">原视频存储:</span>
@@ -1026,21 +1026,6 @@
           <button id="remix-ai-btn" class="button button-primary" type="button" style="background: var(--indigo, #4f46e5);font-size:12px;padding:4px 12px;">AI混剪</button>
         </div>
 
-        <!-- 任务中心 -->
-        <div class="remix-history-area">
-          <div class="remix-history-head">
-            <h3>任务中心</h3>
-            <div style="display:flex;gap:8px;align-items:center;">
-              <label style="font-size:12px;display:flex;align-items:center;gap:4px;cursor:pointer;">
-                <input type="checkbox" id="remix-select-all" style="width:14px;height:14px;" />
-                全选
-              </label>
-              <button id="remix-batch-download" class="button button-secondary" type="button" style="padding:2px 10px;font-size:12px;">批量下载</button>
-              <button id="remix-refresh-tasks" class="link-btn" type="button">刷新</button>
-            </div>
-          </div>
-          <div id="remix-tasks-list" class="remix-tasks-list"></div>
-        </div>
         <div class="remix-layout">
           <!-- 左栏：达人列表 -->
           <aside class="remix-sidebar">
@@ -1057,61 +1042,86 @@
             <div id="remix-creators-list" class="remix-creators-list"></div>
           </aside>
 
-          <!-- 右栏：视频网格 + 操作栏 + 历史 -->
+          <!-- 右栏：任务中心 -->
           <div class="remix-main">
-            <div class="remix-video-area">
-              <div class="remix-video-head">
-                <div>
-                  <h3 id="remix-current-creator">视频去重与混剪工作台</h3>
-                  <p id="remix-video-count" class="muted-activity" style="font-size: 12px;">在左侧选择达人查看视频</p>
+            <!-- 任务中心 -->
+            <div class="remix-history-area">
+              <div class="remix-history-head">
+                <h3>任务中心</h3>
+                <div style="display:flex;gap:8px;align-items:center;">
+                  <label style="font-size:12px;display:flex;align-items:center;gap:4px;cursor:pointer;">
+                    <input type="checkbox" id="remix-select-all" style="width:14px;height:14px;" />
+                    全选
+                  </label>
+                  <button id="remix-batch-download" class="button button-secondary" type="button" style="padding:2px 10px;font-size:12px;">批量下载</button>
+                  <button id="remix-refresh-tasks" class="link-btn" type="button">刷新</button>
                 </div>
-                <button id="remix-add-video-btn" class="button button-secondary" type="button" disabled>添加视频</button>
               </div>
-              <div id="remix-add-video-form" class="remix-add-form hidden">
-                <input type="file" id="remix-video-file" accept="video/*" multiple class="hidden" />
-                <div class="remix-video-input-row">
-                  <input type="text" id="remix-video-url" placeholder="视频文件路径（单条添加）" />
-                  <button id="remix-upload-btn" class="button button-secondary" type="button">批量上传</button>
-                </div>
-                <input type="text" id="remix-video-title" placeholder="视频标题（可选，仅单条添加时使用）" />
-                <button id="remix-confirm-video" class="button button-primary" type="button">确认添加</button>
-                <button id="remix-cancel-video" class="button button-secondary" type="button">取消</button>
-              </div>
-              <div class="remix-video-toolbar">
-                <div class="remix-view-toggle">
-                  <button id="remix-view-grid" class="remix-view-btn active" type="button" title="网格视图">
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
-                  </button>
-                  <button id="remix-view-list" class="remix-view-btn" type="button" title="列表视图">
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="3.5" cy="6" r="1"/><circle cx="3.5" cy="12" r="1"/><circle cx="3.5" cy="18" r="1"/></svg>
-                  </button>
-                </div>
-                <div id="remix-pagination" class="remix-pagination"></div>
-              </div>
-              <div id="remix-video-grid" class="remix-video-grid">
-                <div class="empty-state compact">选择达人后显示视频</div>
-              </div>
+              <div id="remix-tasks-list" class="remix-tasks-list"></div>
             </div>
+          </div>
+        </div>
 
-            <!-- 操作栏 -->
-            <div class="remix-basket-bar">
-              <span class="muted-activity" style="font-size: 12px; flex-shrink: 0;">已选：</span>
-              <div id="remix-selected-list" class="remix-selected-list"></div>
-              <select id="remix-ratio" class="sched-check-select">
-                <option value="9:16">9:16 竖屏</option>
-                <option value="16:9">16:9 横屏</option>
-                <option value="1:1">1:1 方形</option>
-              </select>
-              <button id="remix-dedup-btn" class="button button-secondary" type="button" disabled>去重处理</button>
+        <!-- 视频工作台弹窗 -->
+        <div id="remix-workspace-modal" class="modal-overlay hidden">
+          <div class="modal-content" style="max-width:1100px;width:90vw;">
+            <div class="modal-header">
+              <h3 id="remix-current-creator">视频去重与混剪工作台</h3>
+              <button id="remix-workspace-close" class="modal-close" type="button">×</button>
             </div>
-
-            <!-- 达人专属资源 -->
-            <div class="remix-resources-area">
-              <div class="remix-resources-head">
-                <h3>达人专属资源</h3>
-                <span id="remix-resources-hint" class="muted-activity" style="font-size: 12px;">选择达人后可上传开头/结尾片段和背景音乐</span>
+            <div class="modal-body">
+              <div class="remix-video-area">
+                <div class="remix-video-head">
+                  <div>
+                    <p id="remix-video-count" class="muted-activity" style="font-size: 12px;">在左侧选择达人查看视频</p>
+                  </div>
+                  <button id="remix-add-video-btn" class="button button-secondary" type="button" disabled>添加视频</button>
+                </div>
+                <div id="remix-add-video-form" class="remix-add-form hidden">
+                  <input type="file" id="remix-video-file" accept="video/*" multiple class="hidden" />
+                  <div class="remix-video-input-row">
+                    <input type="text" id="remix-video-url" placeholder="视频文件路径（单条添加）" />
+                    <button id="remix-upload-btn" class="button button-secondary" type="button">批量上传</button>
+                  </div>
+                  <input type="text" id="remix-video-title" placeholder="视频标题（可选，仅单条添加时使用）" />
+                  <button id="remix-confirm-video" class="button button-primary" type="button">确认添加</button>
+                  <button id="remix-cancel-video" class="button button-secondary" type="button">取消</button>
+                </div>
+                <div class="remix-video-toolbar">
+                  <div class="remix-view-toggle">
+                    <button id="remix-view-grid" class="remix-view-btn active" type="button" title="网格视图">
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+                    </button>
+                    <button id="remix-view-list" class="remix-view-btn" type="button" title="列表视图">
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="3.5" cy="6" r="1"/><circle cx="3.5" cy="12" r="1"/><circle cx="3.5" cy="18" r="1"/></svg>
+                    </button>
+                  </div>
+                  <div id="remix-pagination" class="remix-pagination"></div>
+                </div>
+                <div id="remix-video-grid" class="remix-video-grid">
+                  <div class="empty-state compact">选择达人后显示视频</div>
+                </div>
               </div>
-              <div id="remix-resources-sections" class="remix-resources-sections">
+
+              <!-- 操作栏 -->
+              <div class="remix-basket-bar">
+                <span class="muted-activity" style="font-size: 12px; flex-shrink: 0;">已选：</span>
+                <div id="remix-selected-list" class="remix-selected-list"></div>
+                <select id="remix-ratio" class="sched-check-select">
+                  <option value="9:16">9:16 竖屏</option>
+                  <option value="16:9">16:9 横屏</option>
+                  <option value="1:1">1:1 方形</option>
+                </select>
+                <button id="remix-dedup-btn" class="button button-secondary" type="button" disabled>去重处理</button>
+              </div>
+
+              <!-- 达人专属资源 -->
+              <div class="remix-resources-area">
+                <div class="remix-resources-head">
+                  <h3>达人专属资源</h3>
+                  <span id="remix-resources-hint" class="muted-activity" style="font-size: 12px;">选择达人后可上传开头/结尾片段和背景音乐</span>
+                </div>
+                <div id="remix-resources-sections" class="remix-resources-sections">
                 <div class="remix-resource-section" data-type="intro">
                   <div class="remix-resource-section-head">
                     <strong>开头片段 (Intro)</strong>
@@ -1143,6 +1153,7 @@
                   <div class="remix-resource-list" id="remix-resource-list-music"></div>
                 </div>
               </div>
+            </div>
             </div>
           </div>
         </div>

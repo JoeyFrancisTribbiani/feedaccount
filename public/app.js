@@ -3215,6 +3215,8 @@ function renderRemixCreators() {
       renderRemixCreators();
       remixEl.addVideoBtn.disabled = false;
       remixEl.uploadBtns.forEach((btn) => { btn.disabled = false; });
+      // 打开视频工作台弹窗
+      document.querySelector("#remix-workspace-modal")?.classList.remove("hidden");
       remixEl.resourcesHint.textContent = "正在加载资源…";
       const c = remix.creators.find((x) => x.id === remix.selectedCreatorId);
       remixEl.currentCreator.textContent = c ? `${c.name} 的视频` : "";
@@ -3573,6 +3575,11 @@ document.querySelector("#path-config-save")?.addEventListener("click", async () 
     });
     showToast("路径配置已保存");
   } catch (e) { showToast(e.message, true); }
+});
+
+// 关闭视频工作台弹窗
+document.querySelector("#remix-workspace-close")?.addEventListener("click", () => {
+  document.querySelector("#remix-workspace-modal")?.classList.add("hidden");
 });
 
 // 达人添加
