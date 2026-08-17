@@ -1025,6 +1025,8 @@ async function downloadGeneratedImages(destDir) {
     for (var img of imgs) {
       var src = img.src;
       if (!src || src.includes('favicon') || src.includes('icon') || src.includes('avatar') || src.includes('logo')) continue;
+      // 只取大图（naturalWidth > 900），跳过缩略图
+      if (img.naturalWidth < 900) continue;
       // 从 URL 提取 file_id 去重（estuary/content?id=xxx）
       var idMatch = src.match(/[?&]id=([^&]+)/);
       var fileId = idMatch ? idMatch[1] : src;
