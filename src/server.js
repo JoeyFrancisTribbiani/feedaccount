@@ -1855,11 +1855,14 @@ export function createMonitorServer({
             sendJson(response, 200, { ok: true });
             return;
           }
+        }
 
-          // 重试任务
-          if (request.method === "POST" && pathname === `/api/remix/tasks/${encodeURIComponent(taskId)}/retry`) {
-            const origTask = store.getRemixTask(taskId);
-            if (!origTask) { sendJson(response, 404, { error: "任务不存在" }); return; }
+        // 重试任务
+        const remixRetryMatch = pathname.match(/^\/api\/remix\/tasks\/([^/]+)\/retry$/);
+        if (request.method === "POST" && remixRetryMatch) {
+          const taskId = decodeURIComponent(remixRetryMatch[1]);
+          const origTask = store.getRemixTask(taskId);
+          if (!origTask) { sendJson(response, 404, { error: "任务不存在" }); return; }
 
             // 用原任务的参数创建新任务
             const newTask = store.createRemixTask({
@@ -1947,7 +1950,6 @@ export function createMonitorServer({
             sendJson(response, 200, { ok: true, task: newTask });
             return;
           }
-        }
 
         const remixDownloadedMatch = pathname.match(/^\/api\/remix\/tasks\/([^/]+)\/downloaded$/);
         if (request.method === "POST" && remixDownloadedMatch) {
