@@ -5354,9 +5354,15 @@ modalEl.start?.addEventListener("click", async () => {
     if (mode === "ai") {
       // AI 混剪
       const cdpInstanceId = modalEl.cdpInstance.value;
-      const prompt = modalEl.aiPrompt.value.trim();
       const presetId = modalEl.aiPreset.value || null;
       if (!cdpInstanceId) { showToast("请选择 CDP 实例", true); return; }
+
+      // 从方案中获取提示词
+      let prompt = "";
+      if (presetId) {
+        const preset = aiPresets.find((p) => p.id === presetId);
+        if (preset) prompt = preset.prompt;
+      }
 
       // 检查方案变量是否都已绑定文件
       if (presetId) {
