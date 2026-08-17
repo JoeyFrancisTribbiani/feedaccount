@@ -685,15 +685,17 @@ async function handleChatGptAnalyzeVideo(taskNo, params) {
   await page.goto(CHATGPT_URL, { waitUntil: 'domcontentloaded', timeout: 15000 })
   await page.waitForTimeout(3000)
   for (let i = 0; i < 3; i++) { await dismissModal(); await page.waitForTimeout(1000) }
-  // 点击「新聊天」按钮确保是新会话
+  // 点击侧边栏「新聊天」按钮确保是新会话
   try {
-    const newChatBtn = page.locator('a[href="/"], button:has-text("New chat"), button:has-text("新对话")').first()
+    const newChatBtn = page.locator('a[href="/"], a:has-text("新聊天"), button:has-text("新聊天"), button:has-text("New chat"), [class*="__menu-item"]:has-text("新聊天")').first()
     if (await newChatBtn.count() > 0) {
       await newChatBtn.click({ timeout: 5000 })
       await page.waitForTimeout(2000)
-      log('已点击新对话按钮')
+      log('已点击新聊天按钮')
+    } else {
+      log('未找到新聊天按钮，继续...')
     }
-  } catch (e) { log('未找到新对话按钮，继续...') }
+  } catch (e) { log('点击新聊天按钮失败: ' + e.message) }
 
   taskStore.set(taskNo, { status: 'running', outputs: [], error: null, progress: '20%', startedAt: taskStore.get(taskNo).startedAt })
 
@@ -802,15 +804,17 @@ async function handleChatGptAiRemix(taskNo, params) {
   await page.goto(CHATGPT_URL, { waitUntil: 'domcontentloaded', timeout: 15000 })
   await page.waitForTimeout(3000)
   for (let i = 0; i < 3; i++) { await dismissModal(); await page.waitForTimeout(1000) }
-  // 点击「新聊天」按钮确保是新会话
+  // 点击侧边栏「新聊天」按钮确保是新会话
   try {
-    const newChatBtn = page.locator('a[href="/"], button:has-text("New chat"), button:has-text("新对话")').first()
+    const newChatBtn = page.locator('a[href="/"], a:has-text("新聊天"), button:has-text("新聊天"), button:has-text("New chat"), [class*="__menu-item"]:has-text("新聊天")').first()
     if (await newChatBtn.count() > 0) {
       await newChatBtn.click({ timeout: 5000 })
       await page.waitForTimeout(2000)
-      log('已点击新对话按钮')
+      log('已点击新聊天按钮')
+    } else {
+      log('未找到新聊天按钮，继续...')
     }
-  } catch (e) { log('未找到新对话按钮，继续...') }
+  } catch (e) { log('点击新聊天按钮失败: ' + e.message) }
 
   taskStore.set(taskNo, { status: 'running', outputs: [], error: null, progress: '15%', startedAt: taskStore.get(taskNo).startedAt })
 
