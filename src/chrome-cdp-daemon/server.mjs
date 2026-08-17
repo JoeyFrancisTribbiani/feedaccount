@@ -643,8 +643,9 @@ async function handleChatGptAnalyzeVideo(taskNo, params) {
   // 确保浏览器连接
   await ensureConnection()
 
-  // Step 0: 导航到新对话
-  log('Step 0: 导航到新对话...')
+  // Step 0: 新建标签页导航到新对话
+  log('Step 0: 新建标签页，导航到新对话...')
+  page = await context.newPage()
   await dismissModal()
   await page.goto(CHATGPT_URL, { waitUntil: 'domcontentloaded', timeout: 15000 })
   await page.waitForTimeout(3000)
@@ -750,8 +751,9 @@ async function handleChatGptAiRemix(taskNo, params) {
 
   await ensureConnection()
 
-  // Step 0: 导航到新对话
-  log('Step 0: 导航到新对话...')
+  // Step 0: 新建标签页导航到新对话
+  log('Step 0: 新建标签页，导航到新对话...')
+  page = await context.newPage()
   await dismissModal()
   await page.goto(CHATGPT_URL, { waitUntil: 'domcontentloaded', timeout: 15000 })
   await page.waitForTimeout(3000)
