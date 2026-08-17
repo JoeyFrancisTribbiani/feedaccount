@@ -813,11 +813,14 @@ export function createMonitorServer({
         for (let port = portStart; port <= portEnd; port++) {
           probes.push(
             fetch(`http://${host}:${port}/json/version`, { signal: AbortSignal.timeout(2000) })
-              .then(async (r) => {
-                const data = await r.json().catch(() => null);
-                if (data) results.push({ host, port, chromeInfo: data });
-              })
-              .catch(() => {})
+                .then(async (r) => {
+                  const data = await r.json().catch(() => null);
+                  // 只识别真正的 Chrome 调试端口（必须有 Browser 或 webSocketDebuggerUrl 字段）
+                  if (data && (data.Browser || data.webSocketDebuggerUrl)) {
+                    results.push({ host, port, chromeInfo: data });
+                  }
+                })
+                .catch(() => {})
           );
         }
         await Promise.all(probes);
