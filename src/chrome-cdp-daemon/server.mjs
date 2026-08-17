@@ -421,8 +421,8 @@ async function chatgptUploadFile(filePath, opts = {}) {
       await plusBtn.click({ timeout: 5000 })
       await page.waitForTimeout(1500)
 
-      // ChatGPT 的弹出菜单：div.popover 内的 div.__menu-item，取可见的第一个
-      const popover = page.locator('div.popover:visible, div[class~="popover"]:visible')
+      // ChatGPT 的弹出菜单：class 包含 popover 的 div，内有 __menu-item
+      const popover = page.locator('div[class*="popover"]').filter({ has: page.locator('div[class*="__menu-item"]') })
       if (await popover.count() > 0) {
         const menuItem = popover.locator('div[class*="__menu-item"]').first()
         if (await menuItem.count() > 0) {
