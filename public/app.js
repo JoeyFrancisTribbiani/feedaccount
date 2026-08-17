@@ -4025,15 +4025,16 @@ cdpEl.ngrokCheck?.addEventListener("click", refreshNgrokStatus);
 
 cdpEl.launchBtn?.addEventListener("click", async () => {
   const profilePath = cdpEl.launchPath.value.trim();
-  if (!profilePath) { showToast("请填写 Chrome profile 路径", true); return; }
+  if (!profilePath) { showToast("请填写 Chrome User Data 路径", true); return; }
   const port = cdpEl.launchPort.value || "9222";
   const proxy = cdpEl.launchProxy.value.trim() || null;
+  const profileDirectory = document.querySelector("#cdp-launch-profile-dir")?.value.trim() || null;
   cdpEl.launchBtn.disabled = true;
   cdpEl.launchBtn.textContent = "启动中…";
   cdpEl.launchResult.textContent = "";
   cdpEl.launchResult.className = "cdp-launch-result";
   try {
-    const res = await request("/api/cdp/launch-chrome", { method: "POST", body: JSON.stringify({ profilePath, port, proxy }) });
+    const res = await request("/api/cdp/launch-chrome", { method: "POST", body: JSON.stringify({ profilePath, port, proxy, profileDirectory }) });
     cdpEl.launchResult.textContent = `✓ Chrome 已启动 (PID=${res.pid}, CDP 端口 ${res.cdpPort})`;
     cdpEl.launchResult.className = "cdp-launch-result success";
     showToast(`Chrome 调试实例已启动，PID=${res.pid}`);

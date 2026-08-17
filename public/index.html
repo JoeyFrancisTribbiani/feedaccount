@@ -1156,13 +1156,18 @@
                 <li>粘贴到下方文本框中，或新建一个独立目录如 <code>C:\chrome-cdp</code></li>
               </ol>
               <p class="cdp-launch-guide-warn">⚠️ 如果使用正在使用的 Chrome profile，需先完全关闭 Chrome 再启动调试实例，否则 CDP 端口不会生效。建议使用独立的新目录。</p>
+              <p class="cdp-launch-guide-warn">⚠️ 如果要复用已有登录态：路径应填 User Data 目录（不含 <code>\Default</code> 后缀），并在下方 Profile 目录填写对应的 Profile 名称（如 <code>Default</code> 或 <code>Profile 17</code>）。复制时需复制整个 User Data 目录（含 <code>Local State</code> 文件），否则登录态会丢失。</p>
             </div>
             <div class="cdp-launch-form">
               <label class="wide-input">
-                <span>Chrome Profile 路径</span>
-                <input id="cdp-launch-path" type="text" placeholder="C:\chrome-cdp 或 C:\Users\...\Chrome\User Data\Default" />
+                <span>Chrome User Data 路径</span>
+                <input id="cdp-launch-path" type="text" placeholder="C:\chrome-cdp 或 C:\Users\...\Chrome\User Data" />
               </label>
               <div class="cdp-launch-form-row">
+                <label class="wide-input" style="flex: 0 0 140px;">
+                  <span>Profile 目录名</span>
+                  <input id="cdp-launch-profile-dir" type="text" placeholder="Default" value="Default" />
+                </label>
                 <label class="wide-input" style="flex: 0 0 120px;">
                   <span>CDP 端口</span>
                   <input id="cdp-launch-port" type="number" min="1" max="65535" value="9222" />

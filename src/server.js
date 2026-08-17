@@ -820,7 +820,7 @@ export function createMonitorServer({
       // 一键启动 Chrome 调试实例
       if (request.method === "POST" && pathname === "/api/cdp/launch-chrome") {
         const body = await readJson(request);
-        const { profilePath, port, proxy } = body;
+        const { profilePath, port, proxy, profileDirectory } = body;
         if (!profilePath) { sendJson(response, 400, { error: "请填写 Chrome profile 路径" }); return; }
         const cdpPort = Number(port) || 9222;
 
@@ -845,6 +845,9 @@ export function createMonitorServer({
           `--remote-debugging-port=${cdpPort}`,
           `--user-data-dir=${profilePath}`,
         ];
+        if (profileDirectory && profileDirectory.trim()) {
+          args.push(`--profile-directory=${profileDirectory.trim()}`);
+        }
         if (proxy) {
           args.push(`--proxy-server=${proxy}`);
         }
