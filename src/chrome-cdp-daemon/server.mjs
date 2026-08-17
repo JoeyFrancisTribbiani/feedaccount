@@ -414,23 +414,32 @@ async function chatgptUploadFile(filePath, opts = {}) {
 
   await dismissModal()
 
-  // 方式1: 点击 plus 按钮 → 点击弹出菜单第一项 → filechooser
+  // 方式1: 点击 plus 按钮 → 点击弹出菜单中"添加照片和文件" → filechooser
   try {
     const plusBtn = page.locator('button[data-testid="composer-plus-btn"]')
     if (await plusBtn.count() > 0) {
       await plusBtn.click({ timeout: 5000 })
-      await page.waitForTimeout(1000)
+      await page.waitForTimeout(1500)
 
-      // ChatGPT 的弹出菜单在 div.popover 容器内，菜单项是 div.__menu-item
-      const menuItem = page.locator('div[class*="popover"] div[class*="__menu-item"]').first()
-      if (await menuItem.count() > 0) {
-        const fileChooserPromise = page.waitForEvent('filechooser', { timeout: 10000 })
-        await menuItem.click({ timeout: 5000 })
-        const fileChooser = await fileChooserPromise
-        await fileChooser.setFiles(filePath)
-        await page.waitForTimeout(2000)
-        const attached = await page.evaluate(() => document.querySelectorAll('[class*="file-tile"]').length > 0)
-        if (attached) { log('文件已上传 (plus menu → filechooser):', filePath); return { ok: true, method: 'plus-menu-filechooser' } }
+      // 在 popover 中查找包含"添加"/"照片"/"文件"/"Add"/"Upload"文字的菜单项
+      const popover = page.locator('div.popover, [class*="z-50"][class*="popover"]')
+      if (await popover.count() > 0) {
+        // 用文字匹配菜单项
+        const menuItems = popover.locator('[class*="__menu-item"]')
+        const count = await menuItems.count()
+        for (let i = 0; i < count; i++) {
+          const text = (await menuItems.nth(i).textContent()).trim()
+          if (text.includes('添加') || text.includes('照片') || text.includes('文件') || text.includes('Add') || text.includes('Upload') || text.includes('photo')) {
+            const fileChooserPromise = page.waitForEvent('filechooser', { timeout: 10000 })
+            await menuItems.nth(i).click({ timeout: 5000 })
+            const fileChooser = await fileChooserPromise
+            await fileChooser.setFiles(filePath)
+            await page.waitForTimeout(2000)
+            const attached = await page.evaluate(() => document.querySelectorAll('[class*="file-tile"]').length > 0)
+            if (attached) { log('文件已上传 (plus menu → filechooser):', filePath); return { ok: true, method: 'plus-menu-filechooser' } }
+            break
+          }
+        }
       }
     }
   } catch (err) { if (DEBUG) log('plus 菜单方式失败:', err.message) }
@@ -442,7 +451,7 @@ async function chatgptUploadFile(filePath, opts = {}) {
       const locator = page.locator(sel)
       if (await locator.count() > 0) {
         await locator.first().setInputFiles(filePath)
-        await page.waitForTimeout(2000)
+        await page.waitForTimeout(3000)
         const attached = await page.evaluate(() => document.querySelectorAll('[class*="file-tile"]').length > 0)
         if (attached) { log('文件已上传 (setInputFiles):', filePath); return { ok: true, method: 'input-direct' } }
       }
