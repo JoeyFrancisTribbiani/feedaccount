@@ -689,7 +689,7 @@ async function handleChatGptAnalyzeVideo(taskNo, params) {
   try {
     const newChatBtn = page.locator('a[href="/"], a:has-text("新聊天"), button:has-text("新聊天"), button:has-text("New chat"), [class*="__menu-item"]:has-text("新聊天")').first()
     if (await newChatBtn.count() > 0) {
-      await newChatBtn.click({ timeout: 5000 })
+      await newChatBtn.click({ timeout: 5000, force: true })
       await page.waitForTimeout(2000)
       log('已点击新聊天按钮')
     } else {
@@ -808,7 +808,7 @@ async function handleChatGptAiRemix(taskNo, params) {
   try {
     const newChatBtn = page.locator('a[href="/"], a:has-text("新聊天"), button:has-text("新聊天"), button:has-text("New chat"), [class*="__menu-item"]:has-text("新聊天")').first()
     if (await newChatBtn.count() > 0) {
-      await newChatBtn.click({ timeout: 5000 })
+      await newChatBtn.click({ timeout: 5000, force: true })
       await page.waitForTimeout(2000)
       log('已点击新聊天按钮')
     } else {
