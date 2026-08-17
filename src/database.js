@@ -246,7 +246,18 @@ export class LocalDatabase {
         output_url TEXT,
         error_message TEXT,
         created_at TEXT NOT NULL,
-        completed_at TEXT
+        completed_at TEXT,
+        creator_id TEXT,
+        matrix_ids_json TEXT,
+        preset_id TEXT,
+        prompt TEXT,
+        intro_enabled INTEGER DEFAULT 1,
+        outro_enabled INTEGER DEFAULT 1,
+        music_enabled INTEGER DEFAULT 1,
+        intro_id TEXT,
+        outro_id TEXT,
+        music_id TEXT,
+        cdp_instance_id TEXT
       );
 
       -- 达人专属资源表（开头片段 / 结尾片段 / 背景音乐）
@@ -1824,19 +1835,28 @@ export class LocalDatabase {
   }
 
   // --- Remix 任务管理 ---
-  createRemixTask({ title, mode, videoUrls, sourceVideos = null, ratio = "9:16" }) {
+  createRemixTask({ title, mode, videoUrls, sourceVideos = null, ratio = "9:16", creatorId = null, matrixIds = null, presetId = null, prompt = null, introEnabled = true, outroEnabled = true, musicEnabled = true, introId = null, outroId = null, musicId = null, cdpInstanceId = null }) {
     const id = `rt_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     const ts = nowIso();
     this.db.prepare(`
-      INSERT INTO remix_tasks (id, title, status, mode, video_urls_json, source_videos_json, video_count, ratio, created_at)
-      VALUES (?, ?, 'PENDING', ?, ?, ?, ?, ?, ?)
-    `).run(id, title, mode, JSON.stringify(videoUrls), sourceVideos ? JSON.stringify(sourceVideos) : null, videoUrls.length, ratio, ts);
+      INSERT INTO remix_tasks (id, title, status, mode, video_urls_json, source_videos_json, video_count, ratio, created_at, creator_id, matrix_ids_json, preset_id, prompt, intro_enabled, outro_enabled, music_enabled, intro_id, outro_id, music_id, cdp_instance_id)
+      VALUES (?, ?, 'PENDING', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, title, mode, JSON.stringify(videoUrls), sourceVideos ? JSON.stringify(sourceVideos) : null, videoUrls.length, ratio, ts, creatorId, matrixIds ? JSON.stringify(matrixIds) : null, presetId, prompt, introEnabled ? 1 : 0, outroEnabled ? 1 : 0, musicEnabled ? 1 : 0, introId, outroId, musicId, cdpInstanceId);
     return this.getRemixTask(id);
   }
 
   listRemixTasks() {
     const rows = this.db.prepare(`SELECT * FROM remix_tasks ORDER BY created_at DESC`).all();
-    return rows.map((r) => ({
+    return rows.map((r) => this.#mapRemixTask(r));
+  }
+
+  getRemixTask(id) {
+    const row = this.db.prepare(`SELECT * FROM remix_tasks WHERE id = ?`).get(id);
+    return row ? this.#mapRemixTask(row) : null;
+  }
+
+  #mapRemixTask(r) {
+    return {
       id: r.id, title: r.title, status: r.status, mode: r.mode,
       videoUrls: parseJson(r.video_urls_json, []),
       sourceVideos: parseJson(r.source_videos_json, null),
@@ -1844,20 +1864,18 @@ export class LocalDatabase {
       outputUrl: r.output_url, errorMessage: r.error_message,
       downloaded: Boolean(r.downloaded),
       createdAt: r.created_at, completedAt: r.completed_at,
-    }));
-  }
-
-  getRemixTask(id) {
-    const row = this.db.prepare(`SELECT * FROM remix_tasks WHERE id = ?`).get(id);
-    return row ? {
-      id: row.id, title: row.title, status: row.status, mode: row.mode,
-      videoUrls: parseJson(row.video_urls_json, []),
-      sourceVideos: parseJson(row.source_videos_json, null),
-      videoCount: Number(row.video_count), ratio: row.ratio,
-      outputUrl: row.output_url, errorMessage: row.error_message,
-      downloaded: Boolean(row.downloaded),
-      createdAt: row.created_at, completedAt: row.completed_at,
-    } : null;
+      creatorId: r.creator_id || null,
+      matrixIds: parseJson(r.matrix_ids_json, null),
+      presetId: r.preset_id || null,
+      prompt: r.prompt || null,
+      introEnabled: r.intro_enabled !== 0,
+      outroEnabled: r.outro_enabled !== 0,
+      musicEnabled: r.music_enabled !== 0,
+      introId: r.intro_id || null,
+      outroId: r.outro_id || null,
+      musicId: r.music_id || null,
+      cdpInstanceId: r.cdp_instance_id || null,
+    };
   }
 
   markRemixTaskDownloaded(id) {

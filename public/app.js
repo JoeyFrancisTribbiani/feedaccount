@@ -3508,6 +3508,7 @@ function renderRemixTasks() {
         </div>
         <div class="remix-task-actions">
           <button class="button button-secondary task-log-btn" data-task-id="${escapeHtml(t.id)}" style="font-size: 11px; padding:2px 8px;">日志</button>
+          ${(t.status === "FAILED" || t.status === "DONE") ? `<button class="button button-secondary task-retry-btn" data-task-id="${escapeHtml(t.id)}" style="font-size: 11px; padding:2px 8px;">重试</button>` : ""}
           ${t.status === "DONE" && t.outputUrl ? `<a href="${escapeHtml(t.outputUrl)}" target="_blank" class="button button-secondary" style="font-size: 11px;">预览</a>` : ""}
           ${t.status === "DONE" && t.outputUrl ? `<a href="${escapeHtml(t.outputUrl)}" download data-task-id="${escapeHtml(t.id)}" data-out-url="${escapeHtml(t.outputUrl)}" class="button button-primary" style="font-size: 11px;">${t.downloaded ? "已下载 ✓" : "下载"}</a>` : ""}
           <button class="remix-del-task" data-del-task="${escapeHtml(t.id)}" style="color: #dc2626; background: none; border: none; cursor: pointer; font-size: 16px;">×</button>
@@ -3524,6 +3525,17 @@ function renderRemixTasks() {
   // 日志按钮
   remixEl.tasksList.querySelectorAll(".task-log-btn").forEach((btn) => {
     btn.addEventListener("click", () => openTaskLogModal(btn.dataset.taskId));
+  });
+  // 重试按钮
+  remixEl.tasksList.querySelectorAll(".task-retry-btn").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      try {
+        showToast("正在重试任务...");
+        await request(`/api/remix/tasks/${encodeURIComponent(btn.dataset.taskId)}/retry`, { method: "POST", body: "{}" });
+        showToast("任务已重新提交");
+        await fetchRemixTasks();
+      } catch (e) { showToast(e.message, true); }
+    });
   });
   bindRemixDownloadLinks(remixEl.tasksList);
 }

@@ -1594,6 +1594,8 @@ export function createMonitorServer({
               title, mode: "ai-remix", videoUrls: [video.url],
               sourceVideos: [{ url: video.url, title: video.title, creatorName: store.getRemixCreator(creatorId)?.name || "" }],
               ratio: ratio || "9:16",
+              creatorId, matrixIds, presetId, prompt,
+              cdpInstanceId,
             });
 
             // AI混剪只上传原视频，方案绑定的文件用于后续拼接不上传给ChatGPT
@@ -1643,6 +1645,9 @@ export function createMonitorServer({
               title, mode: "matrix-remix", videoUrls: [video.url],
               sourceVideos: [{ url: video.url, title: video.title, creatorName: store.getRemixCreator(creatorId)?.name || "" }],
               ratio: ratio || "9:16",
+              creatorId, matrixIds,
+              introEnabled, outroEnabled, musicEnabled,
+              introId: introId || null, outroId: outroId || null, musicId: musicId || null,
             });
             // 解析本地文件路径
             const resolveLocal = (url) => {
@@ -1824,6 +1829,98 @@ export function createMonitorServer({
           if (request.method === "DELETE") {
             store.deleteRemixTask(taskId);
             sendJson(response, 200, { ok: true });
+            return;
+          }
+
+          // 重试任务
+          if (request.method === "POST" && pathname === `/api/remix/tasks/${encodeURIComponent(taskId)}/retry`) {
+            const origTask = store.getRemixTask(taskId);
+            if (!origTask) { sendJson(response, 404, { error: "任务不存在" }); return; }
+
+            // 用原任务的参数创建新任务
+            const newTask = store.createRemixTask({
+              title: origTask.title + " (重试)",
+              mode: origTask.mode,
+              videoUrls: origTask.videoUrls,
+              sourceVideos: origTask.sourceVideos,
+              ratio: origTask.ratio,
+              creatorId: origTask.creatorId,
+              matrixIds: origTask.matrixIds,
+              presetId: origTask.presetId,
+              prompt: origTask.prompt,
+              introEnabled: origTask.introEnabled,
+              outroEnabled: origTask.outroEnabled,
+              musicEnabled: origTask.musicEnabled,
+              introId: origTask.introId,
+              outroId: origTask.outroId,
+              musicId: origTask.musicId,
+              cdpInstanceId: origTask.cdpInstanceId,
+            });
+
+            if (origTask.mode === "ai-remix") {
+              // AI 混剪重试
+              const inst = origTask.cdpInstanceId ? store.getChromeInstance(origTask.cdpInstanceId) : null;
+              const daemonUrl = inst ? (inst.ngrokUrl || `http://${inst.cdpHost}:${inst.daemonPort}`) : null;
+              if (!daemonUrl) { sendJson(response, 400, { error: "CDP 实例不存在" }); return; }
+
+              const mainVideoLocalPath = (url) => {
+                if (url.startsWith("/data/remix-videos/")) return path.resolve(THIS_DIR, "..", "data", "remix-videos", path.basename(url));
+                if (url.startsWith("/data/remix-output/")) return path.resolve(THIS_DIR, "..", "data", "remix-output", path.basename(url));
+                return url;
+              };
+              const filesToUpload = [mainVideoLocalPath(origTask.videoUrls[0])];
+
+              aiRemixQueue.push({
+                taskId: newTask.id, daemonUrl, filesToUpload,
+                prompt: origTask.prompt || "",
+                matrixIds: origTask.matrixIds || [],
+                creatorId: origTask.creatorId,
+                sourceVideoId: null,
+                videoTitle: origTask.title,
+                presetId: origTask.presetId,
+                mainVideoLocalPath: filesToUpload[0],
+              });
+              processAiRemixQueue();
+            } else {
+              // 拼接混剪重试
+              const resolveLocal = (url) => {
+                if (url.startsWith("/data/remix-videos/")) return path.resolve(THIS_DIR, "..", "data", "remix-videos", path.basename(url));
+                if (url.startsWith("/data/remix-output/")) return path.resolve(THIS_DIR, "..", "data", "remix-output", path.basename(url));
+                return url;
+              };
+              const localPaths = origTask.videoUrls.map(resolveLocal);
+
+              // 重新选取资源
+              const resources = origTask.creatorId ? store.listRemixResources(origTask.creatorId) : [];
+              const intros = resources.filter(r => r.type === "intro");
+              const outros = resources.filter(r => r.type === "outro");
+              const musics = resources.filter(r => r.type === "music");
+              const resolveResource = (fp) => fp ? path.resolve(THIS_DIR, "..", fp.replace(/^\//, "")) : null;
+              const pickResource = (list, selectedId, enabled) => {
+                if (!enabled || selectedId === "none") return null;
+                if (selectedId && list.length) {
+                  const found = list.find(r => r.id === selectedId);
+                  if (found) return resolveResource(found.filePath);
+                }
+                return list.length ? resolveResource(list[Math.floor(Math.random() * list.length)].filePath) : null;
+              };
+              const introPath = pickResource(intros, origTask.introId, origTask.introEnabled);
+              const outroPath = pickResource(outros, origTask.outroId, origTask.outroEnabled);
+              const musicPath = pickResource(musics, origTask.musicId, origTask.musicEnabled);
+
+              remixQueue.push({
+                taskId: newTask.id, localPaths, mode: origTask.mode,
+                ratio: origTask.ratio, preset: "medium",
+                matrixIds: origTask.matrixIds || [],
+                creatorId: origTask.creatorId,
+                sourceVideoId: null,
+                videoTitle: origTask.title,
+                introPath, outroPath, musicPath,
+              });
+              processRemixQueue();
+            }
+
+            sendJson(response, 200, { ok: true, task: newTask });
             return;
           }
         }
