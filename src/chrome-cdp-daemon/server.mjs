@@ -417,13 +417,16 @@ async function chatgptUploadFile(filePath, opts = {}) {
   // 方式1: 直接用 setInputFiles 操作 input#upload-files
   try {
     const fileInput = page.locator('input#upload-files')
-    if (await fileInput.count() > 0) {
-      await fileInput.setInputFiles(filePath)
+    const inputCount = await fileInput.count()
+    log(`input#upload-files 找到 ${inputCount} 个`)
+    if (inputCount > 0) {
+      await fileInput.first().setInputFiles(filePath)
       await page.waitForTimeout(3000)
       const attached = await page.evaluate(() => document.querySelectorAll('[class*="file-tile"]').length > 0)
+      log(`setInputFiles 完成, attached=${attached}`)
       if (attached) { log('文件已上传 (input#upload-files):', filePath); return { ok: true, method: 'input-direct' } }
     }
-  } catch (err) { if (DEBUG) log('setInputFiles 方式失败:', err.message) }
+  } catch (err) { log('setInputFiles 方式失败: ' + err.message) }
 
   // 方式2: 点击 plus 按钮 → 点击"添加照片和文件"菜单项 → filechooser
   try {
