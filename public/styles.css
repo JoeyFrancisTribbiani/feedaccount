@@ -2974,9 +2974,10 @@ footer span {
 
 .remix-history-area {
   border-top: 1px solid var(--line);
-  padding: 16px 24px;
-  max-height: 240px;
-  overflow-y: auto;
+  padding: 0 24px 16px;
+  display: flex;
+  flex-direction: column;
+  max-height: 960px;
 }
 
 .remix-history-head {
@@ -2984,6 +2985,11 @@ footer span {
   align-items: center;
   justify-content: space-between;
   margin-bottom: 10px;
+  padding-top: 16px;
+  position: sticky;
+  top: 0;
+  background: var(--bg, #fff);
+  z-index: 10;
 }
 
 .remix-history-head h3 {
@@ -2999,6 +3005,8 @@ footer span {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  overflow-y: auto;
+  flex: 1;
 }
 
 .remix-task-item {

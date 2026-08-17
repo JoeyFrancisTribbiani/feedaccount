@@ -3505,7 +3505,6 @@ function renderRemixTasks() {
           <strong>${escapeHtml(t.title)}</strong>
           ${statusBadge}
           <span class="muted-activity" style="font-size: 11px;">${t.videoCount}视频 · ${escapeHtml(t.ratio)} · ${formatDateTime(t.createdAt)}</span>
-          ${t.errorMessage ? `<span style="color: #dc2626; font-size: 11px;">${escapeHtml(t.errorMessage)}</span>` : ""}
         </div>
         <div class="remix-task-actions">
           <button class="button button-secondary task-log-btn" data-task-id="${escapeHtml(t.id)}" style="font-size: 11px; padding:2px 8px;">日志</button>
