@@ -4361,6 +4361,17 @@ footer span {
   color: var(--text-secondary, #475569);
   margin-bottom: 8px;
 }
+.preset-config-title label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+.preset-config-title label input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+}
 .preset-config-row {
   display: flex;
   flex-wrap: wrap;
