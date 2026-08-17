@@ -4818,11 +4818,16 @@ async function fetchAiPresets() {
 function renderAiPresetSelect() {
   if (!modalEl.aiPreset) return;
   if (!aiPresets.length) {
-    modalEl.aiPreset.innerHTML = '<option value="">无方案（手动输入提示词）</option>';
+    modalEl.aiPreset.innerHTML = '<option value="">无方案</option>';
     return;
   }
   modalEl.aiPreset.innerHTML = '<option value="">— 选择方案 —</option>' +
     aiPresets.map((p) => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)}${p.isDefault ? " ★" : ""}${p.files?.length ? ` (${p.files.length}文件)` : ""}</option>`).join("");
+  // 默认选中 isDefault 方案
+  const defaultPreset = aiPresets.find((p) => p.isDefault);
+  if (defaultPreset) {
+    modalEl.aiPreset.value = defaultPreset.id;
+  }
 }
 
 // 解析提示词中的 {{变量名}} 占位符
