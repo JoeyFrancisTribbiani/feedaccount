@@ -487,12 +487,13 @@ async function normalizeSegment(inputPath, outputPath, mainVideoMeta, ratio = nu
   await runFfmpeg(args);
 }
 
-/** 将背景音乐混入视频，音乐音量 8% */
-async function mixBackgroundMusic(videoPath, musicPath, outputPath) {
+/** 将背景音乐混入视频 */
+async function mixBackgroundMusic(videoPath, musicPath, outputPath, volumePercent = 8) {
   const videoMeta = await probeVideo(videoPath);
   const musicMeta = await probeVideo(musicPath);
   const duration = videoMeta?.duration || 0;
   const hasVideoAudio = videoMeta?.hasAudio;
+  const musicVol = (volumePercent / 100).toFixed(2);
 
   const args = [
     "-err_detect", "ignore_err",
@@ -504,14 +505,14 @@ async function mixBackgroundMusic(videoPath, musicPath, outputPath) {
   if (hasVideoAudio) {
     args.push(
       "-filter_complex",
-      `[0:a]volume=1.0[a0];[1:a]volume=0.08,atrim=duration=${duration.toFixed(3)}[a1];[a0][a1]amix=inputs=2:duration=first:dropout_transition=0[aout]`,
+      `[0:a]volume=1.0[a0];[1:a]volume=${musicVol},atrim=duration=${duration.toFixed(3)}[a1];[a0][a1]amix=inputs=2:duration=first:dropout_transition=0[aout]`,
       "-map", "0:v", "-map", "[aout]",
     );
   } else {
     // 视频没有原声音轨，只有背景音乐
     args.push(
       "-filter_complex",
-      `[1:a]volume=0.08,atrim=duration=${duration.toFixed(3)}[aout]`,
+      `[1:a]volume=${musicVol},atrim=duration=${duration.toFixed(3)}[aout]`,
       "-map", "0:v", "-map", "[aout]",
     );
   }
@@ -626,7 +627,7 @@ export async function composeAiRemixVideo(mainVideoPath, imagePaths, config = {}
     const musicPath = musicConfig.segmentFilePath ? resolveLocal(musicConfig.segmentFilePath) : null;
 
     if (musicConfig.enabled !== false && musicPath && existsSync(musicPath) && musicConfig.scope !== "none") {
-      await mixBackgroundMusic(concatenatedPath, musicPath, outputPath);
+      await mixBackgroundMusic(concatenatedPath, musicPath, outputPath, musicConfig.volumePercent ?? 8);
     } else {
       const { copyFile } = await import("node:fs/promises");
       await copyFile(concatenatedPath, outputPath);
