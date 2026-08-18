@@ -386,22 +386,41 @@ async function chatgptSendMessage(text, opts = {}) {
 
   await page.waitForTimeout(500)
 
-  const sendSel = 'button[aria-label="发送提示"], button[aria-label="Send"], button[data-testid="send-button"]'
+  const sendSel = 'button[aria-label="发送提示"], button[aria-label="Send"], button[aria-label="发送"], button[data-testid="send-button"]'
   let sent = false
   for (let attempt = 0; attempt < 15; attempt++) {
     try {
       const state = await page.evaluate(() => {
-        const selectors = ['button[aria-label="发送提示"]', 'button[aria-label="Send"]', 'button[data-testid="send-button"]']
+        // 先用 aria-label 匹配
+        const selectors = ['button[aria-label="发送提示"]', 'button[aria-label="Send"]', 'button[aria-label="发送"]', 'button[data-testid="send-button"]']
         for (const sel of selectors) {
           const btn = document.querySelector(sel)
-          if (btn) return { found: true, disabled: btn.disabled, visible: btn.offsetParent !== null }
+          if (btn) return { found: true, disabled: btn.disabled, visible: btn.offsetParent !== null, sel }
+        }
+        // 再用 composer-submit-button class 匹配（排除 stop-button）
+        const submitBtns = document.querySelectorAll('button[class*="composer-submit-button"]')
+        for (const btn of submitBtns) {
+          if (btn.dataset.testid === 'stop-button') continue // 跳过停止按钮
+          if (btn.offsetParent !== null) return { found: true, disabled: btn.disabled, visible: true, sel: 'button[class*="composer-submit-button"]:not([data-testid="stop-button"])' }
         }
         return { found: false }
       })
       if (state.found && !state.disabled && state.visible) {
-        await page.click(sendSel.split(',')[0].trim(), { timeout: 5000 })
+        // 用 evaluate 直接点击
+        await page.evaluate(() => {
+          const selectors = ['button[aria-label="发送提示"]', 'button[aria-label="Send"]', 'button[aria-label="发送"]', 'button[data-testid="send-button"]']
+          for (const sel of selectors) {
+            const btn = document.querySelector(sel)
+            if (btn && !btn.disabled) { btn.click(); return }
+          }
+          const submitBtns = document.querySelectorAll('button[class*="composer-submit-button"]')
+          for (const btn of submitBtns) {
+            if (btn.dataset.testid === 'stop-button') continue
+            if (btn.offsetParent !== null && !btn.disabled) { btn.click(); return }
+          }
+        })
         sent = true
-        log('消息已通过 Playwright click 发送')
+        log('消息已通过发送按钮发送')
         break
       } else if (state.found && state.disabled) {
         await page.waitForTimeout(1000)
@@ -414,10 +433,17 @@ async function chatgptSendMessage(text, opts = {}) {
     }
   }
   if (!sent) {
+    // 后备: 用 Ctrl+Enter 提交（ChatGPT 快捷键）
     await page.click(inputSel)
     await page.waitForTimeout(100)
-    await page.keyboard.press('Enter')
-    log('消息已通过 Enter 键发送（后备）')
+    await page.keyboard.press('Control+Enter')
+    await page.waitForTimeout(500)
+    // 如果 Ctrl+Enter 也不行，再试普通 Enter
+    const stillGenerating = await isStillGenerating().catch(() => false)
+    if (!stillGenerating) {
+      await page.keyboard.press('Enter')
+    }
+    log('消息已通过快捷键发送（后备）')
   }
   log('消息已发送:', text.slice(0, 80) + (text.length > 80 ? '...' : ''))
   return { ok: true }
