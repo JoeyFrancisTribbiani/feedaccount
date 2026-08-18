@@ -5279,12 +5279,45 @@ function renderPresetList() {
         <span class="preset-item-prompt">${escapeHtml(p.prompt.slice(0, 80))}${p.prompt.length > 80 ? "…" : ""}</span>
       </div>
       <div class="preset-item-actions">
+        <button class="button button-secondary" data-copy="${escapeHtml(p.id)}" type="button" style="font-size:11px;padding:2px 8px;">复制</button>
         <button class="button button-secondary" data-edit="${escapeHtml(p.id)}" type="button" style="font-size:11px;padding:2px 8px;">编辑</button>
         <button class="danger-button" data-del="${escapeHtml(p.id)}" type="button" style="font-size:11px;padding:2px 6px;">删除</button>
       </div>
     </div>
   `).join("");
 
+  presetModalEl.list.querySelectorAll("[data-copy]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const preset = aiPresets.find((p) => p.id === btn.dataset.copy);
+      if (!preset) return;
+      // 复制方案：创建新方案，名称加"(副本)"
+      try {
+        const created = await request("/api/ai-presets", {
+          method: "POST",
+          body: JSON.stringify({
+            name: preset.name + " (副本)",
+            prompt: preset.prompt,
+            isDefault: false,
+            introConfig: preset.introConfig || null,
+            outroConfig: preset.outroConfig || null,
+            musicConfig: preset.musicConfig || null,
+          }),
+        });
+        // 复制绑定的文件
+        if (preset.files?.length) {
+          for (const f of preset.files) {
+            await request(`/api/ai-presets/${encodeURIComponent(created.id)}/files`, {
+              method: "POST",
+              body: JSON.stringify({ varName: f.varName, filePath: f.filePath, filename: f.filename }),
+            });
+          }
+        }
+        showToast("方案已复制");
+        await fetchAiPresets();
+        renderPresetList();
+      } catch (e) { showToast(e.message, true); }
+    });
+  });
   presetModalEl.list.querySelectorAll("[data-edit]").forEach((btn) => {
     btn.addEventListener("click", () => {
       const preset = aiPresets.find((p) => p.id === btn.dataset.edit);
