@@ -565,7 +565,7 @@ export async function composeAiRemixVideo(mainVideoPath, imagePaths, config = {}
 
         const introProcessed = await overlayImagesOnVideo(
           introPath, introImages, introInsertStart, introImgDuration,
-          targetW, targetH, mainMeta.fps, id, "intro", tempPaths, introConfig.effect || "none"
+          targetW, targetH, mainMeta.fps, id, "intro", tempPaths, introConfig.effect || "none", introConfig.volumePercent ?? 100
         );
         segments.push(introProcessed);
       }
@@ -586,7 +586,7 @@ export async function composeAiRemixVideo(mainVideoPath, imagePaths, config = {}
 
         const outroProcessed = await overlayImagesOnVideo(
           outroPath, outroImages, outroInsertStart, outroImgDuration,
-          targetW, targetH, mainMeta.fps, id, "outro", tempPaths, outroConfig.effect || "none"
+          targetW, targetH, mainMeta.fps, id, "outro", tempPaths, outroConfig.effect || "none", outroConfig.volumePercent ?? 100
         );
         segments.push(outroProcessed);
       }
@@ -648,16 +648,17 @@ export async function composeAiRemixVideo(mainVideoPath, imagePaths, config = {}
  *
  * @returns {Promise<string>} 处理后的视频路径
  */
-async function overlayImagesOnVideo(videoPath, imagePaths, insertStart, imgDuration, targetW, targetH, fps, id, label, tempPaths, effect = "none") {
+async function overlayImagesOnVideo(videoPath, imagePaths, insertStart, imgDuration, targetW, targetH, fps, id, label, tempPaths, effect = "none", volumePercent = 100) {
   const videoMeta = await probeVideo(videoPath);
   if (!videoMeta) throw new Error(`无法读取${label}视频信息`);
 
-  // 先归一化视频到目标分辨率
+  // 先归一化视频到目标分辨率，应用音量
   const normalizedPath = path.join(TEMP_DIR, `ai_${label}_norm_${id}.mp4`);
+  const volumeFilter = volumePercent !== 100 ? `,volume=${(volumePercent / 100).toFixed(2)}` : "";
   await runFfmpeg([
     "-err_detect", "ignore_err",
     "-i", videoPath,
-    "-vf", `scale=${targetW}:${targetH}:flags=bicubic,format=yuv420p,fps=${Math.round(fps)}`,
+    "-vf", `scale=${targetW}:${targetH}:flags=bicubic,format=yuv420p,fps=${Math.round(fps)}${volumeFilter}`,
     "-c:v", "libx264", "-crf", "23", "-preset", "veryfast",
     "-c:a", "aac", "-b:a", "128k",
     "-pix_fmt", "yuv420p", "-movflags", "+faststart",

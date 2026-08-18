@@ -4990,6 +4990,7 @@ function openPresetEditModal(preset) {
             <div class="preset-config-row">
               <label>图片动效 <select id="preset-intro-effect">${EFFECTS}</select></label>
               <label>正片切换转场 <select id="preset-intro-transition">${TRANSITIONS}</select></label>
+              <label>片段音量 <input type="number" id="preset-intro-volume" min="0" max="100" value="100" style="width:50px;" />%</label>
               <label>片头片段文件 <input type="file" id="preset-intro-file" accept="video/*" /></label>
             </div>
             <span id="preset-intro-file-info" class="preset-file-info"></span>
@@ -5004,6 +5005,7 @@ function openPresetEditModal(preset) {
             <div class="preset-config-row">
               <label>图片动效 <select id="preset-outro-effect">${EFFECTS}</select></label>
               <label>正片切换转场 <select id="preset-outro-transition">${TRANSITIONS}</select></label>
+              <label>片段音量 <input type="number" id="preset-outro-volume" min="0" max="100" value="100" style="width:50px;" />%</label>
               <label>片尾片段文件 <input type="file" id="preset-outro-file" accept="video/*" /></label>
             </div>
             <span id="preset-outro-file-info" class="preset-file-info"></span>
@@ -5050,6 +5052,7 @@ function openPresetEditModal(preset) {
   presetModalEl.introDuration = overlay.querySelector("#preset-intro-duration");
   presetModalEl.introEffect = overlay.querySelector("#preset-intro-effect");
   presetModalEl.introTransition = overlay.querySelector("#preset-intro-transition");
+  presetModalEl.introVolume = overlay.querySelector("#preset-intro-volume");
   presetModalEl.introEnabled = overlay.querySelector("#preset-intro-enabled");
   presetModalEl.introFile = overlay.querySelector("#preset-intro-file");
   presetModalEl.introFileInfo = overlay.querySelector("#preset-intro-file-info");
@@ -5058,6 +5061,7 @@ function openPresetEditModal(preset) {
   presetModalEl.outroDuration = overlay.querySelector("#preset-outro-duration");
   presetModalEl.outroEffect = overlay.querySelector("#preset-outro-effect");
   presetModalEl.outroTransition = overlay.querySelector("#preset-outro-transition");
+  presetModalEl.outroVolume = overlay.querySelector("#preset-outro-volume");
   presetModalEl.outroEnabled = overlay.querySelector("#preset-outro-enabled");
   presetModalEl.outroFile = overlay.querySelector("#preset-outro-file");
   presetModalEl.outroFileInfo = overlay.querySelector("#preset-outro-file-info");
@@ -5125,6 +5129,7 @@ function collectPresetConfig() {
     imageDuration: timecodeToSeconds(presetModalEl.introDuration?.value),
     effect: presetModalEl.introEffect?.value || "none",
     transition: presetModalEl.introTransition?.value || "none",
+    volumePercent: parseInt(presetModalEl.introVolume?.value) ?? 100,
     segmentFilePath: pendingSegmentFiles.intro ? pendingSegmentFiles.intro.filePath : null,
   };
   const outroConfig = {
@@ -5134,6 +5139,7 @@ function collectPresetConfig() {
     imageDuration: timecodeToSeconds(presetModalEl.outroDuration?.value),
     effect: presetModalEl.outroEffect?.value || "none",
     transition: presetModalEl.outroTransition?.value || "none",
+    volumePercent: parseInt(presetModalEl.outroVolume?.value) ?? 100,
     segmentFilePath: pendingSegmentFiles.outro ? pendingSegmentFiles.outro.filePath : null,
   };
   const musicConfig = {
@@ -5156,11 +5162,13 @@ function fillPresetConfigForm(preset) {
   if (presetModalEl.introDuration) presetModalEl.introDuration.value = secondsToTimecode(ic.imageDuration ?? 0.4);
   if (presetModalEl.introEffect) presetModalEl.introEffect.value = ic.effect || "none";
   if (presetModalEl.introTransition) presetModalEl.introTransition.value = ic.transition || "none";
+  if (presetModalEl.introVolume) presetModalEl.introVolume.value = ic.volumePercent ?? 100;
   if (presetModalEl.outroStart) presetModalEl.outroStart.value = secondsToTimecode(oc.imageInsertStart ?? 0);
   if (presetModalEl.outroCount) presetModalEl.outroCount.value = oc.imageCount ?? 4;
   if (presetModalEl.outroDuration) presetModalEl.outroDuration.value = secondsToTimecode(oc.imageDuration ?? 5);
   if (presetModalEl.outroEffect) presetModalEl.outroEffect.value = oc.effect || "none";
   if (presetModalEl.outroTransition) presetModalEl.outroTransition.value = oc.transition || "none";
+  if (presetModalEl.outroVolume) presetModalEl.outroVolume.value = oc.volumePercent ?? 100;
   if (presetModalEl.outroEnabled) presetModalEl.outroEnabled.checked = oc.enabled !== false;
   if (presetModalEl.musicVolume) presetModalEl.musicVolume.value = mc.volumePercent ?? 8;
   if (presetModalEl.musicScope) presetModalEl.musicScope.value = mc.scope || "original";
