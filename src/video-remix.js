@@ -654,11 +654,12 @@ async function overlayImagesOnVideo(videoPath, imagePaths, insertStart, imgDurat
 
   // 先归一化视频到目标分辨率，应用音量
   const normalizedPath = path.join(TEMP_DIR, `ai_${label}_norm_${id}.mp4`);
-  const volumeFilter = volumePercent !== 100 ? `,volume=${(volumePercent / 100).toFixed(2)}` : "";
+  const afArgs = volumePercent !== 100 ? ["-af", `volume=${(volumePercent / 100).toFixed(2)}`] : [];
   await runFfmpeg([
     "-err_detect", "ignore_err",
     "-i", videoPath,
-    "-vf", `scale=${targetW}:${targetH}:flags=bicubic,format=yuv420p,fps=${Math.round(fps)}${volumeFilter}`,
+    "-vf", `scale=${targetW}:${targetH}:flags=bicubic,format=yuv420p,fps=${Math.round(fps)}`,
+    ...afArgs,
     "-c:v", "libx264", "-crf", "23", "-preset", "veryfast",
     "-c:a", "aac", "-b:a", "128k",
     "-pix_fmt", "yuv420p", "-movflags", "+faststart",
