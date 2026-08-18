@@ -4801,7 +4801,7 @@ function renderModalVideos() {
     const checked = modalState.selectedVideoIds.has(v.id);
     const thumb = `<video src="${escapeHtml(v.url)}#t=0.1" muted preload="metadata" class="modal-video-thumb"></video>`;
     const title = escapeHtml(v.title || "未命名");
-    const matrixInfo = v.matrixLinks?.length ? `<span class="muted-activity" style="font-size: 10px;">已链接${v.matrixLinks.length}个矩阵</span>` : "";
+    const matrixInfo = v.matrixLinks?.length ? `<span class="matrix-link-info">已链接${v.matrixLinks.length}个矩阵</span>` : "";
     const checkbox = `<input type="checkbox" value="${escapeHtml(v.id)}" ${checked ? "checked" : ""} />`;
 
     if (isList) {

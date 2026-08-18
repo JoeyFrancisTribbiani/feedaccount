@@ -4090,33 +4090,33 @@ footer span {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  max-height: 240px;
+  max-height: 720px;
   overflow-y: auto;
 }
 
 /* 网格视图 */
 .modal-video-grid-view {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 15px;
 }
 .modal-video-card {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 4px;
-  padding: 8px;
+  padding: 12px;
   text-align: center;
 }
 .modal-video-card .modal-video-thumb {
   width: 100%;
-  height: 80px;
+  height: 120px;
   object-fit: cover;
   border-radius: 6px;
   background: #000;
 }
 .modal-video-card-title {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 500;
   line-height: 1.3;
   word-break: break-all;
@@ -4492,3 +4492,20 @@ footer span {
   text-overflow: ellipsis;
 }
 
+/* 混剪任务弹框尺寸 */
+#remix-task-modal .modal-content {
+  max-width: 80vw;
+  width: 80vw;
+  max-height: 80vh;
+}
+#remix-task-modal .modal-body {
+  max-height: calc(80vh - 50px);
+  overflow-y: auto;
+}
+/* 矩阵链接信息：深绿色、去间距 */
+.modal-video-card .matrix-link-info {
+  color: #15803d;
+  font-size: 10px;
+  margin: 0;
+  line-height: 1.2;
+}
