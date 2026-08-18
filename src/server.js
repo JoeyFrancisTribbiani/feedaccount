@@ -371,7 +371,7 @@ export function createMonitorServer({
     if (remixProcessing) return;
     remixProcessing = true;
     while (remixQueue.length > 0) {
-      const { taskId, localPaths, mode, ratio, preset, matrixIds, creatorId, sourceVideoId, videoTitle, introPath, outroPath, musicPath, introVolume = 100, outroVolume = 100, musicVolume = 8 } = remixQueue.shift();
+      const { taskId, localPaths, mode, ratio, preset, matrixIds, creatorId, sourceVideoId, videoTitle, introPath, outroPath, musicPath, introVolume = 100, outroVolume = 100, musicVolume = 8, dedup = true } = remixQueue.shift();
       store.updateRemixTask(taskId, { status: "PROCESSING" });
       try {
         const opts = preset ? { preset: DEDUP_PRESETS[preset] || DEDUP_PRESETS.medium } : {};
@@ -380,7 +380,7 @@ export function createMonitorServer({
           // 新混剪流程：去重 → 拼接 intro+dedup+outro → 叠加背景音乐
           store.logCdpEvent(null, "info", `开始混剪: ${videoTitle || "未命名"}`, null, taskId);
           store.logCdpEvent(null, "info", `片头=${introPath ? "有" : "无"}, 片尾=${outroPath ? "有" : "无"}, 音乐=${musicPath ? "有" : "无"}`, null, taskId);
-          const out = await remixVideoWithResources(localPaths[0], { introPath, outroPath, musicPath, introVolume, outroVolume, musicVolume }, ratio, opts);
+          const out = await remixVideoWithResources(localPaths[0], { introPath, outroPath, musicPath, introVolume, outroVolume, musicVolume }, ratio, { ...opts, dedup });
           const outputUrl = `/data/remix-output/${path.basename(out)}`;
           store.updateRemixTask(taskId, { status: "DONE", outputUrl, completedAt: nowIso() });
           store.logCdpEvent(null, "info", `混剪完成: ${outputUrl}`, null, taskId);
@@ -588,7 +588,7 @@ export function createMonitorServer({
       store.logCdpEvent(null, "info", `AI混剪合成: ${imagePaths.length}张图片, 方案=${preset?.name || "默认"}, 片头=${introConfig.segmentFilePath ? "有" : "无"}, 片尾=${outroConfig.segmentFilePath ? "有" : "无"}, 音乐=${musicConfig.segmentFilePath ? "有" : "无"}`, taskId);
 
       if (mainVideoLocalPath && existsSync(mainVideoLocalPath)) {
-        const finalOut = await composeAiRemixVideo(mainVideoLocalPath, imagePaths, { introConfig, outroConfig, musicConfig }, "9:16");
+        const finalOut = await composeAiRemixVideo(mainVideoLocalPath, imagePaths, { introConfig, outroConfig, musicConfig, dedup: preset?.dedup !== false }, "9:16");
         const outputUrl = `/data/remix-output/${path.basename(finalOut)}`;
         store.logCdpEvent(null, "info", `AI 混剪成品: ${outputUrl}`, taskId);
         store.updateRemixTask(taskId, { status: "DONE", outputUrl, completedAt: nowIso() });
@@ -1688,7 +1688,7 @@ export function createMonitorServer({
         // ---- Remix: 新混剪任务（社媒矩阵 + 达人资源） ----
         if (request.method === "POST" && pathname === "/api/remix/matrix-task") {
           const body = await readJson(request);
-          const { matrixIds, creatorId, videoIds, ratio, preset, introId, outroId, musicId, introEnabled = true, outroEnabled = true, musicEnabled = true, introVolume = 100, outroVolume = 100, musicVolume = 8 } = body;
+          const { matrixIds, creatorId, videoIds, ratio, preset, introId, outroId, musicId, introEnabled = true, outroEnabled = true, musicEnabled = true, introVolume = 100, outroVolume = 100, musicVolume = 8, dedup = true } = body;
           if (!matrixIds?.length) { sendJson(response, 400, { error: "请选择至少一个社媒矩阵" }); return; }
           if (!creatorId) { sendJson(response, 400, { error: "请选择达人" }); return; }
           if (!videoIds?.length) { sendJson(response, 400, { error: "请选择至少一个视频" }); return; }
@@ -1748,7 +1748,7 @@ export function createMonitorServer({
               taskId: task.id, localPaths: [resolveLocal(video.url)], mode: "matrix-remix",
               ratio: ratio || "9:16", preset: preset || "medium",
               matrixIds, creatorId, sourceVideoId: video.id, videoTitle: video.title,
-              introPath, outroPath, musicPath, introVolume, outroVolume, musicVolume,
+              introPath, outroPath, musicPath, introVolume, outroVolume, musicVolume, dedup,
             });
             tasks.push(task);
           }
@@ -2170,6 +2170,7 @@ export function createMonitorServer({
           sendJson(response, 200, store.createAiRemixPreset({
             name: body.name, prompt: body.prompt, isDefault: body.isDefault || false,
             introConfig: body.introConfig ?? null, outroConfig: body.outroConfig ?? null, musicConfig: body.musicConfig ?? null,
+            dedup: body.dedup,
           }));
           return;
         }
@@ -2183,6 +2184,7 @@ export function createMonitorServer({
           const updated = store.updateAiRemixPreset(presetId, {
             name: body.name, prompt: body.prompt, isDefault: body.isDefault,
             introConfig: body.introConfig, outroConfig: body.outroConfig, musicConfig: body.musicConfig,
+            dedup: body.dedup,
           });
           if (!updated) { sendJson(response, 404, { error: "方案不存在" }); return; }
           sendJson(response, 200, updated);

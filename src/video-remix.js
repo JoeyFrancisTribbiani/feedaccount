@@ -405,11 +405,25 @@ export async function remixVideoWithResources(inputPath, resources = {}, ratio =
   const tempPaths = [];
 
   try {
-    // 1. 先对原视频去重处理
+    // 1. 对原视频去重处理（可选）
     const meta = await probeVideo(inputPath);
     if (!meta) throw new Error("无法读取原视频信息");
     const dedupedPath = path.join(TEMP_DIR, `remix_deduped_${id}.mp4`);
-    await processSingleVideo(inputPath, dedupedPath, meta, { ...options, ratio });
+    if (options.dedup !== false) {
+      await processSingleVideo(inputPath, dedupedPath, meta, { ...options, ratio });
+    } else {
+      // 不去重，只归一化
+      let targetW = meta.width, targetH = meta.height;
+      if (ratio && RATIO_MAP[ratio]) { targetW = RATIO_MAP[ratio].w; targetH = RATIO_MAP[ratio].h; }
+      await runFfmpeg([
+        "-err_detect", "ignore_err", "-i", inputPath,
+        "-vf", `scale=${targetW}:${targetH}:flags=bicubic,format=yuv420p,fps=${Math.round(meta.fps || 30)}`,
+        "-c:v", "libx264", "-crf", "23", "-preset", "veryfast",
+        "-c:a", "aac", "-b:a", "128k",
+        "-pix_fmt", "yuv420p", "-movflags", "+faststart",
+        "-y", dedupedPath,
+      ]);
+    }
     tempPaths.push(dedupedPath);
 
     // 2. 收集需要拼接的片段（intro + 去重视频 + outro）
@@ -550,9 +564,21 @@ export async function composeAiRemixVideo(mainVideoPath, imagePaths, config = {}
     const mainMeta = await probeVideo(mainVideoPath);
     if (!mainMeta) throw new Error("无法读取原视频信息");
 
-    // 归一化原视频
+    // 归一化原视频（可选去重）
     const normalizedMain = path.join(TEMP_DIR, `ai_main_${id}.mp4`);
-    await processSingleVideo(mainVideoPath, normalizedMain, mainMeta, { ratio });
+    if (config.dedup !== false) {
+      await processSingleVideo(mainVideoPath, normalizedMain, mainMeta, { ratio });
+    } else {
+      // 不去重，只归一化分辨率和帧率
+      await runFfmpeg([
+        "-err_detect", "ignore_err", "-i", mainVideoPath,
+        "-vf", `scale=${targetW}:${targetH}:flags=bicubic,format=yuv420p,fps=${Math.round(mainMeta.fps || 30)}`,
+        "-c:v", "libx264", "-crf", "23", "-preset", "veryfast",
+        "-c:a", "aac", "-b:a", "128k",
+        "-pix_fmt", "yuv420p", "-movflags", "+faststart",
+        "-y", normalizedMain,
+      ]);
+    }
     tempPaths.push(normalizedMain);
 
     const segments = [];

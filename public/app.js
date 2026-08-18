@@ -5031,6 +5031,10 @@ function openPresetEditModal(preset) {
             </div>
             <span id="preset-music-file-info" class="preset-file-info"></span>
           </div>
+          <div class="preset-config-section">
+            <div class="preset-config-title"><label><input type="checkbox" id="preset-dedup" checked /> 原视频去重</label></div>
+            <span class="muted-activity" style="font-size:11px;">关闭后原视频不做去重处理，只归一化分辨率</span>
+          </div>
           <div class="preset-form-actions">
             <button id="preset-form-save" class="button button-primary" type="button">${isEdit ? "保存修改" : "创建方案"}</button>
             <button id="preset-form-cancel" class="button button-secondary" type="button">取消</button>
@@ -5071,6 +5075,7 @@ function openPresetEditModal(preset) {
   presetModalEl.musicEnabled = overlay.querySelector("#preset-music-enabled");
   presetModalEl.musicFile = overlay.querySelector("#preset-music-file");
   presetModalEl.musicFileInfo = overlay.querySelector("#preset-music-file-info");
+  presetModalEl.dedup = overlay.querySelector("#preset-dedup");
 
   // 通过 JS 设置编辑值（避免模板字符串被 prompt 中的反引号破坏）
   if (isEdit) {
@@ -5149,7 +5154,7 @@ function collectPresetConfig() {
     loop: presetModalEl.musicLoop?.checked ?? true,
     segmentFilePath: pendingSegmentFiles.music ? pendingSegmentFiles.music.filePath : null,
   };
-  return { introConfig, outroConfig, musicConfig };
+  return { introConfig, outroConfig, musicConfig, dedup: presetModalEl.dedup?.checked ?? true };
 }
 
 function fillPresetConfigForm(preset) {
@@ -5174,6 +5179,7 @@ function fillPresetConfigForm(preset) {
   if (presetModalEl.musicScope) presetModalEl.musicScope.value = mc.scope || "original";
   if (presetModalEl.musicEnabled) presetModalEl.musicEnabled.checked = mc.enabled !== false;
   if (presetModalEl.musicLoop) presetModalEl.musicLoop.checked = mc.loop ?? true;
+  if (presetModalEl.dedup) presetModalEl.dedup.checked = preset?.dedup !== false;
   // 显示已绑定的片段文件名
   if (presetModalEl.introFileInfo) {
     const introFile = preset?.files?.find((f) => f.varName === "_intro_segment");
@@ -5347,7 +5353,7 @@ async function handlePresetAdd() {
   const name = presetModalEl.name.value.trim();
   const prompt = presetModalEl.prompt.value.trim();
   if (!name || !prompt) { showToast("名称和提示词不能为空", true); return; }
-  const { introConfig, outroConfig, musicConfig } = collectPresetConfig();
+  const { introConfig, outroConfig, musicConfig, dedup } = collectPresetConfig();
   // 校验：图片开始时间+总持续时间不能超过片段时长
   const introTotal = (introConfig.imageInsertStart || 0) + (introConfig.imageCount || 0) * (introConfig.imageDuration || 0);
   const outroTotal = (outroConfig.imageInsertStart || 0) + (outroConfig.imageCount || 0) * (outroConfig.imageDuration || 0);
@@ -5370,7 +5376,7 @@ async function handlePresetAdd() {
   try {
     const created = await request("/api/ai-presets", {
       method: "POST",
-      body: JSON.stringify({ name, prompt, isDefault: presetModalEl.isDefault.checked, introConfig, outroConfig, musicConfig }),
+      body: JSON.stringify({ name, prompt, isDefault: presetModalEl.isDefault.checked, introConfig, outroConfig, musicConfig, dedup }),
     });
     // 绑定暂存的变量文件
     if (pendingVarFiles.size > 0) {
@@ -5411,7 +5417,7 @@ async function handlePresetUpdate() {
   const name = presetModalEl.name.value.trim();
   const prompt = presetModalEl.prompt.value.trim();
   if (!currentEditPresetId) { showToast("请先点击方案列表中的「编辑」", true); return; }
-  const { introConfig, outroConfig, musicConfig } = collectPresetConfig();
+  const { introConfig, outroConfig, musicConfig, dedup } = collectPresetConfig();
   // 校验：图片开始时间+总持续时间不能超过片段时长
   const introTotal = (introConfig.imageInsertStart || 0) + (introConfig.imageCount || 0) * (introConfig.imageDuration || 0);
   const outroTotal = (outroConfig.imageInsertStart || 0) + (outroConfig.imageCount || 0) * (outroConfig.imageDuration || 0);
@@ -5434,7 +5440,7 @@ async function handlePresetUpdate() {
   try {
     await request(`/api/ai-presets/${encodeURIComponent(currentEditPresetId)}`, {
       method: "PUT",
-      body: JSON.stringify({ name, prompt, isDefault: presetModalEl.isDefault.checked, introConfig, outroConfig, musicConfig }),
+      body: JSON.stringify({ name, prompt, isDefault: presetModalEl.isDefault.checked, introConfig, outroConfig, musicConfig, dedup }),
     });
     // 绑定新上传的片头/片尾片段文件
     if (pendingSegmentFiles.intro) {
@@ -5549,9 +5555,10 @@ modalEl.start?.addEventListener("click", async () => {
       const introVolume = parseInt(document.querySelector("#modal-intro-volume")?.value) ?? 100;
       const outroVolume = parseInt(document.querySelector("#modal-outro-volume")?.value) ?? 100;
       const musicVolume = parseInt(document.querySelector("#modal-music-volume")?.value) ?? 8;
+      const dedup = document.querySelector("#modal-dedup")?.checked ?? true;
       const res = await request("/api/remix/matrix-task", {
         method: "POST",
-        body: JSON.stringify({ matrixIds, creatorId, videoIds, ratio, introId, outroId, musicId, introEnabled, outroEnabled, musicEnabled, introVolume, outroVolume, musicVolume }),
+        body: JSON.stringify({ matrixIds, creatorId, videoIds, ratio, introId, outroId, musicId, introEnabled, outroEnabled, musicEnabled, introVolume, outroVolume, musicVolume, dedup }),
       });
       modalEl.overlay.classList.add("hidden");
       showToast(`已创建 ${res.count} 个混剪任务，正在处理…`);
