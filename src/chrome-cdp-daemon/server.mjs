@@ -388,7 +388,7 @@ async function chatgptSendMessage(text, opts = {}) {
 
   const sendSel = 'button[aria-label="发送提示"], button[aria-label="Send"], button[aria-label="发送"], button[data-testid="send-button"]'
   let sent = false
-  for (let attempt = 0; attempt < 60; attempt++) {  // 最多等60次×1秒=60秒
+  for (let attempt = 0; attempt < 600; attempt++) {  // 最多等10分钟
     try {
       const state = await page.evaluate(() => {
         // 先用 aria-label 匹配
