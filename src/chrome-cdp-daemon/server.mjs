@@ -388,20 +388,20 @@ async function chatgptSendMessage(text, opts = {}) {
 
   const sendSel = 'button[aria-label="发送提示"], button[aria-label="Send"], button[aria-label="发送"], button[data-testid="send-button"]'
   let sent = false
-  for (let attempt = 0; attempt < 15; attempt++) {
+  for (let attempt = 0; attempt < 60; attempt++) {  // 最多等60次×1秒=60秒
     try {
       const state = await page.evaluate(() => {
         // 先用 aria-label 匹配
         const selectors = ['button[aria-label="发送提示"]', 'button[aria-label="Send"]', 'button[aria-label="发送"]', 'button[data-testid="send-button"]']
         for (const sel of selectors) {
           const btn = document.querySelector(sel)
-          if (btn) return { found: true, disabled: btn.disabled, visible: btn.offsetParent !== null, sel }
+          if (btn) return { found: true, disabled: btn.disabled, visible: btn.offsetParent !== null }
         }
         // 再用 composer-submit-button class 匹配（排除 stop-button）
         const submitBtns = document.querySelectorAll('button[class*="composer-submit-button"]')
         for (const btn of submitBtns) {
-          if (btn.dataset.testid === 'stop-button') continue // 跳过停止按钮
-          if (btn.offsetParent !== null) return { found: true, disabled: btn.disabled, visible: true, sel: 'button[class*="composer-submit-button"]:not([data-testid="stop-button"])' }
+          if (btn.dataset.testid === 'stop-button') continue
+          if (btn.offsetParent !== null) return { found: true, disabled: btn.disabled, visible: true }
         }
         return { found: false }
       })
@@ -423,9 +423,12 @@ async function chatgptSendMessage(text, opts = {}) {
         log('消息已通过发送按钮发送')
         break
       } else if (state.found && state.disabled) {
+        // 按钮存在但disabled（文件可能还在上传），继续等
+        if (attempt % 10 === 0) log(`等待发送按钮可用... (${attempt}s)`)
         await page.waitForTimeout(1000)
       } else {
-        break
+        // 按钮还没渲染出来，继续等
+        await page.waitForTimeout(1000)
       }
     } catch (err) {
       if (DEBUG) log('发送尝试失败:', err.message)
