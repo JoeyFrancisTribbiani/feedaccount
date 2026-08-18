@@ -473,7 +473,7 @@ export function createMonitorServer({
         const taskRes = await fetch(`${daemonUrl}/api/tasks`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ type: "chatgpt-ai-remix", params: { prompt, fileIds, options: { responseTimeout: 1800000, taskId } } }),
+          body: JSON.stringify({ type: "chatgpt-ai-remix", params: { prompt, fileIds, options: { responseTimeout: 3600000, taskId } } }),
         });
         const daemonResData = await taskRes.json();
         if (!taskRes.ok || !daemonResData.taskNo) throw new Error(`提交 AI 混剪任务失败: ${daemonResData.error}`);
@@ -483,7 +483,7 @@ export function createMonitorServer({
         let completed = false;
         let daemonTask = null;
         const pollStart = Date.now();
-        while (Date.now() - pollStart < 1800000) {
+        while (Date.now() - pollStart < 3600000) {
           await new Promise((r) => setTimeout(r, 5000));
           const statusRes = await fetch(`${daemonUrl}/api/tasks/${daemonTaskNo}`);
           daemonTask = await statusRes.json();
