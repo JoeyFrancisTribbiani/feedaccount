@@ -3054,13 +3054,7 @@ const remixEl = {
   videoCount: document.querySelector("#remix-video-count"),
   videoGrid: document.querySelector("#remix-video-grid"),
   addVideoBtn: document.querySelector("#remix-add-video-btn"),
-  addVideoForm: document.querySelector("#remix-add-video-form"),
   videoFile: document.querySelector("#remix-video-file"),
-  videoUrl: document.querySelector("#remix-video-url"),
-  videoTitle: document.querySelector("#remix-video-title"),
-  uploadBtn: document.querySelector("#remix-upload-btn"),
-  confirmVideo: document.querySelector("#remix-confirm-video"),
-  cancelVideo: document.querySelector("#remix-cancel-video"),
   selectedList: document.querySelector("#remix-selected-list"),
   ratio: document.querySelector("#remix-ratio"),
   dedupBtn: document.querySelector("#remix-dedup-btn"),
@@ -3666,38 +3660,21 @@ remixEl.confirmCreator.addEventListener("click", async () => {
   } catch (e) { showToast(e.message, true); }
 });
 
-// 视频添加
-remixEl.addVideoBtn.addEventListener("click", () => remixEl.addVideoForm.classList.toggle("hidden"));
-remixEl.cancelVideo.addEventListener("click", () => { remixEl.addVideoForm.classList.add("hidden"); remixEl.videoUrl.value = ""; remixEl.videoTitle.value = ""; });
-remixEl.uploadBtn.addEventListener("click", () => remixEl.videoFile.click());
+// 视频添加：点击按钮直接弹文件选择器
+remixEl.addVideoBtn.addEventListener("click", () => remixEl.videoFile.click());
 remixEl.videoFile.addEventListener("change", async () => {
   const files = [...remixEl.videoFile.files];
   if (!files.length) return;
   remixEl.videoFile.value = "";
-
-  if (files.length === 1) {
-    const file = files[0];
-    const formData = new FormData();
-    formData.append("file", file);
-    try {
-      const res = await fetch("/api/remix/upload", { method: "POST", body: formData });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "上传失败");
-      remixEl.videoUrl.value = data.url;
-      if (!remixEl.videoTitle.value) remixEl.videoTitle.value = file.name.replace(/\.[^.]+$/, "");
-    } catch (e) { showToast(e.message, true); }
-    return;
-  }
-
   const creatorId = remix.selectedCreatorId;
   if (!creatorId) { showToast("请先选择达人", true); return; }
-  remixEl.uploadBtn.disabled = true;
-  remixEl.uploadBtn.textContent = `上传中 (0/${files.length})...`;
-  let ok = 0;
-  let fail = 0;
+
+  remixEl.addVideoBtn.disabled = true;
+  remixEl.addVideoBtn.textContent = `上传中 (0/${files.length})...`;
+  let ok = 0, fail = 0;
   for (let i = 0; i < files.length; i++) {
     const file = files[i];
-    remixEl.uploadBtn.textContent = `上传中 (${i + 1}/${files.length})...`;
+    remixEl.addVideoBtn.textContent = `上传中 (${i + 1}/${files.length})...`;
     try {
       const formData = new FormData();
       formData.append("file", file);
@@ -3711,25 +3688,11 @@ remixEl.videoFile.addEventListener("change", async () => {
       ok++;
     } catch { fail++; }
   }
-  remixEl.uploadBtn.disabled = false;
-  remixEl.uploadBtn.textContent = "批量上传";
+  remixEl.addVideoBtn.disabled = false;
+  remixEl.addVideoBtn.textContent = "添加视频";
   await fetchRemixVideos(creatorId);
   await fetchRemixCreators();
-  showToast(`批量上传完成：成功 ${ok} 个${fail ? `，失败 ${fail} 个` : ""}`, fail > 0);
-});
-remixEl.confirmVideo.addEventListener("click", async () => {
-  const url = remixEl.videoUrl.value.trim();
-  if (!url || !remix.selectedCreatorId) return;
-  try {
-    await request(`/api/remix/creators/${encodeURIComponent(remix.selectedCreatorId)}/videos`, {
-      method: "POST",
-      body: JSON.stringify({ url, title: remixEl.videoTitle.value.trim() || null }),
-    });
-    remixEl.addVideoForm.classList.add("hidden");
-    remixEl.videoUrl.value = ""; remixEl.videoTitle.value = "";
-    await fetchRemixVideos(remix.selectedCreatorId);
-    await fetchRemixCreators();
-  } catch (e) { showToast(e.message, true); }
+  showToast(`上传完成：成功 ${ok} 个${fail ? `，失败 ${fail} 个` : ""}`, fail > 0);
 });
 
 // 去重
