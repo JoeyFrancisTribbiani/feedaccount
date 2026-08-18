@@ -1923,6 +1923,13 @@ export function createMonitorServer({
           if (!origTask) { sendJson(response, 404, { error: "任务不存在" }); return; }
 
             // 用原任务的参数创建新任务
+            // AI 混剪重试：从方案重新读取最新prompt
+            let retryPrompt = origTask.prompt;
+            if (origTask.presetId) {
+              const latestPreset = store.getAiRemixPreset(origTask.presetId);
+              if (latestPreset) retryPrompt = latestPreset.prompt;
+            }
+
             const newTask = store.createRemixTask({
               title: origTask.title + " (重试)",
               mode: origTask.mode,
@@ -1932,7 +1939,7 @@ export function createMonitorServer({
               creatorId: origTask.creatorId,
               matrixIds: origTask.matrixIds,
               presetId: origTask.presetId,
-              prompt: origTask.prompt,
+              prompt: retryPrompt,
               introEnabled: origTask.introEnabled,
               outroEnabled: origTask.outroEnabled,
               musicEnabled: origTask.musicEnabled,
