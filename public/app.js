@@ -4990,7 +4990,7 @@ function openPresetEditModal(preset) {
             <div class="preset-config-row">
               <label>图片动效 <select id="preset-intro-effect">${EFFECTS}</select></label>
               <label>正片切换转场 <select id="preset-intro-transition">${TRANSITIONS}</select></label>
-              <label>片段音量 <input type="number" id="preset-intro-volume" min="0" max="100" value="100" style="width:50px;" />%</label>
+              <label>片段音量 <input type="number" id="preset-intro-volume" min="0" max="100" value="100" style="width:50px;display:inline-block;" /><span style="margin-left:2px;">%</span></label>
               <label>片头片段文件 <input type="file" id="preset-intro-file" accept="video/*" /></label>
             </div>
             <span id="preset-intro-file-info" class="preset-file-info"></span>
@@ -5005,7 +5005,7 @@ function openPresetEditModal(preset) {
             <div class="preset-config-row">
               <label>图片动效 <select id="preset-outro-effect">${EFFECTS}</select></label>
               <label>正片切换转场 <select id="preset-outro-transition">${TRANSITIONS}</select></label>
-              <label>片段音量 <input type="number" id="preset-outro-volume" min="0" max="100" value="100" style="width:50px;" />%</label>
+              <label>片段音量 <input type="number" id="preset-outro-volume" min="0" max="100" value="100" style="width:50px;display:inline-block;" /><span style="margin-left:2px;">%</span></label>
               <label>片尾片段文件 <input type="file" id="preset-outro-file" accept="video/*" /></label>
             </div>
             <span id="preset-outro-file-info" class="preset-file-info"></span>
@@ -5498,15 +5498,35 @@ modalEl.start?.addEventListener("click", async () => {
         }
       }
 
-      // 检查 CDP 实例的 daemon 是否在运行
+      // 检查 CDP 实例的 daemon 是否在运行，未运行则自动启动
       let daemonRunning = false;
       try {
         const statusRes = await request(`/api/cdp/instances/${encodeURIComponent(cdpInstanceId)}/daemon-status`);
         daemonRunning = statusRes.running === true;
       } catch {}
       if (!daemonRunning) {
-        showToast("CDP 守护进程未运行，请先到 CDP Tab 启动守护进程", true);
-        return;
+        showToast("CDP 守护进程未运行，正在自动启动...");
+        try {
+          await request(`/api/cdp/instances/${encodeURIComponent(cdpInstanceId)}/daemon-start`, { method: "POST" });
+          // 等待 daemon 启动完成
+          let retries = 0;
+          while (retries < 10) {
+            await new Promise(r => setTimeout(r, 2000));
+            try {
+              const recheck = await request(`/api/cdp/instances/${encodeURIComponent(cdpInstanceId)}/daemon-status`);
+              if (recheck.running === true) { daemonRunning = true; break; }
+            } catch {}
+            retries++;
+          }
+          if (!daemonRunning) {
+            showToast("CDP 守护进程启动失败，请到 CDP Tab 手动检查", true);
+            return;
+          }
+          showToast("CDP 守护进程已启动");
+        } catch (e) {
+          showToast(`CDP 守护进程启动失败: ${e.message}，请到 CDP Tab 手动启动`, true);
+          return;
+        }
       }
 
       const res = await request("/api/remix/ai-remix-task", {
