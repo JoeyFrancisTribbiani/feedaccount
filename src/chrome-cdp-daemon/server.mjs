@@ -435,18 +435,20 @@ async function chatgptUploadFile(filePath, opts = {}) {
     const inputCount = await fileInput.count()
     log(`input#upload-files 找到 ${inputCount} 个`)
     if (inputCount > 0) {
+      // 记录上传前的 file-tile 数量
+      const tilesBefore = await page.evaluate(() => document.querySelectorAll('[class*="file-tile"]').length)
       // 先尝试 setInputFiles（小文件有效）
       try {
         await fileInput.first().setInputFiles(filePath)
         await page.waitForTimeout(3000)
-        const attached = await page.evaluate(() => document.querySelectorAll('[class*="file-tile"]').length > 0)
-        log(`setInputFiles 完成, attached=${attached}`)
-        if (attached) { log('文件已上传 (input#upload-files):', filePath); return { ok: true, method: 'input-direct' } }
+        const tilesAfter = await page.evaluate(() => document.querySelectorAll('[class*="file-tile"]').length)
+        log(`setInputFiles 完成, tilesBefore=${tilesBefore} tilesAfter=${tilesAfter}`)
+        if (tilesAfter > tilesBefore) { log('文件已上传 (input#upload-files):', filePath); return { ok: true, method: 'input-direct' } }
       } catch (sizeErr) {
         log(`setInputFiles 失败(可能文件过大): ${sizeErr.message.substring(0, 80)}`)
-        // setInputFiles 可能实际已上传成功但方法超时，先检查
-        const alreadyAttached = await page.evaluate(() => document.querySelectorAll('[class*="file-tile"]').length > 0)
-        if (alreadyAttached) {
+        // setInputFiles 可能实际已上传成功但方法超时，先检查 tile 数量是否增加
+        const tilesAfter = await page.evaluate(() => document.querySelectorAll('[class*="file-tile"]').length)
+        if (tilesAfter > tilesBefore) {
           log('setInputFiles 超时但文件已上传成功，跳过 DataTransfer')
           return { ok: true, method: 'input-direct-timeout' }
         }
@@ -467,9 +469,9 @@ async function chatgptUploadFile(filePath, opts = {}) {
           input.dispatchEvent(new Event('input', { bubbles: true }))
         }, { b64: base64, name: fileName })
         await page.waitForTimeout(3000)
-        const attached2 = await page.evaluate(() => document.querySelectorAll('[class*="file-tile"]').length > 0)
-        log(`DataTransfer 方式完成, attached=${attached2}`)
-        if (attached2) { log('文件已上传 (DataTransfer):', filePath); return { ok: true, method: 'datatransfer' } }
+        const tilesAfterDt = await page.evaluate(() => document.querySelectorAll('[class*="file-tile"]').length)
+        log(`DataTransfer 方式完成, tilesBefore=${tilesBefore} tilesAfter=${tilesAfterDt}`)
+        if (tilesAfterDt > tilesBefore) { log('文件已上传 (DataTransfer):', filePath); return { ok: true, method: 'datatransfer' } }
       }
     }
   } catch (err) { log('setInputFiles 方式失败: ' + err.message) }
@@ -499,8 +501,8 @@ async function chatgptUploadFile(filePath, opts = {}) {
   await dismissModal()
   await page.waitForTimeout(1000)
   await dismissModal()
-  const finalCheck = await page.evaluate(() => document.querySelectorAll('[class*="file-tile"]').length > 0)
-  if (finalCheck) {
+  const tilesFinal = await page.evaluate(() => document.querySelectorAll('[class*="file-tile"]').length)
+  if (tilesFinal > tilesBefore) {
     log('文件已挂载（最终检测）')
     return { ok: true, method: 'already-attached-final' }
   }
