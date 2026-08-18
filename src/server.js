@@ -2231,10 +2231,37 @@ export function createMonitorServer({
         const filePath = path.join(outputDir, filename);
         if (!existsSync(filePath)) { sendJson(response, 404, { error: "文件不存在" }); return; }
         const statResult = await stat(filePath);
+        const range = request.headers["range"];
+        if (range) {
+          // 支持 Range 请求（视频拖动进度条）
+          const match = range.match(/bytes=(\d*)-(\d*)/);
+          if (match) {
+            let start = match[1] ? parseInt(match[1]) : 0;
+            let end = match[2] ? parseInt(match[2]) : statResult.size - 1;
+            if (start >= statResult.size) {
+              response.writeHead(416, { "Content-Range": `bytes */${statResult.size}` });
+              response.end();
+              return;
+            }
+            end = Math.min(end, statResult.size - 1);
+            response.writeHead(206, {
+              "Content-Type": "video/mp4",
+              "Content-Length": end - start + 1,
+              "Content-Range": `bytes ${start}-${end}/${statResult.size}`,
+              "Accept-Ranges": "bytes",
+              "Cache-Control": "public, max-age=3600",
+            });
+            createReadStream(filePath, { start, end }).pipe(response);
+            return;
+          }
+        }
+        // 非预览的下载请求
+        const isDownload = request.headers["sec-fetch-dest"] === "document" || new URL(pathname, "http://localhost").searchParams.get("download") !== null;
         response.writeHead(200, {
           "Content-Type": "video/mp4",
           "Content-Length": statResult.size,
-          "Content-Disposition": `attachment; filename="${encodeURIComponent(filename)}"`,
+          "Accept-Ranges": "bytes",
+          ...(isDownload ? { "Content-Disposition": `attachment; filename="${encodeURIComponent(filename)}"` } : {}),
           "Cache-Control": "public, max-age=3600",
         });
         createReadStream(filePath).pipe(response);
