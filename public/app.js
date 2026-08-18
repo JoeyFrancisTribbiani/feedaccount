@@ -3506,7 +3506,7 @@ function renderRemixTasks() {
           <button class="button button-secondary task-log-btn" data-task-id="${escapeHtml(t.id)}" style="font-size: 11px; padding:2px 8px;">日志</button>
           ${(t.status === "PENDING" || t.status === "PROCESSING") ? `<button class="danger-button task-abort-btn" data-task-id="${escapeHtml(t.id)}" style="font-size: 11px; padding:2px 8px;">中止</button>` : ""}
           ${(t.status === "FAILED" || t.status === "DONE") ? `<button class="button button-secondary task-retry-btn" data-task-id="${escapeHtml(t.id)}" style="font-size: 11px; padding:2px 8px;">重试</button>` : ""}
-          ${t.status === "DONE" && t.outputUrl ? `<a href="${escapeHtml(t.outputUrl)}" target="_blank" class="button button-secondary" style="font-size: 11px;">预览</a>` : ""}
+          ${t.status === "DONE" && t.outputUrl ? `<button class="button button-secondary task-preview-btn" data-out-url="${escapeHtml(t.outputUrl)}" style="font-size: 11px; padding:2px 8px;">预览</button>` : ""}
           ${t.status === "DONE" && t.outputUrl ? `<a href="${escapeHtml(t.outputUrl)}" download data-task-id="${escapeHtml(t.id)}" data-out-url="${escapeHtml(t.outputUrl)}" class="button button-primary" style="font-size: 11px;">${t.downloaded ? "已下载 ✓" : "下载"}</a>` : ""}
           <button class="remix-del-task" data-del-task="${escapeHtml(t.id)}" style="color: #dc2626; background: none; border: none; cursor: pointer; font-size: 16px;">×</button>
         </div>
@@ -3517,6 +3517,16 @@ function renderRemixTasks() {
     btn.addEventListener("click", async () => {
       await request(`/api/remix/tasks/${encodeURIComponent(btn.dataset.delTask)}`, { method: "DELETE" });
       await fetchRemixTasks();
+    });
+  });
+  // 预览按钮
+  remixEl.tasksList.querySelectorAll(".task-preview-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const url = btn.dataset.outUrl;
+      const modal = document.querySelector("#video-preview-modal");
+      const player = document.querySelector("#video-preview-player");
+      player.src = url;
+      modal.classList.remove("hidden");
     });
   });
   // 日志按钮
@@ -3574,6 +3584,23 @@ document.querySelector("#path-config-save")?.addEventListener("click", async () 
 // 关闭视频工作台弹窗
 document.querySelector("#remix-workspace-close")?.addEventListener("click", () => {
   document.querySelector("#remix-workspace-modal")?.classList.add("hidden");
+});
+
+// 关闭视频预览弹框
+document.querySelector("#video-preview-close")?.addEventListener("click", () => {
+  const modal = document.querySelector("#video-preview-modal");
+  const player = document.querySelector("#video-preview-player");
+  player.pause();
+  player.src = "";
+  modal.classList.add("hidden");
+});
+document.querySelector("#video-preview-modal")?.addEventListener("click", (e) => {
+  if (e.target === e.currentTarget) {
+    const player = document.querySelector("#video-preview-player");
+    player.pause();
+    player.src = "";
+    e.currentTarget.classList.add("hidden");
+  }
 });
 
 // 达人添加

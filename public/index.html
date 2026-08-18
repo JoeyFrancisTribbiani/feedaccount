@@ -1531,6 +1531,19 @@
     <!-- Floating Global Toast Notification -->
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
+    <!-- 视频预览弹框 -->
+    <div id="video-preview-modal" class="modal-overlay hidden">
+      <div class="modal-content" style="max-width:480px;width:auto;">
+        <div class="modal-header">
+          <h3>视频预览</h3>
+          <button id="video-preview-close" class="modal-close" type="button">×</button>
+        </div>
+        <div class="modal-body" style="padding:0;">
+          <video id="video-preview-player" controls autoplay style="width:100%;max-height:80vh;background:#000;"></video>
+        </div>
+      </div>
+    </div>
+
     <script type="module" src="/app.js"></script>
   </body>
 </html>
