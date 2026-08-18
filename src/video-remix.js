@@ -400,7 +400,7 @@ export async function stitchVideos(inputPaths, ratio = null, options = {}) {
  * @returns {Promise<string>} 输出文件路径
  */
 export async function remixVideoWithResources(inputPath, resources = {}, ratio = null, options = {}) {
-  const { introPath = null, outroPath = null, musicPath = null } = resources;
+  const { introPath = null, outroPath = null, musicPath = null, introVolume = 100, outroVolume = 100, musicVolume = 8 } = resources;
   const id = genId();
   const tempPaths = [];
 
@@ -418,7 +418,7 @@ export async function remixVideoWithResources(inputPath, resources = {}, ratio =
       const introMeta = await probeVideo(introPath);
       if (introMeta) {
         const introNorm = path.join(TEMP_DIR, `remix_intro_${id}.mp4`);
-        await normalizeSegment(introPath, introNorm, meta, ratio);
+        await normalizeSegment(introPath, introNorm, meta, ratio, introVolume);
         segments.push(introNorm);
         tempPaths.push(introNorm);
       }
@@ -428,7 +428,7 @@ export async function remixVideoWithResources(inputPath, resources = {}, ratio =
       const outroMeta = await probeVideo(outroPath);
       if (outroMeta) {
         const outroNorm = path.join(TEMP_DIR, `remix_outro_${id}.mp4`);
-        await normalizeSegment(outroPath, outroNorm, meta, ratio);
+        await normalizeSegment(outroPath, outroNorm, meta, ratio, outroVolume);
         segments.push(outroNorm);
         tempPaths.push(outroNorm);
       }
@@ -450,7 +450,7 @@ export async function remixVideoWithResources(inputPath, resources = {}, ratio =
     const outputPath = path.join(getOutputDir(), `remix_${cleanName}_${id}.mp4`);
 
     if (musicPath && existsSync(musicPath)) {
-      await mixBackgroundMusic(concatenatedPath, musicPath, outputPath);
+      await mixBackgroundMusic(concatenatedPath, musicPath, outputPath, musicVolume);
     } else {
       const { copyFile } = await import("node:fs/promises");
       await copyFile(concatenatedPath, outputPath);
@@ -465,7 +465,7 @@ export async function remixVideoWithResources(inputPath, resources = {}, ratio =
 }
 
 /** 将 intro/outro 片段归一化到与主视频相同的分辨率和帧率 */
-async function normalizeSegment(inputPath, outputPath, mainVideoMeta, ratio = null) {
+async function normalizeSegment(inputPath, outputPath, mainVideoMeta, ratio = null, volumePercent = 100) {
   const meta = await probeVideo(inputPath);
   if (!meta) throw new Error("无法读取片段信息");
 
@@ -476,9 +476,11 @@ async function normalizeSegment(inputPath, outputPath, mainVideoMeta, ratio = nu
     targetH = RATIO_MAP[ratio].h;
   }
 
+  const afArgs = volumePercent !== 100 ? ["-af", `volume=${(volumePercent / 100).toFixed(2)}`] : [];
   const args = [
     "-i", inputPath,
     "-vf", `scale=${targetW}:${targetH}:flags=bicubic,format=yuv420p,fps=${Math.round(mainVideoMeta.fps)}`,
+    ...afArgs,
     "-c:v", "libx264", "-crf", "23", "-preset", "veryfast",
     "-pix_fmt", "yuv420p", "-movflags", "+faststart",
     "-c:a", "aac", "-b:a", "128k",

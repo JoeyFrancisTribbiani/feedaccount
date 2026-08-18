@@ -5546,9 +5546,12 @@ modalEl.start?.addEventListener("click", async () => {
       const introEnabled = document.querySelector("#modal-intro-enabled")?.checked ?? true;
       const outroEnabled = document.querySelector("#modal-outro-enabled")?.checked ?? true;
       const musicEnabled = document.querySelector("#modal-music-enabled")?.checked ?? true;
+      const introVolume = parseInt(document.querySelector("#modal-intro-volume")?.value) ?? 100;
+      const outroVolume = parseInt(document.querySelector("#modal-outro-volume")?.value) ?? 100;
+      const musicVolume = parseInt(document.querySelector("#modal-music-volume")?.value) ?? 8;
       const res = await request("/api/remix/matrix-task", {
         method: "POST",
-        body: JSON.stringify({ matrixIds, creatorId, videoIds, ratio, introId, outroId, musicId, introEnabled, outroEnabled, musicEnabled }),
+        body: JSON.stringify({ matrixIds, creatorId, videoIds, ratio, introId, outroId, musicId, introEnabled, outroEnabled, musicEnabled, introVolume, outroVolume, musicVolume }),
       });
       modalEl.overlay.classList.add("hidden");
       showToast(`已创建 ${res.count} 个混剪任务，正在处理…`);
