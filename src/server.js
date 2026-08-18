@@ -423,7 +423,7 @@ export function createMonitorServer({
   // AI 混剪队列（最多3个并发，间隔1分钟启动）
   const aiRemixQueue = [];
   let aiRemixActiveCount = 0;
-  const AI_REMIX_MAX_CONCURRENT = 3;
+  const AI_REMIX_MAX_CONCURRENT = 1;
   const AI_REMIX_START_INTERVAL = 60000; // 任务启动间隔60秒
 
   async function processAiRemixQueue() {
