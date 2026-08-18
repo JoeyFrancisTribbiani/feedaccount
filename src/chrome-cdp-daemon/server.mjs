@@ -444,6 +444,12 @@ async function chatgptUploadFile(filePath, opts = {}) {
         if (attached) { log('文件已上传 (input#upload-files):', filePath); return { ok: true, method: 'input-direct' } }
       } catch (sizeErr) {
         log(`setInputFiles 失败(可能文件过大): ${sizeErr.message.substring(0, 80)}`)
+        // setInputFiles 可能实际已上传成功但方法超时，先检查
+        const alreadyAttached = await page.evaluate(() => document.querySelectorAll('[class*="file-tile"]').length > 0)
+        if (alreadyAttached) {
+          log('setInputFiles 超时但文件已上传成功，跳过 DataTransfer')
+          return { ok: true, method: 'input-direct-timeout' }
+        }
         // 大文件: 用 CDP 的 Page.handleFileChooser 或直接操作 input
         // 通过 evaluate 设置 input 的 files 属性
         const fileName = filePath.split(/[/\\]/).pop()
