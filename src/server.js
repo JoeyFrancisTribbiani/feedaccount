@@ -19,7 +19,7 @@ import { TiktokJobManager, TIKTOK_DEFAULT_OPTIONS } from "./tiktok/tiktok-job-ma
 import { TiktokPublishManager } from "./tiktok/tiktok-publish-manager.js";
 import { RotationScheduler, SCHEDULER_DEFAULTS } from "./scheduler.js";
 import { checkIpGeoViaSocks5 } from "./socks5-check.js";
-import { DEDUP_PRESETS, dedupVideo, stitchVideos, probeVideo, remixVideoWithResources, composeAiRemixVideo, antiAiProcessImage, setOutputDir, setUploadDir, OUTPUT_DIR as REMIX_OUTPUT_DIR } from "./video-remix.js";
+import { DEDUP_PRESETS, dedupVideo, stitchVideos, probeVideo, remixVideoWithResources, composeAiRemixVideo, antiAiProcessImage, setOutputDir, setUploadDir, getOutputDir, getUploadDir, OUTPUT_DIR as REMIX_OUTPUT_DIR } from "./video-remix.js";
 
 const THIS_DIR = path.dirname(fileURLToPath(import.meta.url));
 const CDP_DAEMON_DIR = path.resolve(THIS_DIR, "chrome-cdp-daemon");
@@ -512,7 +512,7 @@ export function createMonitorServer({
                 if (downloadRes.ok) {
                   const buffer = Buffer.from(await downloadRes.arrayBuffer());
                   const imgFileName = `ai_img_${Date.now()}_${imagePaths.length + 1}.png`;
-                  const imgPath = path.join(REMIX_OUTPUT_DIR, imgFileName);
+                  const imgPath = path.join(getOutputDir(), imgFileName);
                   writeFileSync(imgPath, buffer);
                   // 反AI检测处理
                   const processedPath = imgPath.replace(/\.png$/, "_anti.png");
@@ -548,7 +548,7 @@ export function createMonitorServer({
           if (downloadRes.ok) {
             const buffer = Buffer.from(await downloadRes.arrayBuffer());
             const outputFileName = `ai_remix_${Date.now()}_${path.basename(fileOutput.filename)}`;
-            const outputPath = path.join(REMIX_OUTPUT_DIR, outputFileName);
+            const outputPath = path.join(getOutputDir(), outputFileName);
             writeFileSync(outputPath, buffer);
             outputUrl = `/data/remix-output/${outputFileName}`;
           }
@@ -1587,7 +1587,7 @@ export function createMonitorServer({
             searchStart = nextPos;
           }
           if (!filename || !fileContent) { sendJson(response, 400, { error: "未找到文件" }); return; }
-          const uploadDir = path.resolve(THIS_DIR, "..", "data", "remix-videos");
+          const uploadDir = getUploadDir();
           mkdirSync(uploadDir, { recursive: true });
           const safeName = `${Date.now()}_${filename.replace(/[^\w.-]/g, "_")}`;
           const filePath = path.join(uploadDir, safeName);
@@ -1631,7 +1631,7 @@ export function createMonitorServer({
             searchStart = nextPos;
           }
           if (!filename || !fileContent) { sendJson(response, 400, { error: "未找到文件" }); return; }
-          const uploadDir = path.resolve(THIS_DIR, "..", "data", "remix-videos");
+          const uploadDir = getUploadDir();
           mkdirSync(uploadDir, { recursive: true });
           const safeName = `${Date.now()}_${filename.replace(/[^\w.-]/g, "_")}`;
           const filePath = path.join(uploadDir, safeName);

@@ -35,6 +35,10 @@ export function getOutputDir() {
   return customOutputDir || OUTPUT_DIR;
 }
 
+export function getUploadDir() {
+  return customUploadDir || path.resolve(process.cwd(), "data", "remix-videos");
+}
+
 let ffprobePath = null;
 try {
   const ffmpegPath = execSync('where ffmpeg', { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).trim().split(/\r?\n/)[0];
