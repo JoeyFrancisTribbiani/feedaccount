@@ -5353,11 +5353,11 @@ function openPresetEditModal(preset) {
           </label>
           <div id="preset-form-vars" class="preset-form-vars"></div>
           <div class="preset-config-section">
-            <div class="preset-config-title" style="display:flex;align-items:center;gap:12px;">
-              <label><input type="checkbox" id="preset-intro-enabled" checked /> 启用片头</label>
-              <span style="font-size:11px;display:flex;gap:8px;align-items:center;">
-                <label><input type="radio" name="intro-mode" value="video" checked />视频模式</label>
-                <label><input type="radio" name="intro-mode" value="image" />纯图模式</label>
+            <div class="preset-config-title" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+              <label style="display:inline-flex;align-items:center;gap:4px;white-space:nowrap;"><input type="checkbox" id="preset-intro-enabled" checked /> 启用片头</label>
+              <span style="font-size:11px;display:inline-flex;gap:12px;align-items:center;white-space:nowrap;">
+                <label style="display:inline-flex;align-items:center;gap:4px;"><input type="radio" name="intro-mode" value="video" checked />视频模式</label>
+                <label style="display:inline-flex;align-items:center;gap:4px;"><input type="radio" name="intro-mode" value="image" />纯图模式</label>
               </span>
             </div>
             <div class="preset-config-row">
@@ -5374,11 +5374,11 @@ function openPresetEditModal(preset) {
             <span id="preset-intro-file-info" class="preset-file-info"></span>
           </div>
           <div class="preset-config-section">
-            <div class="preset-config-title" style="display:flex;align-items:center;gap:12px;">
-              <label><input type="checkbox" id="preset-outro-enabled" checked /> 启用片尾</label>
-              <span style="font-size:11px;display:flex;gap:8px;align-items:center;">
-                <label><input type="radio" name="outro-mode" value="video" checked />视频模式</label>
-                <label><input type="radio" name="outro-mode" value="image" />纯图模式</label>
+            <div class="preset-config-title" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+              <label style="display:inline-flex;align-items:center;gap:4px;white-space:nowrap;"><input type="checkbox" id="preset-outro-enabled" checked /> 启用片尾</label>
+              <span style="font-size:11px;display:inline-flex;gap:12px;align-items:center;white-space:nowrap;">
+                <label style="display:inline-flex;align-items:center;gap:4px;"><input type="radio" name="outro-mode" value="video" checked />视频模式</label>
+                <label style="display:inline-flex;align-items:center;gap:4px;"><input type="radio" name="outro-mode" value="image" />纯图模式</label>
               </span>
             </div>
             <div class="preset-config-row">
