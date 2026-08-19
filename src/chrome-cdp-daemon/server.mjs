@@ -562,14 +562,19 @@ async function chatgptUploadFile(filePath, opts = {}) {
           // 立即错误（如50MB限制）：文件没传上去，直接走 DataTransfer
           log('文件过大或不可传输，直接使用 DataTransfer 方式')
         }
-        // 大文件: 用 CDP 的 Page.handleFileChooser 或直接操作 input
-        // 通过 evaluate 设置 input 的 files 属性
+        // 大文件: 通过 daemon HTTP 服务让浏览器 fetch 下载，避免 base64 传输崩溃
         const fileName = filePath.split(/[/\\]/).pop()
-        const fileBuffer = readFileSync(filePath)
-        const base64 = fileBuffer.toString('base64')
-        await page.evaluate(async ({ b64, name }) => {
-          const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0))
-          const blob = new Blob([bytes], { type: 'video/mp4' })
+        // 把文件复制到 daemon 的 tmp 目录（如果不在的话）
+        const tmpFileDir = join(TMP_DIR, 'serve')
+        mkdirSync(tmpFileDir, { recursive: true })
+        const tmpFilePath = join(tmpFileDir, fileName)
+        const { copyFile: copyFileFn } = await import('fs/promises')
+        await copyFileFn(filePath, tmpFilePath)
+        const fileUrl = `http://127.0.0.1:${PORT}/tmp/serve/${encodeURIComponent(fileName)}`
+        log(`通过 HTTP 下载方式上传: ${fileUrl}`)
+        await page.evaluate(async ({ url, name }) => {
+          const res = await fetch(url)
+          const blob = await res.blob()
           const file = new File([blob], name, { type: 'video/mp4' })
           const dt = new DataTransfer()
           dt.items.add(file)
@@ -577,7 +582,9 @@ async function chatgptUploadFile(filePath, opts = {}) {
           input.files = dt.files
           input.dispatchEvent(new Event('change', { bubbles: true }))
           input.dispatchEvent(new Event('input', { bubbles: true }))
-        }, { b64: base64, name: fileName })
+        }, { url: fileUrl, name: fileName })
+        // 清理临时文件
+        try { unlinkSync(tmpFilePath) } catch {}
         await page.waitForTimeout(3000)
         const tilesAfterDt = await page.evaluate(() => document.querySelectorAll('[class*="file-tile"]').length)
         log(`DataTransfer 方式完成, tilesBefore=${tilesBefore} tilesAfter=${tilesAfterDt}`)
@@ -1283,8 +1290,20 @@ async function handleRequest(req, res) {
     if (path.startsWith('/outputs/') && method === 'GET') {
       const filename = path.replace('/outputs/', '')
       const filePath = resolve(OUTPUTS_DIR, filename)
-      // 防止路径遍历
       if (!filePath.startsWith(OUTPUTS_DIR)) return sendJSON(res, 403, { error: 'Forbidden' })
+      if (!existsSync(filePath)) return sendJSON(res, 404, { error: 'File not found' })
+      const stream = createReadStream(filePath)
+      res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Access-Control-Allow-Origin': '*' })
+      stream.pipe(res)
+      return
+    }
+
+    // ===== 临时文件服务（大文件上传用）=====
+    if (path.startsWith('/tmp/serve/') && method === 'GET') {
+      const filename = decodeURIComponent(path.replace('/tmp/serve/', ''))
+      const serveDir = join(TMP_DIR, 'serve')
+      const filePath = resolve(serveDir, filename)
+      if (!filePath.startsWith(serveDir)) return sendJSON(res, 403, { error: 'Forbidden' })
       if (!existsSync(filePath)) return sendJSON(res, 404, { error: 'File not found' })
       const stream = createReadStream(filePath)
       res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Access-Control-Allow-Origin': '*' })
