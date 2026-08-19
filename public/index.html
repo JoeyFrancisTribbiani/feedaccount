@@ -1341,7 +1341,11 @@
             <div class="matrix-videos-area">
               <div class="matrix-section-head">
                 <strong>成品视频库</strong>
-                <button id="mx-refresh-videos" class="link-btn" type="button">刷新</button>
+                <div style="display:flex;gap:8px;align-items:center;">
+                  <label style="font-size:11px;display:flex;align-items:center;gap:4px;"><input type="checkbox" id="mx-select-all-videos" style="width:14px;height:14px;" />全选</label>
+                  <button id="mx-batch-download" class="button button-primary" type="button" style="font-size:11px;padding:2px 10px;">批量下载</button>
+                  <button id="mx-refresh-videos" class="link-btn" type="button">刷新</button>
+                </div>
               </div>
               <div id="mx-videos-list" class="matrix-videos-list"></div>
             </div>

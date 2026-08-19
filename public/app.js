@@ -4494,6 +4494,7 @@ function renderMatrixVideos() {
   }
   mxEl.videosList.innerHTML = mxState.videos.map((v) => `
     <div class="matrix-video-item">
+      <input type="checkbox" class="mv-select-cb" data-mv-id="${escapeHtml(v.id)}" data-mv-url="${escapeHtml(v.filePath)}" style="margin-right:4px;" />
       <div class="matrix-video-thumb">
         <video src="${escapeHtml(v.filePath)}" muted preload="metadata"></video>
       </div>
@@ -4541,6 +4542,37 @@ function renderMatrixVideos() {
     });
   });
 }
+
+// 矩阵视频全选
+document.querySelector("#mx-select-all-videos")?.addEventListener("change", (e) => {
+  document.querySelectorAll(".mv-select-cb").forEach((cb) => { cb.checked = e.target.checked; });
+});
+
+// 矩阵视频批量下载
+document.querySelector("#mx-batch-download")?.addEventListener("click", async () => {
+  const checked = document.querySelectorAll(".mv-select-cb:checked");
+  if (!checked.length) { showToast("请先勾选要下载的视频", true); return; }
+  for (const cb of checked) {
+    const mvId = cb.dataset.mvId;
+    const url = cb.dataset.mvUrl;
+    // 触发下载
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    // 标记已下载
+    try {
+      await request(`/api/matrices/${encodeURIComponent(mxState.selectedId)}/videos/${encodeURIComponent(mvId)}/downloaded`, { method: "POST", body: "{}" });
+      const vid = mxState.videos.find((x) => x.id === mvId);
+      if (vid) vid.downloaded = true;
+    } catch {}
+    await new Promise(r => setTimeout(r, 500));
+  }
+  renderMatrixVideos();
+  showToast(`批量下载完成：${checked.length}个视频`);
+});
 
 mxEl.addBtn?.addEventListener("click", () => mxEl.addForm.classList.toggle("hidden"));
 mxEl.cancel?.addEventListener("click", () => { mxEl.addForm.classList.add("hidden"); mxEl.name.value = ""; mxEl.notes.value = ""; });
