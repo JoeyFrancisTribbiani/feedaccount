@@ -767,7 +767,7 @@ export class LocalDatabase {
       INSERT INTO app_settings (key, value_json, updated_at)
       VALUES ('path_config', ?, ?)
       ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at
-    `).run("path_config", JSON.stringify(config), nowIso());
+    `).run(JSON.stringify(config), nowIso());
     return config;
   }
 
