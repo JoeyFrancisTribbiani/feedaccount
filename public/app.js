@@ -5663,6 +5663,8 @@ async function handlePresetAdd() {
   if (!name) { showToast("名称不能为空", true); return; }
   // prompt为空时使用默认方案的prompt
   if (!prompt) {
+    // aiPresets可能未加载，先从API获取
+    if (!aiPresets.length) await fetchAiPresets();
     const defaultPreset = aiPresets.find(p => p.isDefault);
     if (defaultPreset?.prompt) {
       prompt = defaultPreset.prompt;
