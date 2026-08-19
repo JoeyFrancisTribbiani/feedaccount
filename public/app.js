@@ -2061,7 +2061,7 @@ if (rdtExt.bindProfile) {
 // ---- TikTok 扩展模块: 账号映射, 素材库, 自动化发布 ----
 const tkExt = {
   bindProfileSelect: document.querySelector("#bind-profile-select"),
-  bindAccountName: document.querySelector("#bind-account-name"),
+  bindAccountSelect: document.querySelector("#bind-account-select"),
   bindRegion: document.querySelector("#bind-region"),
   bindStage: document.querySelector("#bind-stage"),
   btnSaveBind: document.querySelector("#btn-save-account-bind"),
@@ -2083,7 +2083,7 @@ const tkExt = {
   btnRefreshPublishJobs: document.querySelector("#btn-refresh-publish-jobs"),
 };
 
-const tkExtState = { accounts: [], materials: [], publishJobs: [] };
+const tkExtState = { accounts: [], materials: [], publishJobs: [], matPage: 1, matPageSize: 20, imgPage: 1, imgPageSize: 20, images: [] };
 
 async function refreshTkAccounts() {
   try {
@@ -2147,23 +2147,74 @@ async function refreshTkMaterials() {
 
 function renderTkMaterials() {
   if (!tkExt.materialsList) return;
-  const list = tkExtState.materials;
+  // 只显示视频类素材
+  const videoMats = tkExtState.materials.filter(m => !m.category || m.category !== "image");
+  const list = videoMats;
   if (!list.length) {
-    tkExt.materialsList.innerHTML = `<div style="text-align: center; color: var(--text-dim); padding: 15px;">素材库为空</div>`;
+    tkExt.materialsList.innerHTML = `<div class="empty-state compact" style="grid-column:1/-1;">素材库为空</div>`;
+    document.querySelector("#materials-pagination").innerHTML = "";
     return;
   }
-  tkExt.materialsList.innerHTML = list.map(m => `
-    <div style="background: rgba(255,255,255,0.03); border: 1px solid var(--border-color); padding: 8px 12px; border-radius: 6px; display: flex; justify-content: space-between; align-items: center;">
-      <div>
-        <strong style="font-size: 13px;">${escapeHtml(m.title)}</strong>
-        <div style="font-size: 11px; color: var(--text-dim); margin-top: 2px;">
-          <span>路径: ${escapeHtml(m.filePath)}</span>
-          ${m.hashtags && m.hashtags.length ? `<span style="margin-left: 8px; color: #58a6ff;">${escapeHtml(m.hashtags.join(' '))}</span>` : ''}
-        </div>
+  const totalPages = Math.ceil(list.length / tkExtState.matPageSize);
+  if (tkExtState.matPage > totalPages) tkExtState.matPage = 1;
+  const start = (tkExtState.matPage - 1) * tkExtState.matPageSize;
+  const pageItems = list.slice(start, start + tkExtState.matPageSize);
+  
+  tkExt.materialsList.innerHTML = pageItems.map(m => `
+    <div style="background:rgba(255,255,255,0.03);border:1px solid var(--border-color);border-radius:8px;overflow:hidden;">
+      <video src="${escapeHtml(m.filePath)}#t=0.1" muted preload="metadata" style="width:100%;height:100px;object-fit:cover;background:#000;"></video>
+      <div style="padding:6px 8px;">
+        <div style="font-size:11px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(m.title)}</div>
+        ${m.hashtags?.length ? `<div style="font-size:10px;color:#58a6ff;">${escapeHtml(m.hashtags.join(' '))}</div>` : ''}
+        <button class="danger-button" style="padding:1px 6px;font-size:10px;margin-top:4px;" onclick="window.deleteTkMaterial('${escapeHtml(m.id)}')">删除</button>
       </div>
-      <button class="danger-button data-danger" style="padding: 2px 6px; font-size: 11px;" onclick="window.deleteTkMaterial('${escapeHtml(m.id)}')">删除</button>
     </div>
   `).join("");
+  
+  // 分页
+  const pgEl = document.querySelector("#materials-pagination");
+  if (pgEl) {
+    pgEl.innerHTML = totalPages > 1 ? `${tkExtState.matPage}/${totalPages}页 · <button class="link-btn" onclick="tkExtState.matPage--;renderTkMaterials()">上一页</button><button class="link-btn" onclick="tkExtState.matPage++;renderTkMaterials()">下一页</button>` : "";
+  }
+}
+
+// 图片素材
+async function refreshTkImages() {
+  try {
+    const res = await request("/api/tiktok/materials");
+    tkExtState.images = (res.materials || []).filter(m => m.category === "image");
+    renderTkImages();
+  } catch (e) { console.error("图片素材加载失败:", e.message); }
+}
+
+function renderTkImages() {
+  const el = document.querySelector("#tk-images-list");
+  if (!el) return;
+  const list = tkExtState.images;
+  if (!list.length) {
+    el.innerHTML = `<div class="empty-state compact" style="grid-column:1/-1;">图片库为空</div>`;
+    document.querySelector("#images-pagination").innerHTML = "";
+    return;
+  }
+  const totalPages = Math.ceil(list.length / tkExtState.imgPageSize);
+  if (tkExtState.imgPage > totalPages) tkExtState.imgPage = 1;
+  const start = (tkExtState.imgPage - 1) * tkExtState.imgPageSize;
+  const pageItems = list.slice(start, start + tkExtState.imgPageSize);
+  
+  el.innerHTML = pageItems.map(m => `
+    <div style="background:rgba(255,255,255,0.03);border:1px solid var(--border-color);border-radius:8px;overflow:hidden;">
+      <img src="${escapeHtml(m.filePath)}" style="width:100%;height:120px;object-fit:cover;background:#000;cursor:pointer;" onclick="window.open('${escapeHtml(m.filePath)}','_blank')" />
+      <div style="padding:4px 6px;display:flex;justify-content:space-between;align-items:center;">
+        <span style="font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100px;">${escapeHtml(m.title)}</span>
+        <button class="danger-button" style="padding:1px 4px;font-size:10px;" onclick="window.deleteTkMaterial('${escapeHtml(m.id)}')">删除</button>
+      </div>
+    </div>
+  `).join("");
+  
+  const pgEl = document.querySelector("#images-pagination");
+  if (pgEl) {
+    pgEl.innerHTML = totalPages > 1 ? `${tkExtState.imgPage}/${totalPages}页 · <button class="link-btn" onclick="tkExtState.imgPage--;renderTkImages()">上一页</button><button class="link-btn" onclick="tkExtState.imgPage++;renderTkImages()">下一页</button>` : "";
+  }
 }
 
 window.deleteTkMaterial = async function(id) {
@@ -2258,10 +2309,86 @@ async function initTiktokExt() {
   }
 }
 
-// 绑定保存账号映射事件
+// 账号架构弹窗开关
+document.querySelector("#tk-account-config-btn")?.addEventListener("click", async () => {
+  const modal = document.querySelector("#tk-account-modal");
+  modal.classList.remove("hidden");
+  // 加载社媒矩阵账号到下拉框
+  await loadMatrixAccountsForBind();
+});
+document.querySelector("#tk-account-modal-close")?.addEventListener("click", () => {
+  document.querySelector("#tk-account-modal").classList.add("hidden");
+});
+
+// 加载社媒矩阵账号到绑定下拉框
+async function loadMatrixAccountsForBind() {
+  try {
+    const matrices = await request("/api/matrices");
+    const accounts = [];
+    for (const mx of matrices) {
+      const mxAccounts = await request(`/api/matrices/${encodeURIComponent(mx.id)}/accounts`);
+      mxAccounts.forEach(a => accounts.push({ ...a, matrixName: mx.name }));
+    }
+    const select = document.querySelector("#bind-account-select");
+    if (select) {
+      select.innerHTML = '<option value="">请选择账号</option>' + accounts.map(a => 
+        `<option value="${escapeHtml(a.accountName || a.handle || a.id)}">${escapeHtml(a.accountName || a.handle || a.id)} (${escapeHtml(a.matrixName)})</option>`
+      ).join("");
+    }
+  } catch (e) { console.error("加载矩阵账号失败:", e.message); }
+}
+
+// 视频素材上传弹窗开关
+document.querySelector("#btn-upload-video-material")?.addEventListener("click", () => {
+  document.querySelector("#tk-video-upload-modal").classList.remove("hidden");
+});
+document.querySelector("#tk-video-upload-close")?.addEventListener("click", () => {
+  document.querySelector("#tk-video-upload-modal").classList.add("hidden");
+});
+
+// 图片素材上传弹窗开关
+document.querySelector("#btn-upload-image-material")?.addEventListener("click", () => {
+  document.querySelector("#tk-image-upload-modal").classList.remove("hidden");
+  document.querySelector("#tk-image-file-input").click();
+});
+document.querySelector("#tk-image-upload-close")?.addEventListener("click", () => {
+  document.querySelector("#tk-image-upload-modal").classList.add("hidden");
+});
+document.querySelector("#tk-image-drop-zone")?.addEventListener("click", () => {
+  document.querySelector("#tk-image-file-input").click();
+});
+
+// 图片素材上传
+document.querySelector("#tk-image-file-input")?.addEventListener("change", async () => {
+  const files = [...document.querySelector("#tk-image-file-input").files];
+  if (!files.length) return;
+  const info = document.querySelector("#tk-image-upload-info");
+  info.textContent = `上传中 0/${files.length}...`;
+  let ok = 0, fail = 0;
+  for (let i = 0; i < files.length; i++) {
+    info.textContent = `上传中 ${i + 1}/${files.length}...`;
+    try {
+      const formData = new FormData();
+      formData.append("file", files[i]);
+      const res = await fetch("/api/remix/upload", { method: "POST", body: formData });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "上传失败");
+      // 保存为图片素材
+      await request("/api/tiktok/materials", {
+        method: "POST",
+        body: JSON.stringify({ title: files[i].name, filePath: data.url, category: "image", hashtags: "" }),
+      });
+      ok++;
+    } catch { fail++; }
+  }
+  info.textContent = `上传完成：成功 ${ok} 个${fail ? `，失败 ${fail} 个` : ""}`;
+  document.querySelector("#tk-image-file-input").value = "";
+  await refreshTkMaterials();
+  await refreshTkImages();
+});
 tkExt.btnSaveBind?.addEventListener("click", async () => {
   const profileId = tkExt.bindProfileSelect.value;
-  const accountName = tkExt.bindAccountName.value.trim();
+  const accountName = tkExt.bindAccountSelect?.value || "";
   const region = tkExt.bindRegion.value;
   const nurtureStage = tkExt.bindStage.value;
 
@@ -2272,7 +2399,6 @@ tkExt.btnSaveBind?.addEventListener("click", async () => {
       body: JSON.stringify({ profileId, accountName, region, nurtureStage })
     });
     showToast("TK 账号与实例绑定已保存");
-    tkExt.bindAccountName.value = "";
     await refreshTkAccounts();
   } catch (e) {
     showToast(e.message, true);
@@ -2298,6 +2424,7 @@ tkExt.btnAddMaterial?.addEventListener("click", async () => {
     tkExt.matTitle.value = "";
     tkExt.matFilePath.value = "";
     tkExt.matHashtags.value = "";
+    document.querySelector("#tk-video-upload-modal")?.classList.add("hidden");
     await refreshTkMaterials();
   } catch (e) {
     showToast(e.message, true);
@@ -2323,7 +2450,8 @@ tkExt.btnCreatePublishJob?.addEventListener("click", async () => {
 });
 
 tkExt.btnRefreshAccounts?.addEventListener("click", refreshTkAccounts);
-tkExt.btnRefreshMaterials?.addEventListener("click", refreshTkMaterials);
+tkExt.btnRefreshMaterials?.addEventListener("click", () => { refreshTkMaterials(); refreshTkImages(); });
+document.querySelector("#btn-refresh-images")?.addEventListener("click", refreshTkImages);
 tkExt.btnRefreshPublishJobs?.addEventListener("click", refreshTkPublishJobs);
 
 async function initTiktok() {
@@ -2462,6 +2590,7 @@ for (const btn of document.querySelectorAll(".platform-tab")) {
     document.querySelectorAll(".scheduler-tab").forEach((el) => el.classList.toggle("hidden", platform !== "scheduler"));
     if (platform === "cdp") { refreshCdpInstances(); refreshNgrokStatus(); }
     if (platform === "matrix") { fetchMatrices(); }
+    if (platform === "tiktok") { refreshTkMaterials(); refreshTkImages(); }
   });
 }
 
