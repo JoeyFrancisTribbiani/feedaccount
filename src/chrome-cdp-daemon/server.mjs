@@ -428,6 +428,7 @@ async function chatgptSendMessage(text, opts = {}) {
         await page.waitForTimeout(1000)
       } else {
         // 按钮还没渲染出来，继续等
+        if (attempt % 10 === 0) log(`等待发送按钮出现... (${attempt}s)`)
         await page.waitForTimeout(1000)
       }
     } catch (err) {
