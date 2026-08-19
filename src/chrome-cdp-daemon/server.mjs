@@ -500,20 +500,19 @@ async function chatgptUploadFile(filePath, opts = {}) {
         if (tilesAfter > tilesBefore) {
           // file-tile 出现了，等待文件真正上传完成（spinner消失+发送按钮可用）
           log('file-tile 已出现，等待文件上传完成...')
-          for (let wait = 0; wait < 900; wait++) {
+          for (let wait = 0; wait < 900; wait++) { // 最多等15分钟
             const loadingState = await page.evaluate(() => {
+              // 检查 file-tile 上是否有 cursor-wait（上传中状态）
               const tiles = document.querySelectorAll('[class*="file-tile"]')
               for (const tile of tiles) {
-                const spinner = tile.querySelector('[class*="spinner"], [class*="loading"], [class*="animate"], svg[class*="animate"]')
-                if (spinner) return { loading: true }
-              }
-              const btn = document.querySelector('button[class*="composer-submit-button"]')
-              if (btn && btn.dataset.testid !== 'stop-button') {
-                return { loading: false, btnDisabled: btn.disabled }
+                const btn = tile.querySelector('button')
+                if (btn && btn.className.includes('cursor-wait')) return { loading: true }
+                // 也检查 tile 自身
+                if (tile.className.includes('cursor-wait')) return { loading: true }
               }
               return { loading: false }
             })
-            if (!loadingState.loading && !loadingState.btnDisabled) {
+            if (!loadingState.loading) {
               log(`文件上传完成 (${wait}s)`)
               return { ok: true, method: 'input-direct' }
             }
@@ -536,22 +535,18 @@ async function chatgptUploadFile(filePath, opts = {}) {
             const loadingState = await page.evaluate(() => {
               const tiles = document.querySelectorAll('[class*="file-tile"]')
               for (const tile of tiles) {
-                // 检查是否有 spinner/loading 动画元素
-                const spinner = tile.querySelector('[class*="spinner"], [class*="loading"], [class*="animate"], svg[class*="animate"]')
-                if (spinner) return { loading: true }
-              }
-              // 检查发送按钮是否可用（文件上传完成后才可用）
-              const btn = document.querySelector('button[class*="composer-submit-button"]')
-              if (btn && btn.dataset.testid !== 'stop-button') {
-                return { loading: false, btnDisabled: btn.disabled }
+                const btn = tile.querySelector('button')
+                if (btn && btn.className.includes('cursor-wait')) return { loading: true }
+                if (tile.className.includes('cursor-wait')) return { loading: true }
               }
               return { loading: false }
             })
-            if (!loadingState.loading && !loadingState.btnDisabled) {
+            if (!loadingState.loading) {
               uploadComplete = true
               log(`文件上传完成 (${wait}s)`)
               break
             }
+            if (wait % 10 === 0) log(`等待文件上传完成... (${wait}s)`)
             await page.waitForTimeout(1000)
           }
           if (uploadComplete) {
@@ -585,16 +580,13 @@ async function chatgptUploadFile(filePath, opts = {}) {
             const loadingState = await page.evaluate(() => {
               const tiles = document.querySelectorAll('[class*="file-tile"]')
               for (const tile of tiles) {
-                const spinner = tile.querySelector('[class*="spinner"], [class*="loading"], [class*="animate"], svg[class*="animate"]')
-                if (spinner) return { loading: true }
-              }
-              const btn = document.querySelector('button[class*="composer-submit-button"]')
-              if (btn && btn.dataset.testid !== 'stop-button') {
-                return { loading: false, btnDisabled: btn.disabled }
+                const btn = tile.querySelector('button')
+                if (btn && btn.className.includes('cursor-wait')) return { loading: true }
+                if (tile.className.includes('cursor-wait')) return { loading: true }
               }
               return { loading: false }
             })
-            if (!loadingState.loading && !loadingState.btnDisabled) {
+            if (!loadingState.loading) {
               log(`文件上传完成 (${wait}s)`)
               return { ok: true, method: 'datatransfer' }
             }
