@@ -725,13 +725,13 @@
       <!-- TikTok Automation Tab Container -->
       <section class="tiktok-panel tiktok-tab hidden">
         <!-- 账号架构与绑定（收起为按钮，点开弹窗） -->
-        <div style="margin-bottom:16px;">
+        <div style="margin-bottom:4px;">
           <button id="tk-account-config-btn" class="button button-secondary" type="button">⚙ 账号架构与绑定</button>
         </div>
 
         <!-- 账号架构弹窗 -->
         <div id="tk-account-modal" class="modal-overlay hidden">
-          <div class="modal-content" style="max-width:800px;width:80vw;">
+          <div class="modal-content" style="max-width:70vw;width:70vw;">
             <div class="modal-header">
               <h3>账号架构与绑定</h3>
               <button id="tk-account-modal-close" class="modal-close" type="button">×</button>
@@ -895,19 +895,38 @@
             </div>
             <button id="btn-refresh-publish-jobs" class="text-button" type="button">刷新队列</button>
           </div>
-          <form id="create-publish-job-form" class="form-sub-card column-form" style="flex-direction:row;gap:12px;align-items:flex-end;">
-            <label style="flex:1;">
-              <span>选择发布账号 / 实例</span>
-              <select id="pub-profile-select"></select>
-            </label>
-            <label style="flex:1;">
-              <span>选择发布素材视频</span>
-              <select id="pub-material-select"></select>
-            </label>
-            <button id="btn-create-publish-job" class="button button-primary" type="button">入列发布</button>
-          </form>
-          <div id="publish-jobs-list" class="scroll-list">
-            <div class="empty-state compact">无待执行的发布任务</div>
+          <div style="display:flex;gap:16px;padding:0 16px 16px;">
+            <!-- 左侧：选账号+素材+入列 -->
+            <div style="flex:1;min-width:0;">
+              <form id="create-publish-job-form" class="column-form" style="gap:8px;">
+                <label>
+                  <span>选择发布账号 / 实例</span>
+                  <select id="pub-profile-select"></select>
+                </label>
+                <label>
+                  <span>选择发布素材视频</span>
+                  <select id="pub-material-select"></select>
+                </label>
+                <button id="btn-create-publish-job" class="button button-primary" type="button">入列发布</button>
+              </form>
+              <div id="publish-jobs-list" class="scroll-list" style="margin-top:12px;">
+                <div class="empty-state compact">无待执行的发布任务</div>
+              </div>
+            </div>
+            <!-- 右侧：发布历史+成品视频库 -->
+            <div style="flex:1;min-width:0;border-left:1px solid var(--line);padding-left:16px;">
+              <div id="pub-account-detail" style="display:none;">
+                <h4 style="font-size:13px;margin-bottom:8px;">发布历史</h4>
+                <div id="pub-history-list" style="max-height:200px;overflow-y:auto;margin-bottom:12px;">
+                  <div class="empty-state compact">暂无发布记录</div>
+                </div>
+                <h4 style="font-size:13px;margin-bottom:8px;">成品视频库</h4>
+                <div id="pub-account-videos" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:8px;max-height:300px;overflow-y:auto;">
+                  <div class="empty-state compact" style="grid-column:1/-1;">暂无成品视频</div>
+                </div>
+              </div>
+              <div id="pub-account-empty" class="empty-state compact">选择账号后显示详情</div>
+            </div>
           </div>
         </article>
 

@@ -1331,6 +1331,30 @@ export function createMonitorServer({
         return;
       }
 
+      // --- TK 账号发布详情 ---
+      if (request.method === "GET" && pathname.startsWith("/api/tiktok/account-detail/")) {
+        const profileId = decodeURIComponent(pathname.split("/api/tiktok/account-detail/")[1]);
+        // 发布历史
+        const jobs = store.listTkPublishJobs({ profileId });
+        // 查找TK账号绑定信息
+        const tkAccount = store.getTkAccountByProfileId(profileId);
+        let matrixVideos = [];
+        if (tkAccount?.accountName) {
+          // 通过accountName查找社媒矩阵账号，获取关联的矩阵ID
+          const allMatrices = store.listMatrices();
+          for (const mx of allMatrices) {
+            const accounts = store.listMatrixAccounts(mx.id);
+            const matched = accounts.find(a => a.accountName === tkAccount.accountName);
+            if (matched) {
+              matrixVideos = store.listMatrixVideos(mx.id);
+              break;
+            }
+          }
+        }
+        sendJson(response, 200, { jobs, matrixVideos, tkAccount });
+        return;
+      }
+
       // --- TK 视频自动发布任务队列 API ---
       if (request.method === "GET" && pathname === "/api/tiktok/publish/jobs") {
         const status = url.searchParams.get("status") || null;

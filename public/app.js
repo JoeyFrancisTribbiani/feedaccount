@@ -2324,16 +2324,19 @@ document.querySelector("#tk-account-modal-close")?.addEventListener("click", () 
 async function loadMatrixAccountsForBind() {
   try {
     const matrices = await request("/api/matrices");
+    console.log("[TK绑定] 矩阵数量:", matrices.length);
     const accounts = [];
     for (const mx of matrices) {
       const mxAccounts = await request(`/api/matrices/${encodeURIComponent(mx.id)}/accounts`);
+      console.log(`[TK绑定] 矩阵 ${mx.name} 账号数:`, mxAccounts.length);
       mxAccounts.forEach(a => accounts.push({ ...a, matrixName: mx.name }));
     }
     const select = document.querySelector("#bind-account-select");
     if (select) {
       select.innerHTML = '<option value="">请选择账号</option>' + accounts.map(a => 
-        `<option value="${escapeHtml(a.accountName || a.handle || a.id)}">${escapeHtml(a.accountName || a.handle || a.id)} (${escapeHtml(a.matrixName)})</option>`
+        `<option value="${escapeHtml(a.accountName || a.id)}">${escapeHtml(a.accountName || a.id)} (${escapeHtml(a.matrixName)})</option>`
       ).join("");
+      console.log("[TK绑定] 下拉框选项数:", accounts.length);
     }
   } catch (e) { console.error("加载矩阵账号失败:", e.message); }
 }
@@ -2453,6 +2456,42 @@ tkExt.btnRefreshAccounts?.addEventListener("click", refreshTkAccounts);
 tkExt.btnRefreshMaterials?.addEventListener("click", () => { refreshTkMaterials(); refreshTkImages(); });
 document.querySelector("#btn-refresh-images")?.addEventListener("click", refreshTkImages);
 tkExt.btnRefreshPublishJobs?.addEventListener("click", refreshTkPublishJobs);
+
+// 发布账号选中时加载详情
+tkExt.pubProfileSelect?.addEventListener("change", async () => {
+  const profileId = tkExt.pubProfileSelect.value;
+  if (!profileId) {
+    document.querySelector("#pub-account-detail").style.display = "none";
+    document.querySelector("#pub-account-empty").style.display = "";
+    return;
+  }
+  try {
+    const data = await request(`/api/tiktok/account-detail/${encodeURIComponent(profileId)}`);
+    document.querySelector("#pub-account-empty").style.display = "none";
+    document.querySelector("#pub-account-detail").style.display = "";
+    // 发布历史
+    const historyEl = document.querySelector("#pub-history-list");
+    const jobs = data.jobs || [];
+    historyEl.innerHTML = jobs.length ? jobs.map(j => `
+      <div style="padding:4px 0;border-bottom:1px solid var(--line);font-size:11px;">
+        <strong>${escapeHtml(j.materialTitle || j.material_title || "未知")}</strong>
+        <span style="color:var(--text-muted);margin-left:6px;">${escapeHtml(j.status)}</span>
+        <span style="color:var(--text-muted);margin-left:6px;">${formatDateTime(j.scheduledAt || j.created_at)}</span>
+      </div>
+    `).join("") : '<div class="empty-state compact">暂无发布记录</div>';
+    // 成品视频库
+    const videosEl = document.querySelector("#pub-account-videos");
+    const videos = data.matrixVideos || [];
+    videosEl.innerHTML = videos.length ? videos.map(v => `
+      <div style="border:1px solid var(--line);border-radius:6px;overflow:hidden;">
+        <video src="${escapeHtml(v.filePath)}#t=0.1" muted preload="metadata" style="width:100%;height:80px;object-fit:cover;background:#000;"></video>
+        <div style="padding:4px;font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(v.title || v.filePath)}</div>
+      </div>
+    `).join("") : '<div class="empty-state compact" style="grid-column:1/-1;">暂无成品视频</div>';
+  } catch (e) {
+    console.error("加载账号详情失败:", e.message);
+  }
+});
 
 async function initTiktok() {
   try {
