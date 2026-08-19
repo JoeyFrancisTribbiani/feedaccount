@@ -5360,8 +5360,8 @@ function openPresetEditModal(preset) {
                 <label><input type="radio" name="intro-mode" value="image" />纯图模式</label>
               </span>
             </div>
-            <div class="preset-config-row" id="intro-video-only-row">
-              <label>开始插入图片时间 <input type="text" id="preset-intro-start" value="00:00:00:00" placeholder="时:分:秒:帧" /></label>
+            <div class="preset-config-row">
+              <label id="intro-start-label">开始插入图片时间 <input type="text" id="preset-intro-start" value="00:00:00:00" placeholder="时:分:秒:帧" /></label>
               <label>插入图片数量 <input type="number" id="preset-intro-count" min="0" value="8" /></label>
               <label>每张图片持续 <input type="text" id="preset-intro-duration" value="00:00:00:12" placeholder="时:分:秒:帧" /></label>
             </div>
@@ -5381,8 +5381,8 @@ function openPresetEditModal(preset) {
                 <label><input type="radio" name="outro-mode" value="image" />纯图模式</label>
               </span>
             </div>
-            <div class="preset-config-row" id="outro-video-only-row">
-              <label>开始插入图片时间 <input type="text" id="preset-outro-start" value="00:00:00:00" placeholder="时:分:秒:帧" /></label>
+            <div class="preset-config-row">
+              <label id="outro-start-label">开始插入图片时间 <input type="text" id="preset-outro-start" value="00:00:00:00" placeholder="时:分:秒:帧" /></label>
               <label>插入图片数量 <input type="number" id="preset-outro-count" min="0" value="4" /></label>
               <label>每张图片持续 <input type="text" id="preset-outro-duration" value="00:00:05:00" placeholder="时:分:秒:帧" /></label>
             </div>
@@ -5464,13 +5464,13 @@ function openPresetEditModal(preset) {
   // 片头/片尾模式切换（视频模式/纯图模式）
   function updateIntroModeVisibility() {
     const isVideo = overlay.querySelector('input[name="intro-mode"]:checked')?.value === "video";
-    overlay.querySelector("#intro-video-only-row").style.display = isVideo ? "" : "none";
+    overlay.querySelector("#intro-start-label").style.display = isVideo ? "" : "none";
     overlay.querySelector("#intro-volume-label").style.display = isVideo ? "" : "none";
     overlay.querySelector("#intro-file-label").style.display = isVideo ? "" : "none";
   }
   function updateOutroModeVisibility() {
     const isVideo = overlay.querySelector('input[name="outro-mode"]:checked')?.value === "video";
-    overlay.querySelector("#outro-video-only-row").style.display = isVideo ? "" : "none";
+    overlay.querySelector("#outro-start-label").style.display = isVideo ? "" : "none";
     overlay.querySelector("#outro-volume-label").style.display = isVideo ? "" : "none";
     overlay.querySelector("#outro-file-label").style.display = isVideo ? "" : "none";
   }
