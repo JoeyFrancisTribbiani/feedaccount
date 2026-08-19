@@ -5246,7 +5246,7 @@ function openPresetEditModal(preset) {
       <div class="modal-body">
         <div class="preset-form">
           <input type="text" id="preset-form-name" placeholder="方案名称" />
-          <textarea id="preset-form-prompt" rows="5" placeholder="提示词内容，使用 {{变量名}} 定义需要上传的资源变量"></textarea>
+          <textarea id="preset-form-prompt" rows="5" placeholder="${isEdit ? '' : '留空则使用默认方案的提示词'}"></textarea>
           <label class="preset-default-label">
             <input type="checkbox" id="preset-form-default" ${isEdit && preset.isDefault ? "checked" : ""} /> 设为默认方案
           </label>
@@ -5622,8 +5622,19 @@ async function getVideoDuration(filePath) {
 
 async function handlePresetAdd() {
   const name = presetModalEl.name.value.trim();
-  const prompt = presetModalEl.prompt.value.trim();
-  if (!name || !prompt) { showToast("名称和提示词不能为空", true); return; }
+  let prompt = presetModalEl.prompt.value.trim();
+  if (!name) { showToast("名称不能为空", true); return; }
+  // prompt为空时使用默认方案的prompt
+  if (!prompt) {
+    const defaultPreset = aiPresets.find(p => p.isDefault);
+    if (defaultPreset?.prompt) {
+      prompt = defaultPreset.prompt;
+      showToast("提示词为空，已使用默认方案的提示词");
+    } else {
+      showToast("提示词不能为空，且没有默认方案可参考", true);
+      return;
+    }
+  }
   const { introConfig, outroConfig, musicConfig, dedup } = collectPresetConfig();
   // 校验：图片开始时间+总持续时间不能超过片段时长
   const introTotal = (introConfig.imageInsertStart || 0) + (introConfig.imageCount || 0) * (introConfig.imageDuration || 0);
