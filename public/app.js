@@ -4480,11 +4480,20 @@ function renderMatrixVideos() {
         <span class="matrix-video-meta">${escapeHtml(v.creatorName || "—")} · ${formatDateTime(v.createdAt)}</span>
       </div>
       <div class="matrix-video-actions">
-        ${v.filePath ? `<a href="${escapeHtml(v.filePath)}" download class="button ${v.downloaded ? "button-secondary" : "button-primary"}" style="font-size:11px;padding:2px 8px;" data-mv-id="${escapeHtml(v.id)}">${v.downloaded ? "已下载 ✓" : "下载"}</a>` : ""}
+        ${v.filePath ? `<button class="button button-secondary mv-preview-btn" data-mv-url="${escapeHtml(v.filePath)}" style="font-size:11px;padding:2px 8px;">预览</button><a href="${escapeHtml(v.filePath)}" download class="button ${v.downloaded ? "button-secondary" : "button-primary"}" style="font-size:11px;padding:2px 8px;" data-mv-id="${escapeHtml(v.id)}">${v.downloaded ? "已下载 ✓" : "下载"}</a>` : ""}
         <button class="remix-del-btn" data-del-mv="${escapeHtml(v.id)}" title="删除">×</button>
       </div>
     </div>
   `).join("");
+  mxEl.videosList.querySelectorAll(".mv-preview-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const url = btn.dataset.mvUrl;
+      const modal = document.querySelector("#video-preview-modal");
+      const player = document.querySelector("#video-preview-player");
+      player.src = url;
+      modal.classList.remove("hidden");
+    });
+  });
   mxEl.videosList.querySelectorAll("[data-del-mv]").forEach((btn) => {
     btn.addEventListener("click", async () => {
       await request(`/api/matrices/${encodeURIComponent(mxState.selectedId)}/videos`, { method: "DELETE", body: JSON.stringify({ videoId: btn.dataset.delMv }) });
