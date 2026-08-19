@@ -500,7 +500,7 @@ async function chatgptUploadFile(filePath, opts = {}) {
         if (tilesAfter > tilesBefore) {
           // file-tile 出现了，等待文件真正上传完成（spinner消失+发送按钮可用）
           log('file-tile 已出现，等待文件上传完成...')
-          for (let wait = 0; wait < 600; wait++) {
+          for (let wait = 0; wait < 900; wait++) {
             const loadingState = await page.evaluate(() => {
               const tiles = document.querySelectorAll('[class*="file-tile"]')
               for (const tile of tiles) {
@@ -520,7 +520,7 @@ async function chatgptUploadFile(filePath, opts = {}) {
             if (wait % 10 === 0) log(`等待文件上传完成... (${wait}s)`)
             await page.waitForTimeout(1000)
           }
-          log('文件上传等待超时(10分钟)')
+          log('文件上传等待超时(15分钟)')
           return { ok: true, method: 'input-direct' }
         }
       } catch (sizeErr) {
@@ -532,7 +532,7 @@ async function chatgptUploadFile(filePath, opts = {}) {
           // 等待 file-tile 上的 loading/spinner 消失
           log('file-tile 已出现，等待文件上传完成...')
           let uploadComplete = false
-          for (let wait = 0; wait < 600; wait++) { // 最多等10分钟
+          for (let wait = 0; wait < 900; wait++) { // 最多等15分钟
             const loadingState = await page.evaluate(() => {
               const tiles = document.querySelectorAll('[class*="file-tile"]')
               for (const tile of tiles) {
@@ -581,7 +581,7 @@ async function chatgptUploadFile(filePath, opts = {}) {
         if (tilesAfterDt > tilesBefore) {
           // 等待文件上传完成
           log('等待文件上传完成...')
-          for (let wait = 0; wait < 600; wait++) {
+          for (let wait = 0; wait < 900; wait++) {
             const loadingState = await page.evaluate(() => {
               const tiles = document.querySelectorAll('[class*="file-tile"]')
               for (const tile of tiles) {
