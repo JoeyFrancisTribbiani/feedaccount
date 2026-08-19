@@ -528,8 +528,10 @@ export function createMonitorServer({
               } catch (e) { store.logCdpEvent(null, "warning", `下载图片失败: ${e.message}`, taskId); }
             }
 
-            // 记录图片路径到数据库
-            store.updateRemixTask(taskId, { imagePaths: imagePaths.map(p => `/data/remix-output/${path.basename(p)}`) });
+            // 记录图片路径到数据库（失败不影响拼接）
+            try {
+              store.updateRemixTask(taskId, { imagePaths: imagePaths.map(p => `/data/remix-output/${path.basename(p)}`) });
+            } catch (e) { console.error("[AI混剪] 记录图片路径失败:", e.message); }
 
             // ★ 图片下载完成，AI 部分结束。提前释放队列，允许下一个 AI 任务开始
             store.logCdpEvent(null, "info", `图片下载完成(${imagePaths.length}张)，开始本地拼接，释放AI队列`, taskId);
