@@ -29,7 +29,14 @@ export class LocalDatabase {
     if (filename !== ":memory:") mkdirSync(path.dirname(filename), { recursive: true });
     this.db = new DatabaseSync(filename);
     this.db.exec("PRAGMA foreign_keys = ON;");
-    if (filename !== ":memory:") this.db.exec("PRAGMA journal_mode = WAL;");
+    if (filename !== ":memory:") {
+      try {
+        this.db.exec("PRAGMA journal_mode = WAL;");
+      } catch {
+        // WAL 模式在某些磁盘（网络盘/exFAT）不支持，回退到 DELETE 模式
+        try { this.db.exec("PRAGMA journal_mode = DELETE;"); } catch {}
+      }
+    }
     this.#migrate();
     this.#markInterruptedRuns();
   }
