@@ -907,3 +907,23 @@ function resolveLocal(url) {
   if (existsSync(local)) return local;
   return null;
 }
+
+/**
+ * 反AI检测图片处理（视觉扰动+清除元数据）
+ * 参考 AI 视频去水印工具箱 v13.0 的 AntiAIImageProcess
+ * 1. 轻量噪声 2. 亮度/饱和度/伽马微调 3. 锐化 4. 清除EXIF
+ */
+export async function antiAiProcessImage(inputPath, outputPath) {
+  const noise = 2 + Math.floor(Math.random() * 3);      // 2-4
+  const bri = Math.floor(Math.random() * 7) - 3;          // -3~3
+  const sat = 98 + Math.floor(Math.random() * 5);          // 98-102
+  const gam = 98 + Math.floor(Math.random() * 5);          // 98-102
+
+  await runFfmpeg([
+    "-y", "-i", inputPath,
+    "-vf", `scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuv444p,format=yuv420p,eq=brightness=${bri}/1000:contrast=1.0:saturation=${sat}/100:gamma=${gam}/100,noise=alls=${noise}:allf=t,unsharp=3:3:0.3:3:3:0.0`,
+    "-map_metadata", "-1", "-map_chapters", "-1",
+    "-update", "1", "-q:v", "2",
+    outputPath,
+  ]);
+}

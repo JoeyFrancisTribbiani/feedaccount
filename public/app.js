@@ -3507,6 +3507,7 @@ function renderRemixTasks() {
           ${(t.status === "PENDING" || t.status === "PROCESSING") ? `<button class="danger-button task-abort-btn" data-task-id="${escapeHtml(t.id)}" style="font-size: 11px; padding:2px 8px;">中止</button>` : ""}
           ${(t.status === "FAILED" || t.status === "DONE") ? `<button class="button button-secondary task-retry-btn" data-task-id="${escapeHtml(t.id)}" style="font-size: 11px; padding:2px 8px;">重试</button>` : ""}
           ${t.status === "DONE" && t.outputUrl ? `<button class="button button-secondary task-preview-btn" data-out-url="${escapeHtml(t.outputUrl)}" style="font-size: 11px; padding:2px 8px;">预览</button>` : ""}
+          ${t.imagePaths?.length ? `<button class="button button-secondary task-gallery-btn" data-images='${escapeHtml(JSON.stringify(t.imagePaths))}' style="font-size: 11px; padding:2px 8px;">图集</button>` : ""}
           ${t.status === "DONE" && t.outputUrl ? `<a href="${escapeHtml(t.outputUrl)}" download data-task-id="${escapeHtml(t.id)}" data-out-url="${escapeHtml(t.outputUrl)}" class="button button-primary" style="font-size: 11px;">${t.downloaded ? "已下载 ✓" : "下载"}</a>` : ""}
           <button class="remix-del-task" data-del-task="${escapeHtml(t.id)}" style="color: #dc2626; background: none; border: none; cursor: pointer; font-size: 16px;">×</button>
         </div>
@@ -3527,6 +3528,13 @@ function renderRemixTasks() {
       const player = document.querySelector("#video-preview-player");
       player.src = url;
       modal.classList.remove("hidden");
+    });
+  });
+  // 图集按钮
+  remixEl.tasksList.querySelectorAll(".task-gallery-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const images = JSON.parse(btn.dataset.images);
+      openImageGallery(images);
     });
   });
   // 日志按钮
@@ -3593,6 +3601,20 @@ document.querySelector("#video-preview-close")?.addEventListener("click", () => 
   player.pause();
   player.src = "";
   modal.classList.add("hidden");
+});
+
+// 图集弹框
+function openImageGallery(imageUrls) {
+  const modal = document.querySelector("#image-gallery-modal");
+  const grid = document.querySelector("#image-gallery-grid");
+  grid.innerHTML = imageUrls.map(url => `<img src="${escapeHtml(url)}" style="width:100%;border-radius:8px;cursor:pointer;" onclick="window.open('${escapeHtml(url)}','_blank')" />`).join("");
+  modal.classList.remove("hidden");
+}
+document.querySelector("#image-gallery-close")?.addEventListener("click", () => {
+  document.querySelector("#image-gallery-modal").classList.add("hidden");
+});
+document.querySelector("#image-gallery-modal")?.addEventListener("click", (e) => {
+  if (e.target === e.currentTarget) e.currentTarget.classList.add("hidden");
 });
 document.querySelector("#video-preview-modal")?.addEventListener("click", (e) => {
   if (e.target === e.currentTarget) {
@@ -4480,7 +4502,7 @@ function renderMatrixVideos() {
         <span class="matrix-video-meta">${escapeHtml(v.creatorName || "—")} · ${formatDateTime(v.createdAt)}</span>
       </div>
       <div class="matrix-video-actions">
-        ${v.filePath ? `<button class="button button-secondary mv-preview-btn" data-mv-url="${escapeHtml(v.filePath)}" style="font-size:11px;padding:2px 8px;">预览</button><a href="${escapeHtml(v.filePath)}" download class="button ${v.downloaded ? "button-secondary" : "button-primary"}" style="font-size:11px;padding:2px 8px;" data-mv-id="${escapeHtml(v.id)}">${v.downloaded ? "已下载 ✓" : "下载"}</a>` : ""}
+        ${v.filePath ? `<button class="button button-secondary mv-preview-btn" data-mv-url="${escapeHtml(v.filePath)}" style="font-size:11px;padding:2px 8px;">预览</button>${v.imagePaths?.length ? `<button class="button button-secondary mv-gallery-btn" data-images='${escapeHtml(JSON.stringify(v.imagePaths))}' style="font-size:11px;padding:2px 8px;">图集</button>` : ""}<a href="${escapeHtml(v.filePath)}" download class="button ${v.downloaded ? "button-secondary" : "button-primary"}" style="font-size:11px;padding:2px 8px;" data-mv-id="${escapeHtml(v.id)}">${v.downloaded ? "已下载 ✓" : "下载"}</a>` : ""}
         <button class="remix-del-btn" data-del-mv="${escapeHtml(v.id)}" title="删除">×</button>
       </div>
     </div>
@@ -4492,6 +4514,12 @@ function renderMatrixVideos() {
       const player = document.querySelector("#video-preview-player");
       player.src = url;
       modal.classList.remove("hidden");
+    });
+  });
+  mxEl.videosList.querySelectorAll(".mv-gallery-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const images = JSON.parse(btn.dataset.images);
+      openImageGallery(images);
     });
   });
   mxEl.videosList.querySelectorAll("[data-del-mv]").forEach((btn) => {

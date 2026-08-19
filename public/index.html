@@ -1550,6 +1550,19 @@
       </div>
     </div>
 
+    <!-- 图集预览弹框 -->
+    <div id="image-gallery-modal" class="modal-overlay hidden">
+      <div class="modal-content" style="max-width:900px;width:80vw;">
+        <div class="modal-header">
+          <h3>图集</h3>
+          <button id="image-gallery-close" class="modal-close" type="button">×</button>
+        </div>
+        <div class="modal-body" style="max-height:80vh;overflow-y:auto;">
+          <div id="image-gallery-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;"></div>
+        </div>
+      </div>
+    </div>
+
     <script type="module" src="/app.js"></script>
   </body>
 </html>

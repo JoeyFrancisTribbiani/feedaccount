@@ -19,7 +19,7 @@ import { TiktokJobManager, TIKTOK_DEFAULT_OPTIONS } from "./tiktok/tiktok-job-ma
 import { TiktokPublishManager } from "./tiktok/tiktok-publish-manager.js";
 import { RotationScheduler, SCHEDULER_DEFAULTS } from "./scheduler.js";
 import { checkIpGeoViaSocks5 } from "./socks5-check.js";
-import { DEDUP_PRESETS, dedupVideo, stitchVideos, probeVideo, remixVideoWithResources, composeAiRemixVideo, setOutputDir, setUploadDir, OUTPUT_DIR as REMIX_OUTPUT_DIR } from "./video-remix.js";
+import { DEDUP_PRESETS, dedupVideo, stitchVideos, probeVideo, remixVideoWithResources, composeAiRemixVideo, antiAiProcessImage, setOutputDir, setUploadDir, OUTPUT_DIR as REMIX_OUTPUT_DIR } from "./video-remix.js";
 
 const THIS_DIR = path.dirname(fileURLToPath(import.meta.url));
 const CDP_DAEMON_DIR = path.resolve(THIS_DIR, "chrome-cdp-daemon");
@@ -514,10 +514,22 @@ export function createMonitorServer({
                   const imgFileName = `ai_img_${Date.now()}_${imagePaths.length + 1}.png`;
                   const imgPath = path.join(REMIX_OUTPUT_DIR, imgFileName);
                   writeFileSync(imgPath, buffer);
-                  imagePaths.push(imgPath);
+                  // 反AI检测处理
+                  const processedPath = imgPath.replace(/\.png$/, "_anti.png");
+                  try {
+                    await antiAiProcessImage(imgPath, processedPath);
+                    imagePaths.push(processedPath);
+                    store.logCdpEvent(null, "info", `图片反AI处理完成: ${imagePaths.length}/${fileOutputs.length}`, taskId);
+                  } catch (e) {
+                    store.logCdpEvent(null, "warning", `图片反AI处理失败，使用原图: ${e.message}`, taskId);
+                    imagePaths.push(imgPath);
+                  }
                 }
               } catch (e) { store.logCdpEvent(null, "warning", `下载图片失败: ${e.message}`, taskId); }
             }
+
+            // 记录图片路径到数据库
+            store.updateRemixTask(taskId, { imagePaths: imagePaths.map(p => `/data/remix-output/${path.basename(p)}`) });
 
             // ★ 图片下载完成，AI 部分结束。提前释放队列，允许下一个 AI 任务开始
             store.logCdpEvent(null, "info", `图片下载完成(${imagePaths.length}张)，开始本地拼接，释放AI队列`, taskId);
@@ -2126,10 +2138,17 @@ export function createMonitorServer({
         if (matrixVideosMatch) {
           const matrixId = decodeURIComponent(matrixVideosMatch[1]);
           if (request.method === "GET") {
-            const videos = store.listMatrixVideos(matrixId).map((v) => ({
-              ...v,
-              filePath: normalizeRemixUrl(v.filePath),
-            }));
+            const videos = store.listMatrixVideos(matrixId).map((v) => {
+              const fp = normalizeRemixUrl(v.filePath);
+              // 查找与该视频filePath匹配的任务的imagePaths
+              const allTasks = store.listRemixTasks();
+              const matchingTask = allTasks.find(t => t.outputUrl === fp && t.imagePaths?.length);
+              return {
+                ...v,
+                filePath: fp,
+                imagePaths: matchingTask?.imagePaths || [],
+              };
+            });
             sendJson(response, 200, videos);
             return;
           }

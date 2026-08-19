@@ -440,6 +440,7 @@ export class LocalDatabase {
     this.#ensureColumn("remix_tasks", "outro_id", "TEXT");
     this.#ensureColumn("remix_tasks", "music_id", "TEXT");
     this.#ensureColumn("remix_tasks", "cdp_instance_id", "TEXT");
+    this.#ensureColumn("remix_tasks", "image_paths_json", "TEXT");
     this.#ensureColumn("ai_remix_presets", "intro_config_json", "TEXT");
     this.#ensureColumn("ai_remix_presets", "outro_config_json", "TEXT");
     this.#ensureColumn("ai_remix_presets", "music_config_json", "TEXT");
@@ -1906,6 +1907,7 @@ export class LocalDatabase {
       outroId: r.outro_id || null,
       musicId: r.music_id || null,
       cdpInstanceId: r.cdp_instance_id || null,
+      imagePaths: r.image_paths_json ? JSON.parse(r.image_paths_json) : [],
     };
   }
 
@@ -1914,15 +1916,16 @@ export class LocalDatabase {
     return this.getRemixTask(id);
   }
 
-  updateRemixTask(id, { status = null, outputUrl = null, errorMessage = null, completedAt = null }) {
+  updateRemixTask(id, { status = null, outputUrl = null, errorMessage = null, completedAt = null, imagePaths = null }) {
     this.db.prepare(`
       UPDATE remix_tasks
       SET status = COALESCE(?, status),
           output_url = COALESCE(?, output_url),
           error_message = COALESCE(?, error_message),
-          completed_at = COALESCE(?, completed_at)
+          completed_at = COALESCE(?, completed_at),
+          image_paths_json = COALESCE(?, image_paths_json)
       WHERE id = ?
-    `).run(status, outputUrl, errorMessage, completedAt, id);
+    `).run(status, outputUrl, errorMessage, completedAt, imagePaths ? JSON.stringify(imagePaths) : null, id);
     return this.getRemixTask(id);
   }
 
