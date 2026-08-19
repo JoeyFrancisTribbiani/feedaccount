@@ -507,7 +507,7 @@ async function chatgptUploadFile(filePath, opts = {}) {
           // 等待 file-tile 上的 loading/spinner 消失
           log('file-tile 已出现，等待文件上传完成...')
           let uploadComplete = false
-          for (let wait = 0; wait < 300; wait++) { // 最多等5分钟
+          for (let wait = 0; wait < 600; wait++) { // 最多等10分钟
             const loadingState = await page.evaluate(() => {
               const tiles = document.querySelectorAll('[class*="file-tile"]')
               for (const tile of tiles) {
@@ -556,7 +556,7 @@ async function chatgptUploadFile(filePath, opts = {}) {
         if (tilesAfterDt > tilesBefore) {
           // 等待文件上传完成
           log('等待文件上传完成...')
-          for (let wait = 0; wait < 300; wait++) {
+          for (let wait = 0; wait < 600; wait++) {
             const loadingState = await page.evaluate(() => {
               const tiles = document.querySelectorAll('[class*="file-tile"]')
               for (const tile of tiles) {
