@@ -497,7 +497,32 @@ async function chatgptUploadFile(filePath, opts = {}) {
         await page.waitForTimeout(3000)
         const tilesAfter = await page.evaluate(() => document.querySelectorAll('[class*="file-tile"]').length)
         log(`setInputFiles 完成, tilesBefore=${tilesBefore} tilesAfter=${tilesAfter}`)
-        if (tilesAfter > tilesBefore) { log('文件已上传 (input#upload-files):', filePath); return { ok: true, method: 'input-direct' } }
+        if (tilesAfter > tilesBefore) {
+          // file-tile 出现了，等待文件真正上传完成（spinner消失+发送按钮可用）
+          log('file-tile 已出现，等待文件上传完成...')
+          for (let wait = 0; wait < 600; wait++) {
+            const loadingState = await page.evaluate(() => {
+              const tiles = document.querySelectorAll('[class*="file-tile"]')
+              for (const tile of tiles) {
+                const spinner = tile.querySelector('[class*="spinner"], [class*="loading"], [class*="animate"], svg[class*="animate"]')
+                if (spinner) return { loading: true }
+              }
+              const btn = document.querySelector('button[class*="composer-submit-button"]')
+              if (btn && btn.dataset.testid !== 'stop-button') {
+                return { loading: false, btnDisabled: btn.disabled }
+              }
+              return { loading: false }
+            })
+            if (!loadingState.loading && !loadingState.btnDisabled) {
+              log(`文件上传完成 (${wait}s)`)
+              return { ok: true, method: 'input-direct' }
+            }
+            if (wait % 10 === 0) log(`等待文件上传完成... (${wait}s)`)
+            await page.waitForTimeout(1000)
+          }
+          log('文件上传等待超时(10分钟)')
+          return { ok: true, method: 'input-direct' }
+        }
       } catch (sizeErr) {
         log(`setInputFiles 失败(可能文件过大): ${sizeErr.message.substring(0, 80)}`)
         // setInputFiles 可能实际已触发上传但方法超时，检查 tile 数量是否增加
