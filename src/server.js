@@ -1676,10 +1676,10 @@ export function createMonitorServer({
 
           const resolveLocal = (url) => {
             if (url.startsWith("/data/remix-videos/")) {
-              return path.resolve(THIS_DIR, "..", "data", "remix-videos", path.basename(url));
+              return path.join(getUploadDir(), path.basename(url));
             }
             if (url.startsWith("/data/remix-output/")) {
-              return path.resolve(THIS_DIR, "..", "data", "remix-output", path.basename(url));
+              return path.join(getOutputDir(), path.basename(url));
             }
             if (url.startsWith("/data/remix-resources/")) {
               return path.resolve(THIS_DIR, "..", url.replace(/^\//, ""));
@@ -1757,10 +1757,10 @@ export function createMonitorServer({
             // 解析本地文件路径
             const resolveLocal = (url) => {
               if (url.startsWith("/data/remix-videos/")) {
-                return path.resolve(THIS_DIR, "..", "data", "remix-videos", path.basename(url));
+                return path.join(getUploadDir(), path.basename(url));
               }
               if (url.startsWith("/data/remix-output/")) {
-                return path.resolve(THIS_DIR, "..", "data", "remix-output", path.basename(url));
+                return path.join(getOutputDir(), path.basename(url));
               }
               return url;
             };
@@ -1994,8 +1994,8 @@ export function createMonitorServer({
               if (!daemonUrl) { sendJson(response, 400, { error: "CDP 实例不存在" }); return; }
 
               const mainVideoLocalPath = (url) => {
-                if (url.startsWith("/data/remix-videos/")) return path.resolve(THIS_DIR, "..", "data", "remix-videos", path.basename(url));
-                if (url.startsWith("/data/remix-output/")) return path.resolve(THIS_DIR, "..", "data", "remix-output", path.basename(url));
+                if (url.startsWith("/data/remix-videos/")) return path.join(getUploadDir(), path.basename(url));
+                if (url.startsWith("/data/remix-output/")) return path.join(getOutputDir(), path.basename(url));
                 return url;
               };
               const filesToUpload = [mainVideoLocalPath(origTask.videoUrls[0])];
@@ -2014,8 +2014,8 @@ export function createMonitorServer({
             } else {
               // 拼接混剪重试
               const resolveLocal = (url) => {
-                if (url.startsWith("/data/remix-videos/")) return path.resolve(THIS_DIR, "..", "data", "remix-videos", path.basename(url));
-                if (url.startsWith("/data/remix-output/")) return path.resolve(THIS_DIR, "..", "data", "remix-output", path.basename(url));
+                if (url.startsWith("/data/remix-videos/")) return path.join(getUploadDir(), path.basename(url));
+                if (url.startsWith("/data/remix-output/")) return path.join(getOutputDir(), path.basename(url));
                 return url;
               };
               const localPaths = origTask.videoUrls.map(resolveLocal);
