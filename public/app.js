@@ -5261,7 +5261,7 @@ function openPresetEditModal(preset) {
             <div class="preset-config-row">
               <label>图片动效 <select id="preset-intro-effect">${EFFECTS}</select></label>
               <label>正片切换转场 <select id="preset-intro-transition">${TRANSITIONS}</select></label>
-              <label>片段音量 <input type="number" id="preset-intro-volume" min="0" max="100" value="100" style="width:50px;display:inline-block;" /><span style="margin-left:2px;">%</span></label>
+              <label style="display:inline-flex;align-items:center;gap:4px;">片段音量 <input type="number" id="preset-intro-volume" min="0" max="100" value="100" style="width:45px;" />%</label>
               <label>片头片段文件 <input type="file" id="preset-intro-file" accept="video/*" /></label>
             </div>
             <span id="preset-intro-file-info" class="preset-file-info"></span>
@@ -5276,7 +5276,7 @@ function openPresetEditModal(preset) {
             <div class="preset-config-row">
               <label>图片动效 <select id="preset-outro-effect">${EFFECTS}</select></label>
               <label>正片切换转场 <select id="preset-outro-transition">${TRANSITIONS}</select></label>
-              <label>片段音量 <input type="number" id="preset-outro-volume" min="0" max="100" value="100" style="width:50px;display:inline-block;" /><span style="margin-left:2px;">%</span></label>
+              <label style="display:inline-flex;align-items:center;gap:4px;">片段音量 <input type="number" id="preset-outro-volume" min="0" max="100" value="100" style="width:45px;" />%</label>
               <label>片尾片段文件 <input type="file" id="preset-outro-file" accept="video/*" /></label>
             </div>
             <span id="preset-outro-file-info" class="preset-file-info"></span>
