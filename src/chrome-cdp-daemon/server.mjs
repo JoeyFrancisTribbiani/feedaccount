@@ -500,11 +500,39 @@ async function chatgptUploadFile(filePath, opts = {}) {
         if (tilesAfter > tilesBefore) { log('文件已上传 (input#upload-files):', filePath); return { ok: true, method: 'input-direct' } }
       } catch (sizeErr) {
         log(`setInputFiles 失败(可能文件过大): ${sizeErr.message.substring(0, 80)}`)
-        // setInputFiles 可能实际已上传成功但方法超时，先检查 tile 数量是否增加
+        // setInputFiles 可能实际已触发上传但方法超时，检查 tile 数量是否增加
         const tilesAfter = await page.evaluate(() => document.querySelectorAll('[class*="file-tile"]').length)
         if (tilesAfter > tilesBefore) {
-          log('setInputFiles 超时但文件已上传成功，跳过 DataTransfer')
-          return { ok: true, method: 'input-direct-timeout' }
+          // file-tile 出现了，但文件可能还在后台上传中
+          // 等待 file-tile 上的 loading/spinner 消失
+          log('file-tile 已出现，等待文件上传完成...')
+          let uploadComplete = false
+          for (let wait = 0; wait < 300; wait++) { // 最多等5分钟
+            const loadingState = await page.evaluate(() => {
+              const tiles = document.querySelectorAll('[class*="file-tile"]')
+              for (const tile of tiles) {
+                // 检查是否有 spinner/loading 动画元素
+                const spinner = tile.querySelector('[class*="spinner"], [class*="loading"], [class*="animate"], svg[class*="animate"]')
+                if (spinner) return { loading: true }
+              }
+              // 检查发送按钮是否可用（文件上传完成后才可用）
+              const btn = document.querySelector('button[class*="composer-submit-button"]')
+              if (btn && btn.dataset.testid !== 'stop-button') {
+                return { loading: false, btnDisabled: btn.disabled }
+              }
+              return { loading: false }
+            })
+            if (!loadingState.loading && !loadingState.btnDisabled) {
+              uploadComplete = true
+              log(`文件上传完成 (${wait}s)`)
+              break
+            }
+            await page.waitForTimeout(1000)
+          }
+          if (uploadComplete) {
+            return { ok: true, method: 'input-direct-timeout' }
+          }
+          log('文件上传等待超时，继续尝试 DataTransfer')
         }
         // 大文件: 用 CDP 的 Page.handleFileChooser 或直接操作 input
         // 通过 evaluate 设置 input 的 files 属性
@@ -525,7 +553,31 @@ async function chatgptUploadFile(filePath, opts = {}) {
         await page.waitForTimeout(3000)
         const tilesAfterDt = await page.evaluate(() => document.querySelectorAll('[class*="file-tile"]').length)
         log(`DataTransfer 方式完成, tilesBefore=${tilesBefore} tilesAfter=${tilesAfterDt}`)
-        if (tilesAfterDt > tilesBefore) { log('文件已上传 (DataTransfer):', filePath); return { ok: true, method: 'datatransfer' } }
+        if (tilesAfterDt > tilesBefore) {
+          // 等待文件上传完成
+          log('等待文件上传完成...')
+          for (let wait = 0; wait < 300; wait++) {
+            const loadingState = await page.evaluate(() => {
+              const tiles = document.querySelectorAll('[class*="file-tile"]')
+              for (const tile of tiles) {
+                const spinner = tile.querySelector('[class*="spinner"], [class*="loading"], [class*="animate"], svg[class*="animate"]')
+                if (spinner) return { loading: true }
+              }
+              const btn = document.querySelector('button[class*="composer-submit-button"]')
+              if (btn && btn.dataset.testid !== 'stop-button') {
+                return { loading: false, btnDisabled: btn.disabled }
+              }
+              return { loading: false }
+            })
+            if (!loadingState.loading && !loadingState.btnDisabled) {
+              log(`文件上传完成 (${wait}s)`)
+              return { ok: true, method: 'datatransfer' }
+            }
+            await page.waitForTimeout(1000)
+          }
+          log('文件上传等待超时')
+          return { ok: true, method: 'datatransfer' }
+        }
       }
     }
   } catch (err) { log('setInputFiles 方式失败: ' + err.message) }
