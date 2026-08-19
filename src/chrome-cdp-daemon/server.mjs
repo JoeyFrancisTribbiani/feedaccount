@@ -523,36 +523,44 @@ async function chatgptUploadFile(filePath, opts = {}) {
           return { ok: true, method: 'input-direct' }
         }
       } catch (sizeErr) {
-        log(`setInputFiles 失败(可能文件过大): ${sizeErr.message.substring(0, 80)}`)
-        // setInputFiles 可能实际已触发上传但方法超时，检查 tile 数量是否增加
-        const tilesAfter = await page.evaluate(() => document.querySelectorAll('[class*="file-tile"]').length)
-        if (tilesAfter > tilesBefore) {
-          // file-tile 出现了，但文件可能还在后台上传中
-          // 等待 file-tile 上的 loading/spinner 消失
-          log('file-tile 已出现，等待文件上传完成...')
-          let uploadComplete = false
-          for (let wait = 0; wait < 900; wait++) { // 最多等15分钟
-            const loadingState = await page.evaluate(() => {
-              const tiles = document.querySelectorAll('[class*="file-tile"]')
-              for (const tile of tiles) {
-                const btn = tile.querySelector('button')
-                if (btn && btn.className.includes('cursor-wait')) return { loading: true }
-                if (tile.className.includes('cursor-wait')) return { loading: true }
+        const errMsg = sizeErr.message.substring(0, 120)
+        log(`setInputFiles 失败: ${errMsg}`)
+        // 区分超时错误和立即错误（如50MB限制）
+        const isTimeout = errMsg.includes('Timeout')
+        if (isTimeout) {
+          // 超时错误：文件可能已上传，检查 tile 数量
+          const tilesAfter = await page.evaluate(() => document.querySelectorAll('[class*="file-tile"]').length)
+          if (tilesAfter > tilesBefore) {
+            // file-tile 出现了，等待文件上传完成
+            log('file-tile 已出现，等待文件上传完成...')
+            let uploadComplete = false
+            for (let wait = 0; wait < 900; wait++) {
+              const loadingState = await page.evaluate(() => {
+                const tiles = document.querySelectorAll('[class*="file-tile"]')
+                for (const tile of tiles) {
+                  const btn = tile.querySelector('button')
+                  if (btn && btn.className.includes('cursor-wait')) return { loading: true }
+                  if (tile.className.includes('cursor-wait')) return { loading: true }
+                }
+                return { loading: false }
+              })
+              if (!loadingState.loading) {
+                uploadComplete = true
+                log(`文件上传完成 (${wait}s)`)
+                break
               }
-              return { loading: false }
-            })
-            if (!loadingState.loading) {
-              uploadComplete = true
-              log(`文件上传完成 (${wait}s)`)
-              break
+              if (wait % 10 === 0) log(`等待文件上传完成... (${wait}s)`)
+              await page.waitForTimeout(1000)
             }
-            if (wait % 10 === 0) log(`等待文件上传完成... (${wait}s)`)
-            await page.waitForTimeout(1000)
+            if (uploadComplete) {
+              log('文件上传成功（setInputFiles 超时后等待完成）')
+              return { ok: true, method: 'input-direct-timeout' }
+            }
+            log('文件上传等待超时，继续尝试 DataTransfer')
           }
-          if (uploadComplete) {
-            return { ok: true, method: 'input-direct-timeout' }
-          }
-          log('文件上传等待超时，继续尝试 DataTransfer')
+        } else {
+          // 立即错误（如50MB限制）：文件没传上去，直接走 DataTransfer
+          log('文件过大或不可传输，直接使用 DataTransfer 方式')
         }
         // 大文件: 用 CDP 的 Page.handleFileChooser 或直接操作 input
         // 通过 evaluate 设置 input 的 files 属性
