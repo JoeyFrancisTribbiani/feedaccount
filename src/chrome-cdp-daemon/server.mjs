@@ -406,22 +406,46 @@ async function chatgptSendMessage(text, opts = {}) {
         return { found: false }
       })
       if (state.found && !state.disabled && state.visible) {
-        // 用 evaluate 直接点击
-        await page.evaluate(() => {
-          const selectors = ['button[aria-label="发送提示"]', 'button[aria-label="Send"]', 'button[aria-label="发送"]', 'button[data-testid="send-button"]']
-          for (const sel of selectors) {
-            const btn = document.querySelector(sel)
-            if (btn && !btn.disabled) { btn.click(); return }
+        // 用 Playwright click 触发真实鼠标事件（React 合成事件需要）
+        // 先尝试定位按钮的 CSS 选择器
+        let clickSel = null;
+        const ariaSelectors = ['button[aria-label="发送提示"]', 'button[aria-label="Send"]', 'button[aria-label="发送"]', 'button[data-testid="send-button"]'];
+        for (const sel of ariaSelectors) {
+          if (await page.locator(sel).count() > 0) { clickSel = sel; break; }
+        }
+        if (!clickSel) {
+          // 用 class 匹配
+          const classBtns = page.locator('button[class*="composer-submit-button"]').filter({ hasNot: page.locator('[data-testid="stop-button"]') });
+          if (await classBtns.count() > 0) {
+            clickSel = 'button[class*="composer-submit-button"]';
           }
-          const submitBtns = document.querySelectorAll('button[class*="composer-submit-button"]')
-          for (const btn of submitBtns) {
-            if (btn.dataset.testid === 'stop-button') continue
-            if (btn.offsetParent !== null && !btn.disabled) { btn.click(); return }
+        }
+        if (clickSel) {
+          try {
+            await page.click(clickSel, { timeout: 5000, force: true });
+            sent = true;
+            log('消息已通过发送按钮发送');
+            break;
+          } catch (e) {
+            // Playwright click 失败，回退到 evaluate click
+            if (DEBUG) log('Playwright click 失败，尝试 DOM click:', e.message);
+            await page.evaluate(() => {
+              const selectors = ['button[aria-label="发送提示"]', 'button[aria-label="Send"]', 'button[aria-label="发送"]', 'button[data-testid="send-button"]'];
+              for (const sel of selectors) {
+                const btn = document.querySelector(sel);
+                if (btn && !btn.disabled) { btn.click(); return; }
+              }
+              const submitBtns = document.querySelectorAll('button[class*="composer-submit-button"]');
+              for (const btn of submitBtns) {
+                if (btn.dataset.testid === 'stop-button') continue;
+                if (btn.offsetParent !== null && !btn.disabled) { btn.click(); return; }
+              }
+            });
+            sent = true;
+            log('消息已通过 DOM click 发送（后备）');
+            break;
           }
-        })
-        sent = true
-        log('消息已通过发送按钮发送')
-        break
+        }
       } else if (state.found && state.disabled) {
         // 按钮存在但disabled（文件可能还在上传），继续等
         if (attempt % 10 === 0) log(`等待发送按钮可用... (${attempt}s)`)
