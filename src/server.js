@@ -533,6 +533,15 @@ export function createMonitorServer({
               store.updateRemixTask(taskId, { imagePaths: imagePaths.map(p => `/data/remix-output/${path.basename(p)}`) });
             } catch (e) { console.error("[AI混剪] 记录图片路径失败:", e.message); }
 
+            // 自动存入 TikTok 图片素材库
+            try {
+              for (const imgPath of imagePaths) {
+                const imgUrl = `/data/remix-output/${path.basename(imgPath)}`;
+                store.createTkMaterial({ title: path.basename(imgPath), filePath: imgUrl, category: "image", hashtags: [] });
+              }
+              store.logCdpEvent(null, "info", `已将 ${imagePaths.length} 张图片存入图片素材库`, taskId);
+            } catch (e) { console.error("[AI混剪] 存入图片素材库失败:", e.message); }
+
             // ★ 图片下载完成，AI 部分结束。提前释放队列，允许下一个 AI 任务开始
             store.logCdpEvent(null, "info", `图片下载完成(${imagePaths.length}张)，开始本地拼接，释放AI队列`, taskId);
             aiRemixActiveCount--;
