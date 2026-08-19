@@ -587,41 +587,63 @@ export async function composeAiRemixVideo(mainVideoPath, imagePaths, config = {}
 
     const segments = [];
 
-    // 处理片头：把前 N 张图片覆盖到片头视频中
-    if (introConfig.enabled !== false && introConfig.segmentFilePath && imagePaths.length > 0) {
-      const introPath = resolveLocal(introConfig.segmentFilePath);
-      if (introPath && existsSync(introPath)) {
-        const introImgCount = Math.min(introConfig.imageCount || 6, imagePaths.length);
-        const introImages = imagePaths.slice(0, introImgCount);
-        const introInsertStart = introConfig.imageInsertStart || 0;
-        const introImgDuration = introConfig.imageDuration || 0.7;
+    // 处理片头
+    if (introConfig.enabled !== false && imagePaths.length > 0) {
+      const introImgCount = Math.min(introConfig.imageCount || 6, imagePaths.length);
+      const introImages = imagePaths.slice(0, introImgCount);
+      const introImgDuration = introConfig.imageDuration || 0.7;
 
-        const introProcessed = await overlayImagesOnVideo(
-          introPath, introImages, introInsertStart, introImgDuration,
-          targetW, targetH, mainMeta.fps, id, "intro", tempPaths, introConfig.effect || "none", introConfig.volumePercent ?? 100
-        );
-        segments.push(introProcessed);
+      if (introConfig.mode === "image") {
+        // 纯图模式：只用图片拼接，不需要视频片段
+        const introPath = path.join(TEMP_DIR, `ai_intro_images_${id}.mp4`);
+        await imagesToVideo(introImages, introImgDuration, targetW, targetH, mainMeta.fps, introConfig.effect || "none", introPath);
+        tempPaths.push(introPath);
+        segments.push(introPath);
+      } else {
+        // 视频模式：图片覆盖到片头视频上
+        if (introConfig.segmentFilePath) {
+          const introPath = resolveLocal(introConfig.segmentFilePath);
+          if (introPath && existsSync(introPath)) {
+            const introInsertStart = introConfig.imageInsertStart || 0;
+            const introProcessed = await overlayImagesOnVideo(
+              introPath, introImages, introInsertStart, introImgDuration,
+              targetW, targetH, mainMeta.fps, id, "intro", tempPaths, introConfig.effect || "none", introConfig.volumePercent ?? 100
+            );
+            segments.push(introProcessed);
+          }
+        }
       }
     }
 
     // 主视频
     segments.push(normalizedMain);
 
-    // 处理片尾：把后 N 张图片覆盖到片尾视频中
+    // 处理片尾
     const outroImgCount = Math.min(outroConfig.imageCount || 4, Math.max(0, imagePaths.length - (introConfig.imageCount || 6)));
-    if (outroConfig.enabled !== false && outroConfig.segmentFilePath && outroImgCount > 0) {
-      const outroPath = resolveLocal(outroConfig.segmentFilePath);
-      if (outroPath && existsSync(outroPath)) {
-        const introCount = introConfig.imageCount || 6;
-        const outroImages = imagePaths.slice(introCount, introCount + outroImgCount);
-        const outroInsertStart = outroConfig.imageInsertStart || 0;
-        const outroImgDuration = outroConfig.imageDuration || 3;
+    if (outroConfig.enabled !== false && outroImgCount > 0) {
+      const introCount = introConfig.imageCount || 6;
+      const outroImages = imagePaths.slice(introCount, introCount + outroImgCount);
+      const outroImgDuration = outroConfig.imageDuration || 3;
 
-        const outroProcessed = await overlayImagesOnVideo(
-          outroPath, outroImages, outroInsertStart, outroImgDuration,
-          targetW, targetH, mainMeta.fps, id, "outro", tempPaths, outroConfig.effect || "none", outroConfig.volumePercent ?? 100
-        );
-        segments.push(outroProcessed);
+      if (outroConfig.mode === "image") {
+        // 纯图模式
+        const outroPath = path.join(TEMP_DIR, `ai_outro_images_${id}.mp4`);
+        await imagesToVideo(outroImages, outroImgDuration, targetW, targetH, mainMeta.fps, outroConfig.effect || "none", outroPath);
+        tempPaths.push(outroPath);
+        segments.push(outroPath);
+      } else {
+        // 视频模式
+        if (outroConfig.segmentFilePath) {
+          const outroPath = resolveLocal(outroConfig.segmentFilePath);
+          if (outroPath && existsSync(outroPath)) {
+            const outroInsertStart = outroConfig.imageInsertStart || 0;
+            const outroProcessed = await overlayImagesOnVideo(
+              outroPath, outroImages, outroInsertStart, outroImgDuration,
+              targetW, targetH, mainMeta.fps, id, "outro", tempPaths, outroConfig.effect || "none", outroConfig.volumePercent ?? 100
+            );
+            segments.push(outroProcessed);
+          }
+        }
       }
     }
 
@@ -929,5 +951,46 @@ export async function antiAiProcessImage(inputPath, outputPath) {
     "-map_metadata", "-1", "-map_chapters", "-1",
     "-update", "1", "-q:v", "2",
     outputPath,
+  ]);
+}
+
+/**
+ * 纯图模式：把图片直接拼成视频（无音频）
+ * 每张图片显示 imgDuration 秒，支持动效
+ */
+async function imagesToVideo(imagePaths, imgDuration, targetW, targetH, fps, effect, outputPath) {
+  const inputs = ["-err_detect", "ignore_err"];
+  for (const img of imagePaths) {
+    inputs.push("-i", img);
+  }
+
+  const filters = [];
+  const fadeInDur = Math.min(0.3, imgDuration * 0.3);
+  const labels = [];
+
+  for (let i = 0; i < imagePaths.length; i++) {
+    let f = `[${i}:v]scale=${targetW}:${targetH}:flags=bicubic,format=yuva420p,setpts=PTS-STARTPTS`;
+    if (effect === "fade") {
+      f += `,fade=t=in:st=0:d=${fadeInDur.toFixed(3)}:alpha=1,fade=t=out:st=${(imgDuration - fadeInDur).toFixed(3)}:d=${fadeInDur.toFixed(3)}:alpha=1`;
+    } else if (effect === "zoom_in") {
+      f += `,zoompan=z='min(zoom+0.003,1.15)':d=1:s=${targetW}x${targetH}:fps=${Math.round(fps)}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'`;
+    }
+    f += `,trim=duration=${imgDuration.toFixed(3)}`;
+    labels.push(`[v${i}]`);
+    f += labels[i];
+    filters.push(f);
+  }
+
+  // concat 所有图片
+  const concatInputs = labels.map(l => `${l}`).join("");
+  filters.push(`${concatInputs}concat=n=${imagePaths.length}:v=1:a=0[vout]`);
+
+  await runFfmpeg([
+    ...inputs,
+    "-filter_complex", filters.join(";"),
+    "-map", "[vout]",
+    "-c:v", "libx264", "-crf", "23", "-preset", "veryfast",
+    "-pix_fmt", "yuv420p", "-movflags", "+faststart",
+    "-y", outputPath,
   ]);
 }

@@ -5252,8 +5252,14 @@ function openPresetEditModal(preset) {
           </label>
           <div id="preset-form-vars" class="preset-form-vars"></div>
           <div class="preset-config-section">
-            <div class="preset-config-title"><label><input type="checkbox" id="preset-intro-enabled" checked /> 启用片头</label></div>
-            <div class="preset-config-row">
+            <div class="preset-config-title" style="display:flex;align-items:center;gap:12px;">
+              <label><input type="checkbox" id="preset-intro-enabled" checked /> 启用片头</label>
+              <span style="font-size:11px;display:flex;gap:8px;align-items:center;">
+                <label><input type="radio" name="intro-mode" value="video" checked />视频模式</label>
+                <label><input type="radio" name="intro-mode" value="image" />纯图模式</label>
+              </span>
+            </div>
+            <div class="preset-config-row" id="intro-video-only-row">
               <label>开始插入图片时间 <input type="text" id="preset-intro-start" value="00:00:00:00" placeholder="时:分:秒:帧" /></label>
               <label>插入图片数量 <input type="number" id="preset-intro-count" min="0" value="8" /></label>
               <label>每张图片持续 <input type="text" id="preset-intro-duration" value="00:00:00:12" placeholder="时:分:秒:帧" /></label>
@@ -5261,14 +5267,20 @@ function openPresetEditModal(preset) {
             <div class="preset-config-row">
               <label>图片动效 <select id="preset-intro-effect">${EFFECTS}</select></label>
               <label>正片切换转场 <select id="preset-intro-transition">${TRANSITIONS}</select></label>
-              <label style="display:inline-flex;align-items:center;gap:4px;">片段音量 <input type="number" id="preset-intro-volume" min="0" max="100" value="100" style="width:45px;" />%</label>
-              <label>片头片段文件 <input type="file" id="preset-intro-file" accept="video/*" /></label>
+              <label id="intro-volume-label">片段音量(%) <input type="number" id="preset-intro-volume" min="0" max="100" value="100" style="width:45px;" /></label>
+              <label id="intro-file-label">片头片段文件 <input type="file" id="preset-intro-file" accept="video/*" /></label>
             </div>
             <span id="preset-intro-file-info" class="preset-file-info"></span>
           </div>
           <div class="preset-config-section">
-            <div class="preset-config-title"><label><input type="checkbox" id="preset-outro-enabled" checked /> 启用片尾</label></div>
-            <div class="preset-config-row">
+            <div class="preset-config-title" style="display:flex;align-items:center;gap:12px;">
+              <label><input type="checkbox" id="preset-outro-enabled" checked /> 启用片尾</label>
+              <span style="font-size:11px;display:flex;gap:8px;align-items:center;">
+                <label><input type="radio" name="outro-mode" value="video" checked />视频模式</label>
+                <label><input type="radio" name="outro-mode" value="image" />纯图模式</label>
+              </span>
+            </div>
+            <div class="preset-config-row" id="outro-video-only-row">
               <label>开始插入图片时间 <input type="text" id="preset-outro-start" value="00:00:00:00" placeholder="时:分:秒:帧" /></label>
               <label>插入图片数量 <input type="number" id="preset-outro-count" min="0" value="4" /></label>
               <label>每张图片持续 <input type="text" id="preset-outro-duration" value="00:00:05:00" placeholder="时:分:秒:帧" /></label>
@@ -5276,8 +5288,8 @@ function openPresetEditModal(preset) {
             <div class="preset-config-row">
               <label>图片动效 <select id="preset-outro-effect">${EFFECTS}</select></label>
               <label>正片切换转场 <select id="preset-outro-transition">${TRANSITIONS}</select></label>
-              <label style="display:inline-flex;align-items:center;gap:4px;">片段音量 <input type="number" id="preset-outro-volume" min="0" max="100" value="100" style="width:45px;" />%</label>
-              <label>片尾片段文件 <input type="file" id="preset-outro-file" accept="video/*" /></label>
+              <label id="outro-volume-label">片段音量(%) <input type="number" id="preset-outro-volume" min="0" max="100" value="100" style="width:45px;" /></label>
+              <label id="outro-file-label">片尾片段文件 <input type="file" id="preset-outro-file" accept="video/*" /></label>
             </div>
             <span id="preset-outro-file-info" class="preset-file-info"></span>
           </div>
@@ -5348,6 +5360,24 @@ function openPresetEditModal(preset) {
   presetModalEl.musicFileInfo = overlay.querySelector("#preset-music-file-info");
   presetModalEl.dedup = overlay.querySelector("#preset-dedup");
 
+  // 片头/片尾模式切换（视频模式/纯图模式）
+  function updateIntroModeVisibility() {
+    const isVideo = overlay.querySelector('input[name="intro-mode"]:checked')?.value === "video";
+    overlay.querySelector("#intro-video-only-row").style.display = isVideo ? "" : "none";
+    overlay.querySelector("#intro-volume-label").style.display = isVideo ? "" : "none";
+    overlay.querySelector("#intro-file-label").style.display = isVideo ? "" : "none";
+  }
+  function updateOutroModeVisibility() {
+    const isVideo = overlay.querySelector('input[name="outro-mode"]:checked')?.value === "video";
+    overlay.querySelector("#outro-video-only-row").style.display = isVideo ? "" : "none";
+    overlay.querySelector("#outro-volume-label").style.display = isVideo ? "" : "none";
+    overlay.querySelector("#outro-file-label").style.display = isVideo ? "" : "none";
+  }
+  overlay.querySelectorAll('input[name="intro-mode"]').forEach(r => r.addEventListener("change", updateIntroModeVisibility));
+  overlay.querySelectorAll('input[name="outro-mode"]').forEach(r => r.addEventListener("change", updateOutroModeVisibility));
+  updateIntroModeVisibility();
+  updateOutroModeVisibility();
+
   // 通过 JS 设置编辑值（避免模板字符串被 prompt 中的反引号破坏）
   if (isEdit) {
     presetModalEl.name.value = preset.name;
@@ -5400,6 +5430,7 @@ function secondsToTimecode(sec) {
 function collectPresetConfig() {
   const introConfig = {
     enabled: presetModalEl.introEnabled?.checked ?? true,
+    mode: document.querySelector('input[name="intro-mode"]:checked')?.value || "video",
     imageInsertStart: timecodeToSeconds(presetModalEl.introStart?.value),
     imageCount: parseInt(presetModalEl.introCount?.value) || 0,
     imageDuration: timecodeToSeconds(presetModalEl.introDuration?.value),
@@ -5410,6 +5441,7 @@ function collectPresetConfig() {
   };
   const outroConfig = {
     enabled: presetModalEl.outroEnabled?.checked ?? true,
+    mode: document.querySelector('input[name="outro-mode"]:checked')?.value || "video",
     imageInsertStart: timecodeToSeconds(presetModalEl.outroStart?.value),
     imageCount: parseInt(presetModalEl.outroCount?.value) || 0,
     imageDuration: timecodeToSeconds(presetModalEl.outroDuration?.value),
@@ -5433,6 +5465,9 @@ function fillPresetConfigForm(preset) {
   const oc = preset?.outroConfig || {};
   const mc = preset?.musicConfig || {};
   if (presetModalEl.introEnabled) presetModalEl.introEnabled.checked = ic.enabled !== false;
+  // 回填模式
+  const introModeRadio = document.querySelector(`input[name="intro-mode"][value="${ic.mode || 'video'}"]`);
+  if (introModeRadio) { introModeRadio.checked = true; introModeRadio.dispatchEvent(new Event("change")); }
   if (presetModalEl.introStart) presetModalEl.introStart.value = secondsToTimecode(ic.imageInsertStart ?? 0);
   if (presetModalEl.introCount) presetModalEl.introCount.value = ic.imageCount ?? 8;
   if (presetModalEl.introDuration) presetModalEl.introDuration.value = secondsToTimecode(ic.imageDuration ?? 0.4);
@@ -5446,6 +5481,8 @@ function fillPresetConfigForm(preset) {
   if (presetModalEl.outroTransition) presetModalEl.outroTransition.value = oc.transition || "none";
   if (presetModalEl.outroVolume) presetModalEl.outroVolume.value = oc.volumePercent ?? 100;
   if (presetModalEl.outroEnabled) presetModalEl.outroEnabled.checked = oc.enabled !== false;
+  const outroModeRadio = document.querySelector(`input[name="outro-mode"][value="${oc.mode || 'video'}"]`);
+  if (outroModeRadio) { outroModeRadio.checked = true; outroModeRadio.dispatchEvent(new Event("change")); }
   if (presetModalEl.musicVolume) presetModalEl.musicVolume.value = mc.volumePercent ?? 8;
   if (presetModalEl.musicScope) presetModalEl.musicScope.value = mc.scope || "original";
   if (presetModalEl.musicEnabled) presetModalEl.musicEnabled.checked = mc.enabled !== false;
