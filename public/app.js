@@ -3713,8 +3713,42 @@ function renderRemixTasks() {
   remixEl.tasksList.querySelectorAll(".task-retry-btn").forEach((btn) => {
     btn.addEventListener("click", async () => {
       try {
+        const taskId = btn.dataset.taskId;
+        // 查找任务信息
+        const task = remix.tasks.find(t => t.id === taskId);
+        // 如果是AI混剪任务，先检查daemon
+        if (task && task.mode === "ai-remix" && task.cdpInstanceId) {
+          let daemonRunning = false;
+          try {
+            const statusRes = await request(`/api/cdp/instances/${encodeURIComponent(task.cdpInstanceId)}/daemon-status`);
+            daemonRunning = statusRes.running === true;
+          } catch {}
+          if (!daemonRunning) {
+            showToast("CDP 守护进程未运行，正在自动启动...");
+            try {
+              await request(`/api/cdp/instances/${encodeURIComponent(task.cdpInstanceId)}/daemon-start`, { method: "POST" });
+              let retries = 0;
+              while (retries < 10) {
+                await new Promise(r => setTimeout(r, 2000));
+                try {
+                  const recheck = await request(`/api/cdp/instances/${encodeURIComponent(task.cdpInstanceId)}/daemon-status`);
+                  if (recheck.running === true) { daemonRunning = true; break; }
+                } catch {}
+                retries++;
+              }
+              if (!daemonRunning) {
+                showToast("CDP 守护进程启动失败，请到 CDP Tab 手动检查", true);
+                return;
+              }
+              showToast("CDP 守护进程已启动");
+            } catch (e) {
+              showToast(`CDP 守护进程启动失败: ${e.message}`, true);
+              return;
+            }
+          }
+        }
         showToast("正在重试任务...");
-        await request(`/api/remix/tasks/${encodeURIComponent(btn.dataset.taskId)}/retry`, { method: "POST", body: "{}" });
+        await request(`/api/remix/tasks/${encodeURIComponent(taskId)}/retry`, { method: "POST", body: "{}" });
         showToast("任务已重新提交");
         await fetchRemixTasks();
       } catch (e) { showToast(e.message, true); }
