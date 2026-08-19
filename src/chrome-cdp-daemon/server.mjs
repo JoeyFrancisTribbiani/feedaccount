@@ -21,7 +21,7 @@
 
 import http from 'http'
 import { chromium } from 'playwright'
-import { existsSync, writeFileSync, mkdirSync, unlinkSync, createReadStream, readFileSync } from 'fs'
+import { existsSync, writeFileSync, mkdirSync, unlinkSync, createReadStream, readFileSync, statSync } from 'fs'
 import { resolve, dirname, join } from 'path'
 import { fileURLToPath } from 'url'
 
@@ -562,19 +562,42 @@ async function chatgptUploadFile(filePath, opts = {}) {
           // 立即错误（如50MB限制）：文件没传上去，直接走 DataTransfer
           log('文件过大或不可传输，直接使用 DataTransfer 方式')
         }
-        // 大文件: 通过 daemon HTTP 服务让浏览器 fetch 下载，避免 base64 传输崩溃
+        // 大文件: 先压缩到50MB以下，再用 DataTransfer base64 方式上传
+        let uploadFilePath = filePath
+        const fileSize = statSync(filePath).size
+        if (fileSize > 50 * 1024 * 1024) {
+          log(`文件 ${Math.round(fileSize / 1024 / 1024)}MB 超过50MB限制，正在压缩...`)
+          const compressedPath = join(TMP_DIR, `compressed_${Date.now()}.mp4`)
+          const { execFileSync } = await import('child_process')
+          const compress = (input, output, crf, scale) => {
+            execFileSync('ffmpeg', [
+              '-err_detect', 'ignore_err', '-y', '-i', input,
+              '-c:v', 'libx264', '-crf', String(crf), '-preset', 'fast',
+              '-vf', `scale=${scale}`,
+              '-c:a', 'aac', '-b:a', '96k',
+              '-movflags', '+faststart',
+              output,
+            ], { stdio: 'pipe', timeout: 300000 })
+          }
+          compress(filePath, compressedPath, 28, '-2:1920')
+          let compressedSize = statSync(compressedPath).size
+          log(`压缩完成: ${Math.round(compressedSize / 1024 / 1024)}MB`)
+          if (compressedSize > 50 * 1024 * 1024) {
+            compress(compressedPath, compressedPath + '.tmp', 32, '-2:1280')
+            const { renameSync } = await import('fs')
+            renameSync(compressedPath + '.tmp', compressedPath)
+            compressedSize = statSync(compressedPath).size
+            log(`二次压缩完成: ${Math.round(compressedSize / 1024 / 1024)}MB`)
+          }
+          uploadFilePath = compressedPath
+        }
         const fileName = filePath.split(/[/\\]/).pop()
-        // 把文件复制到 daemon 的 tmp 目录（如果不在的话）
-        const tmpFileDir = join(TMP_DIR, 'serve')
-        mkdirSync(tmpFileDir, { recursive: true })
-        const tmpFilePath = join(tmpFileDir, fileName)
-        const { copyFile: copyFileFn } = await import('fs/promises')
-        await copyFileFn(filePath, tmpFilePath)
-        const fileUrl = `http://127.0.0.1:${PORT}/tmp/serve/${encodeURIComponent(fileName)}`
-        log(`通过 HTTP 下载方式上传: ${fileUrl}`)
-        await page.evaluate(async ({ url, name }) => {
-          const res = await fetch(url)
-          const blob = await res.blob()
+        const fileBuffer = readFileSync(uploadFilePath)
+        const base64 = fileBuffer.toString('base64')
+        log(`DataTransfer 上传中 (base64大小: ${Math.round(base64.length / 1024 / 1024)}MB)...`)
+        await page.evaluate(async ({ b64, name }) => {
+          const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0))
+          const blob = new Blob([bytes], { type: 'video/mp4' })
           const file = new File([blob], name, { type: 'video/mp4' })
           const dt = new DataTransfer()
           dt.items.add(file)
@@ -582,9 +605,9 @@ async function chatgptUploadFile(filePath, opts = {}) {
           input.files = dt.files
           input.dispatchEvent(new Event('change', { bubbles: true }))
           input.dispatchEvent(new Event('input', { bubbles: true }))
-        }, { url: fileUrl, name: fileName })
-        // 清理临时文件
-        try { unlinkSync(tmpFilePath) } catch {}
+        }, { b64: base64, name: fileName })
+        // 清理压缩文件
+        if (uploadFilePath !== filePath) { try { unlinkSync(uploadFilePath) } catch {} }
         await page.waitForTimeout(3000)
         const tilesAfterDt = await page.evaluate(() => document.querySelectorAll('[class*="file-tile"]').length)
         log(`DataTransfer 方式完成, tilesBefore=${tilesBefore} tilesAfter=${tilesAfterDt}`)
