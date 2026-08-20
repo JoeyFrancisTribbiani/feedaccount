@@ -1178,6 +1178,21 @@ async function downloadGeneratedImages(destDir) {
   mkdirSync(destDir, { recursive: true })
   await ensureChatGPT()
 
+  // 先滚动到底部触发所有图片懒加载
+  await page.evaluate(() => {
+    window.scrollTo(0, document.body.scrollHeight);
+  });
+  await page.waitForTimeout(2000);
+  // 再滚回顶部再滚到底，确保全部触发
+  await page.evaluate(() => {
+    window.scrollTo(0, 0);
+  });
+  await page.waitForTimeout(1000);
+  await page.evaluate(() => {
+    window.scrollTo(0, document.body.scrollHeight);
+  });
+  await page.waitForTimeout(2000);
+
   // 在浏览器上下文中提取最后一条助手回复中的图片 URL（去重）
   const imageUrls = await page.evaluate(() => {
     // 找所有对话 turn，排除用户消息
@@ -1200,10 +1215,10 @@ async function downloadGeneratedImages(destDir) {
     var urls = [];
     for (var img of imgs) {
       var src = img.src;
-      if (!src || src.includes('favicon') || src.includes('icon') || src.includes('avatar') || src.includes('logo')) continue;
-      // 只取大图（naturalWidth > 900），跳过缩略图
-      if (img.naturalWidth < 900) continue;
-      // 从 URL 提取 file_id 去重（estuary/content?id=xxx）
+      if (!src || src.includes('favicon') || src.includes('icon') || src.includes('avatar') || src.includes('logo') || src.includes('auth0')) continue;
+      // 只取 estuary/content 的图片（ChatGPT 生成的图片）
+      if (!src.includes('estuary/content')) continue;
+      // 从 URL 提取 id 去重
       var idMatch = src.match(/[?&]id=([^&]+)/);
       var fileId = idMatch ? idMatch[1] : src;
       if (!seenIds.has(fileId)) { seenIds.add(fileId); urls.push(src) }
