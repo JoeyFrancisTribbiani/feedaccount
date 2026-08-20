@@ -1696,6 +1696,15 @@ export class LocalDatabase {
     }));
   }
 
+  listAllMatrixVideos() {
+    const rows = this.db.prepare(`SELECT * FROM matrix_videos`).all();
+    return rows.map((r) => ({
+      id: r.id, matrixId: r.matrix_id, sourceVideoId: r.source_video_id,
+      creatorId: r.creator_id, filePath: r.file_path, title: r.title,
+      duration: r.duration, downloaded: Boolean(r.downloaded), createdAt: r.created_at,
+    }));
+  }
+
   getMatrixVideo(id) {
     const row = this.db.prepare(`SELECT * FROM matrix_videos WHERE id = ?`).get(id);
     return row ? {

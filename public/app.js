@@ -4797,7 +4797,9 @@ function renderMatrixVideos() {
   });
   mxEl.videosList.querySelectorAll("[data-del-mv]").forEach((btn) => {
     btn.addEventListener("click", async () => {
+      if (!confirm("确定删除？视频文件也会一起删除。")) return;
       await request(`/api/matrices/${encodeURIComponent(mxState.selectedId)}/videos`, { method: "DELETE", body: JSON.stringify({ videoId: btn.dataset.delMv }) });
+      showToast("已删除");
       await fetchMatrixVideos(mxState.selectedId);
       await fetchMatrices();
     });

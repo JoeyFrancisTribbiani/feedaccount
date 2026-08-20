@@ -2086,6 +2086,15 @@ export function createMonitorServer({
         const remixDownloadedMatch = pathname.match(/^\/api\/remix\/tasks\/([^/]+)\/downloaded$/);
         if (request.method === "POST" && remixDownloadedMatch) {
           const task = store.markRemixTaskDownloaded(decodeURIComponent(remixDownloadedMatch[1]));
+          // 同步标记矩阵成品视频为已下载
+          if (task?.outputUrl) {
+            const matrixVideos = store.listAllMatrixVideos();
+            for (const mv of matrixVideos) {
+              if (mv.filePath === task.outputUrl) {
+                store.markMatrixVideoDownloaded(mv.id);
+              }
+            }
+          }
           sendJson(response, 200, task);
           return;
         }
@@ -2210,6 +2219,16 @@ export function createMonitorServer({
           if (request.method === "DELETE") {
             const body = await readJson(request);
             if (body.videoId) {
+              const mv = store.getMatrixVideo(body.videoId);
+              if (mv?.filePath) {
+                // 删除视频文件
+                try {
+                  const fp = mv.filePath.startsWith("/data/remix-output/")
+                    ? path.join(getOutputDir(), path.basename(mv.filePath))
+                    : mv.filePath;
+                  if (existsSync(fp)) unlink(fp);
+                } catch {}
+              }
               store.deleteMatrixVideo(body.videoId);
               sendJson(response, 200, { ok: true });
             } else {
