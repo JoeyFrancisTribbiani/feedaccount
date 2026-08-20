@@ -3669,6 +3669,7 @@ function renderRemixTasks() {
           ${t.status === "DONE" && t.outputUrl ? `<input type="checkbox" class="task-select-cb" data-task-id="${escapeHtml(t.id)}" data-out-url="${escapeHtml(t.outputUrl)}" style="margin-right:8px;" />` : ""}
           <span class="remix-task-mode ${isDedup ? "mode-dedup" : "mode-stitch"}">${modeLabel}</span>
           <strong>${escapeHtml(t.title)}</strong>
+          <span style="font-size:10px;color:#94a3b8;font-family:monospace;">${escapeHtml(t.id)}</span>
           ${statusBadge}
           <span class="muted-activity" style="font-size: 11px;">${t.videoCount}视频 · ${escapeHtml(t.ratio)} · ${formatDateTime(t.createdAt)}</span>
         </div>
