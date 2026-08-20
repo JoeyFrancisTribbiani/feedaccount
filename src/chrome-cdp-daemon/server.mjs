@@ -1183,7 +1183,6 @@ async function downloadGeneratedImages(destDir) {
     window.scrollTo(0, document.body.scrollHeight);
   });
   await page.waitForTimeout(2000);
-  // 再滚回顶部再滚到底，确保全部触发
   await page.evaluate(() => {
     window.scrollTo(0, 0);
   });
@@ -1193,21 +1192,41 @@ async function downloadGeneratedImages(destDir) {
   });
   await page.waitForTimeout(2000);
 
+  // 等待所有图片加载完成（检测唯一id数量稳定后等img.complete）
+  for (let attempt = 0; attempt < 60; attempt++) {
+    const state = await page.evaluate(() => {
+      var turns = document.querySelectorAll('[data-testid^="conversation-turn-"]');
+      var lastTurn = null;
+      for (var i = turns.length - 1; i >= 0; i--) {
+        if (turns[i].querySelectorAll('img[src*="estuary/content"]').length > 0) { lastTurn = turns[i]; break; }
+      }
+      if (!lastTurn) return { count: 0, allComplete: false };
+      var imgs = lastTurn.querySelectorAll('img[src*="estuary/content"]');
+      var ids = new Set();
+      var incomplete = 0;
+      for (var img of imgs) {
+        var m = img.src.match(/[?&]id=([^&]+)/);
+        if (m) ids.add(m[1]);
+        if (!img.complete || img.naturalWidth === 0) incomplete++;
+      }
+      return { count: ids.size, incomplete, total: imgs.length };
+    });
+    if (state.count > 0 && state.incomplete === 0) {
+      log(`图片全部加载完成: ${state.count}张`);
+      break;
+    }
+    if (attempt % 5 === 0) log(`等待图片加载... ${state.count}张, 未完成${state.incomplete}个`);
+    await page.waitForTimeout(1000);
+  }
+
   // 在浏览器上下文中提取最后一条助手回复中的图片 URL（去重）
   const imageUrls = await page.evaluate(() => {
-    // 找所有对话 turn，排除用户消息
+    // 找所有 conversation-turn，选最后一个包含 estuary 图片的
     var turns = document.querySelectorAll('[data-testid^="conversation-turn-"]');
     var lastAssistantTurn = null;
     for (var i = turns.length - 1; i >= 0; i--) {
-      var role = turns[i].getAttribute('data-message-author-role');
-      if (role !== 'user') { lastAssistantTurn = turns[i]; break; }
-    }
-    // 如果没找到 role 标记，用最后一个包含图片且不是用户消息的 turn
-    if (!lastAssistantTurn) {
-      for (var i = turns.length - 1; i >= 0; i--) {
-        var userEl = turns[i].querySelector('[data-message-author-role="user"]');
-        if (!userEl && turns[i].querySelectorAll('img').length > 0) { lastAssistantTurn = turns[i]; break; }
-      }
+      var estuaryImgs = turns[i].querySelectorAll('img[src*="estuary/content"]');
+      if (estuaryImgs.length > 0) { lastAssistantTurn = turns[i]; break; }
     }
     if (!lastAssistantTurn) return [];
     var imgs = lastAssistantTurn.querySelectorAll('img');
