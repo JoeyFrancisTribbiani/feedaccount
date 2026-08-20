@@ -425,6 +425,8 @@ export function createMonitorServer({
   let aiRemixActiveCount = 0;
   const AI_REMIX_MAX_CONCURRENT = 1;
   const AI_REMIX_START_INTERVAL = 60000; // 任务启动间隔60秒
+  // 记录正在运行的daemon任务，用于中止
+  const activeDaemonTasks = new Map(); // taskId → { daemonUrl, daemonTaskNo }
 
   async function processAiRemixQueue() {
     while (aiRemixQueue.length > 0 && aiRemixActiveCount < AI_REMIX_MAX_CONCURRENT) {
@@ -478,6 +480,7 @@ export function createMonitorServer({
         const daemonResData = await taskRes.json();
         if (!taskRes.ok || !daemonResData.taskNo) throw new Error(`提交 AI 混剪任务失败: ${daemonResData.error}`);
         const daemonTaskNo = daemonResData.taskNo;
+        activeDaemonTasks.set(taskId, { daemonUrl, daemonTaskNo });
 
         // Step 3: 轮询任务状态
         let completed = false;
@@ -585,6 +588,7 @@ export function createMonitorServer({
         store.logCdpEvent(null, "error", `AI混剪任务失败: ${e.message}`, null, taskId);
       }
     console.log(`[AI混剪] 任务结束: ${taskId}`);
+    activeDaemonTasks.delete(taskId);
   }
 
   // 本地拼接异步执行（不阻塞 AI 队列）
@@ -2018,6 +2022,14 @@ export function createMonitorServer({
           if (aiIdx !== -1) aiRemixQueue.splice(aiIdx, 1);
           const remixIdx = remixQueue.findIndex(q => q.taskId === taskId);
           if (remixIdx !== -1) remixQueue.splice(remixIdx, 1);
+          // 通知 daemon 中止
+          const daemonInfo = activeDaemonTasks.get(taskId);
+          if (daemonInfo) {
+            try {
+              await fetch(`${daemonInfo.daemonUrl}/api/tasks/${daemonInfo.daemonTaskNo}/abort`, { method: "POST" });
+              store.logCdpEvent(null, "info", "已通知 daemon 中止任务", null, taskId);
+            } catch (e) { console.error("[中止] 通知 daemon 失败:", e.message); }
+          }
           sendJson(response, 200, { ok: true });
           return;
         }

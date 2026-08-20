@@ -876,7 +876,7 @@ async function handleChatGptAnalyzeVideo(taskNo, params) {
 
   // 确保浏览器连接
   await ensureConnection()
-
+  checkAbort('Step 0')
   // Step 0: 新建标签页导航到新对话
   log('Step 0: 新建标签页，导航到新对话...')
   page = await context.newPage()
@@ -978,6 +978,12 @@ async function handleChatGptAiRemix(taskNo, params) {
   }
 
   try {
+    // abort 检查辅助函数
+    const checkAbort = (step) => {
+      const task = taskStore.get(taskNo)
+      if (task?.aborted) { log(`任务已中止，退出 (${step})`); throw new Error('任务被用户中止') }
+    }
+    checkAbort('开始')
 
   if (!fileIds.length) throw new Error('fileIds is required')
 
@@ -995,7 +1001,7 @@ async function handleChatGptAiRemix(taskNo, params) {
   log(`文件数: ${filePaths.length}`)
 
   await ensureConnection()
-
+  checkAbort('Step 0')
   // Step 0: 新建标签页导航到新对话
   log('Step 0: 新建标签页，导航到新对话...')
   page = await context.newPage()
@@ -1017,6 +1023,7 @@ async function handleChatGptAiRemix(taskNo, params) {
 
   taskStore.set(taskNo, { status: 'running', outputs: [], error: null, progress: '15%', startedAt: taskStore.get(taskNo).startedAt })
 
+  checkAbort('Step 1')
   // Step 1: 依次上传所有文件
   for (let i = 0; i < filePaths.length; i++) {
     log(`Step 1.${i + 1}: 上传文件 ${i + 1}/${filePaths.length}: ${filePaths[i]}`)
@@ -1032,6 +1039,7 @@ async function handleChatGptAiRemix(taskNo, params) {
 
   taskStore.set(taskNo, { status: 'running', outputs: [], error: null, progress: '40%', startedAt: taskStore.get(taskNo).startedAt })
 
+  checkAbort('Step 2')
   // Step 2: 发送提示词
   log('Step 2: 发送提示词...')
   const promptText = prompt || '请根据上传的文件生成混剪视频'
@@ -1039,6 +1047,7 @@ async function handleChatGptAiRemix(taskNo, params) {
 
   taskStore.set(taskNo, { status: 'running', outputs: [], error: null, progress: '50%', startedAt: taskStore.get(taskNo).startedAt })
 
+  checkAbort('Step 3')
   // Step 3: 等待回复
   log('Step 3: 等待 ChatGPT 回复...')
   const response = await chatgptWaitForResponse({
@@ -1060,6 +1069,7 @@ async function handleChatGptAiRemix(taskNo, params) {
 
   log(`回复长度: ${response.text.length} 字符`)
 
+  checkAbort('Step 4')
   // Step 4: 从回复中提取视频下载链接
   log('Step 4: 提取视频下载链接...')
   const videoLinks = extractVideoLinks(response.text)
@@ -1341,6 +1351,24 @@ async function handleRequest(req, res) {
       const task = taskStore.get(taskNo)
       if (!task) return sendJSON(res, 404, { error: 'Task not found' })
       return sendJSON(res, 200, task)
+    }
+
+    // 中止任务
+    if (path.startsWith('/api/tasks/') && path.endsWith('/abort') && method === 'POST') {
+      const taskNo = path.replace('/api/tasks/', '').replace('/abort', '')
+      const task = taskStore.get(taskNo)
+      if (task) {
+        task.aborted = true
+        task.status = 'failed'
+        task.error = '用户中止'
+        task.completedAt = Date.now()
+        log(`任务 ${taskNo} 被中止`)
+        // 尝试关闭当前任务标签页
+        if (task.tabId) {
+          try { page.close() } catch {}
+        }
+      }
+      return sendJSON(res, 200, { ok: true })
     }
 
     // ===== 输出文件静态服务 =====
