@@ -618,8 +618,12 @@ export function createMonitorServer({
 
         // 链接到矩阵
         if (matrixIds?.length) {
+          // 获取成品视频信息
+          const outMeta = await probeVideo(finalOut).catch(() => null);
+          const { statSync } = await import('fs');
+          const outSize = existsSync(finalOut) ? statSync(finalOut).size : 0;
           for (const matrixId of matrixIds) {
-            store.createMatrixVideo({ matrixId, sourceVideoId, creatorId, filePath: outputUrl, title: videoTitle || null });
+            store.createMatrixVideo({ matrixId, sourceVideoId, creatorId, filePath: outputUrl, title: videoTitle || null, duration: outMeta?.duration ?? null, fileSize: outSize });
           }
         }
       } else {
@@ -1531,6 +1535,19 @@ export function createMonitorServer({
               store.updateRemixVideoDuration(video.id, dur);
               video.duration = dur;
             }
+            // 获取文件大小
+            try {
+              const { statSync } = await import('fs');
+              const { getUploadDir, getOutputDir } = await import('./video-remix.js');
+              const localPath = body.url.startsWith('/data/remix-videos/')
+                ? path.join(getUploadDir(), path.basename(body.url))
+                : body.url.startsWith('/data/remix-output/')
+                ? path.join(getOutputDir(), path.basename(body.url))
+                : body.url;
+              const fSize = statSync(localPath).size;
+              store.db.prepare('UPDATE remix_videos SET file_size = ? WHERE id = ?').run(fSize, video.id);
+              video.fileSize = fSize;
+            } catch {}
             // 生成缩略图（第1秒截取）
             try {
               const { execFileSync } = await import('child_process');
@@ -1733,7 +1750,30 @@ export function createMonitorServer({
             });
 
             // AI混剪只上传原视频，方案绑定的文件用于后续拼接不上传给ChatGPT
-            const mainVideoLocalPath = resolveLocal(video.url);
+            let mainVideoLocalPath = resolveLocal(video.url);
+            // 提交前预检：文件超过50MB先压缩
+            try {
+              const { statSync } = await import('fs');
+              const fileSize = statSync(mainVideoLocalPath).size;
+              if (fileSize > 50 * 1024 * 1024) {
+                store.logCdpEvent(null, "info", `原视频 ${Math.round(fileSize / 1024 / 1024)}MB 超过50MB，提交前预压缩...`, null, task.id);
+                const { execFileSync } = await import('child_process');
+                const compressedPath = path.join(path.dirname(getOutputDir()), 'remix-tmp', `precompressed_${Date.now()}.mp4`);
+                const compress = (input, output, crf, scale) => {
+                  execFileSync('ffmpeg', ['-err_detect', 'ignore_err', '-y', '-i', input, '-c:v', 'libx264', '-crf', String(crf), '-preset', 'fast', '-vf', `scale=${scale}`, '-c:a', 'aac', '-b:a', '96k', '-movflags', '+faststart', output], { stdio: 'pipe', timeout: 300000 });
+                };
+                compress(mainVideoLocalPath, compressedPath, 28, '-2:1920');
+                let compressedSize = statSync(compressedPath).size;
+                if (compressedSize > 50 * 1024 * 1024) {
+                  compress(compressedPath, compressedPath + '.tmp', 32, '-2:1280');
+                  const { renameSync } = await import('fs');
+                  renameSync(compressedPath + '.tmp', compressedPath);
+                  compressedSize = statSync(compressedPath).size;
+                }
+                store.logCdpEvent(null, "info", `预压缩完成: ${Math.round(compressedSize / 1024 / 1024)}MB`, null, task.id);
+                mainVideoLocalPath = compressedPath;
+              }
+            } catch (e) { store.logCdpEvent(null, "warning", `预压缩失败，使用原文件: ${e.message}`, null, task.id); }
             const filesToUpload = [mainVideoLocalPath];
 
             // 提交到 AI 混剪队列（异步处理）
@@ -2022,12 +2062,31 @@ export function createMonitorServer({
               const daemonUrl = inst ? (inst.ngrokUrl || `http://${inst.cdpHost}:${inst.daemonPort}`) : null;
               if (!daemonUrl) { sendJson(response, 400, { error: "CDP 实例不存在" }); return; }
 
-              const mainVideoLocalPath = (url) => {
+              const resolveRetryLocal = (url) => {
                 if (url.startsWith("/data/remix-videos/")) return path.join(getUploadDir(), path.basename(url));
                 if (url.startsWith("/data/remix-output/")) return path.join(getOutputDir(), path.basename(url));
                 return url;
               };
-              const filesToUpload = [mainVideoLocalPath(origTask.videoUrls[0])];
+              let retryVideoPath = resolveRetryLocal(origTask.videoUrls[0]);
+              // 重试也预检压缩
+              try {
+                const { statSync } = await import('fs');
+                const fileSize = statSync(retryVideoPath).size;
+                if (fileSize > 50 * 1024 * 1024) {
+                  store.logCdpEvent(null, "info", `重试: 原视频 ${Math.round(fileSize / 1024 / 1024)}MB 超过50MB，预压缩...`, null, newTask.id);
+                  const { execFileSync } = await import('child_process');
+                  const compressedPath = path.join(path.dirname(getOutputDir()), 'remix-tmp', `precompressed_${Date.now()}.mp4`);
+                  execFileSync('ffmpeg', ['-err_detect', 'ignore_err', '-y', '-i', retryVideoPath, '-c:v', 'libx264', '-crf', '28', '-preset', 'fast', '-vf', 'scale=-2:1920', '-c:a', 'aac', '-b:a', '96k', '-movflags', '+faststart', compressedPath], { stdio: 'pipe', timeout: 300000 });
+                  if (statSync(compressedPath).size > 50 * 1024 * 1024) {
+                    execFileSync('ffmpeg', ['-err_detect', 'ignore_err', '-y', '-i', compressedPath, '-c:v', 'libx264', '-crf', '32', '-preset', 'fast', '-vf', 'scale=-2:1280', '-c:a', 'aac', '-b:a', '96k', '-movflags', '+faststart', compressedPath + '.tmp'], { stdio: 'pipe', timeout: 300000 });
+                    const { renameSync } = await import('fs');
+                    renameSync(compressedPath + '.tmp', compressedPath);
+                  }
+                  store.logCdpEvent(null, "info", `重试: 预压缩完成 ${Math.round(statSync(compressedPath).size / 1024 / 1024)}MB`, null, newTask.id);
+                  retryVideoPath = compressedPath;
+                }
+              } catch (e) { store.logCdpEvent(null, "warning", `重试: 预压缩失败: ${e.message}`, null, newTask.id); }
+              const filesToUpload = [retryVideoPath];
 
               aiRemixQueue.push({
                 taskId: newTask.id, daemonUrl, filesToUpload,

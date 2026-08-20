@@ -452,6 +452,9 @@ export class LocalDatabase {
     this.#ensureColumn("ai_remix_presets", "outro_config_json", "TEXT");
     this.#ensureColumn("ai_remix_presets", "music_config_json", "TEXT");
     this.#ensureColumn("ai_remix_presets", "dedup", "INTEGER DEFAULT 1");
+    this.#ensureColumn("remix_videos", "file_size", "INTEGER DEFAULT 0");
+    this.#ensureColumn("matrix_videos", "file_size", "INTEGER DEFAULT 0");
+    this.#ensureColumn("matrix_videos", "duration", "REAL");
   }
 
   #ensureColumn(table, column, definition) {
@@ -1670,13 +1673,13 @@ export class LocalDatabase {
   }
 
   // --- 矩阵成品视频管理 ---
-  createMatrixVideo({ matrixId, sourceVideoId = null, creatorId = null, filePath, title = null, duration = null }) {
+  createMatrixVideo({ matrixId, sourceVideoId = null, creatorId = null, filePath, title = null, duration = null, fileSize = 0 }) {
     const id = `mv_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     const ts = nowIso();
     this.db.prepare(`
-      INSERT INTO matrix_videos (id, matrix_id, source_video_id, creator_id, file_path, title, duration, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(id, matrixId, sourceVideoId, creatorId, filePath, title, duration, ts);
+      INSERT INTO matrix_videos (id, matrix_id, source_video_id, creator_id, file_path, title, duration, file_size, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, matrixId, sourceVideoId, creatorId, filePath, title, duration, fileSize, ts);
     return this.getMatrixVideo(id);
   }
 
@@ -1692,7 +1695,7 @@ export class LocalDatabase {
       id: r.id, matrixId: r.matrix_id, sourceVideoId: r.source_video_id,
       creatorId: r.creator_id, creatorName: r.creator_name,
       filePath: r.file_path, title: r.title, duration: r.duration,
-      downloaded: Boolean(r.downloaded), createdAt: r.created_at,
+      fileSize: r.file_size, downloaded: Boolean(r.downloaded), createdAt: r.created_at,
     }));
   }
 
@@ -1862,7 +1865,7 @@ export class LocalDatabase {
     const rows = this.db.prepare(`SELECT * FROM remix_videos WHERE creator_id = ? ORDER BY created_at DESC`).all(creatorId);
     return rows.map((r) => ({
       id: r.id, creatorId: r.creator_id, url: r.url, title: r.title,
-      duration: r.duration, thumbnail: r.thumbnail, createdAt: r.created_at,
+      duration: r.duration, fileSize: r.file_size, thumbnail: r.thumbnail, createdAt: r.created_at,
     }));
   }
 
@@ -1870,7 +1873,7 @@ export class LocalDatabase {
     const row = this.db.prepare(`SELECT * FROM remix_videos WHERE id = ?`).get(id);
     return row ? {
       id: row.id, creatorId: row.creator_id, url: row.url, title: row.title,
-      duration: row.duration, thumbnail: row.thumbnail, createdAt: row.created_at,
+      duration: row.duration, fileSize: row.file_size, thumbnail: row.thumbnail, createdAt: row.created_at,
     } : null;
   }
 

@@ -197,6 +197,12 @@ function formatNumber(value) {
   return new Intl.NumberFormat("zh-CN").format(Number(value || 0));
 }
 
+function formatFileSize(bytes) {
+  if (!bytes) return "--";
+  if (bytes < 1024 * 1024) return Math.round(bytes / 1024) + "KB";
+  return (bytes / 1024 / 1024).toFixed(1) + "MB";
+}
+
 function formatDateTime(value) {
   if (!value) return "—";
   return new Date(value).toLocaleString("zh-CN", {
@@ -3279,12 +3285,7 @@ async function fetchRemixResources(creatorId) {
   } catch { remix.resources = []; renderRemixResources(); }
 }
 
-function formatFileSize(bytes) {
-  if (!bytes) return "—";
-  if (bytes < 1024) return bytes + " B";
-  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
-  return (bytes / 1024 / 1024).toFixed(1) + " MB";
-}
+// formatFileSize moved to top
 
 function formatResourceDuration(sec) {
   if (!sec) return "—";
@@ -3484,6 +3485,7 @@ function renderRemixVideos() {
           ${remixBadgeHtml(taskInfo)}
         </div>
         <p class="remix-video-title">${escapeHtml(v.title || "未命名")}</p>
+        <p class="remix-video-meta" style="font-size:10px;color:#94a3b8;margin:2px 0;">${formatDuration(v.duration)} · ${formatFileSize(v.fileSize)}</p>
         ${v.matrixLinks?.length ? `<div class="remix-video-matrix-links">${v.matrixLinks.map((ml) => `<span class="remix-matrix-tag" title="${escapeHtml(ml.matrixName)}">${escapeHtml(ml.matrixName)}</span>`).join("")}</div>` : ""}
       </div>
     `;
@@ -4772,7 +4774,7 @@ function renderMatrixVideos() {
       </div>
       <div class="matrix-video-info">
         <span class="matrix-video-title">${escapeHtml(v.title || v.filePath)}</span>
-        <span class="matrix-video-meta">${escapeHtml(v.creatorName || "—")} · ${formatDateTime(v.createdAt)}</span>
+        <span class="matrix-video-meta">${escapeHtml(v.creatorName || "—")} · ${formatDuration(v.duration)} · ${formatFileSize(v.fileSize)} · ${formatDateTime(v.createdAt)}</span>
       </div>
       <div class="matrix-video-actions">
         ${v.filePath ? `<button class="button button-secondary mv-preview-btn" data-mv-url="${escapeHtml(v.filePath)}" style="font-size:11px;padding:2px 8px;">预览</button>${v.imagePaths?.length ? `<button class="button button-secondary mv-gallery-btn" data-images='${escapeHtml(JSON.stringify(v.imagePaths))}' style="font-size:11px;padding:2px 8px;">图集</button>` : ""}<a href="${escapeHtml(v.filePath)}" download class="button ${v.downloaded ? "button-secondary" : "button-primary"}" style="font-size:11px;padding:2px 8px;" data-mv-id="${escapeHtml(v.id)}">${v.downloaded ? "已下载 ✓" : "下载"}</a>` : ""}
@@ -5147,6 +5149,7 @@ function renderModalVideos() {
       : `<video src="${escapeHtml(v.url)}#t=0.1" muted preload="metadata" class="modal-video-thumb"></video>`;
     const title = escapeHtml(v.title || "未命名");
     const matrixInfo = v.matrixLinks?.length ? `<span class="matrix-link-info">已链接${v.matrixLinks.length}个矩阵</span>` : "";
+    const meta = `<span class="video-meta">${formatDuration(v.duration)} · ${formatFileSize(v.fileSize)}</span>`;
     const checkbox = `<input type="checkbox" value="${escapeHtml(v.id)}" ${checked ? "checked" : ""} />`;
 
     if (isList) {
@@ -5155,6 +5158,7 @@ function renderModalVideos() {
         ${thumb}
         <div class="modal-video-row-info">
           <span class="modal-video-row-title">${title}</span>
+          ${meta}
           ${matrixInfo}
         </div>
       </label>`;
@@ -5163,6 +5167,7 @@ function renderModalVideos() {
       ${checkbox}
       ${thumb}
       <span class="modal-video-card-title">${title}</span>
+      ${meta}
       ${matrixInfo}
     </label>`;
   }).join("");
