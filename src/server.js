@@ -1510,11 +1510,14 @@ export function createMonitorServer({
         if (remixVideosMatch) {
           const creatorId = decodeURIComponent(remixVideosMatch[1]);
           if (request.method === "GET") {
-            const videos = store.listRemixVideos(creatorId).map((v) => ({
-              ...v,
-              url: normalizeRemixUrl(v.url),
-              matrixLinks: store.getMatrixLinksForVideo(v.id),
-            }));
+            const videos = store.listRemixVideos(creatorId).map((v) => {
+              const vid = { ...v, url: normalizeRemixUrl(v.url), matrixLinks: store.getMatrixLinksForVideo(v.id) };
+              // 检查缩略图是否存在
+              const thumbName = `thumb_${v.id}.jpg`;
+              const thumbPath = path.join(getUploadDir(), 'thumbs', thumbName);
+              if (existsSync(thumbPath)) vid.thumbUrl = `/data/remix-videos/thumbs/${thumbName}`;
+              return vid;
+            });
             sendJson(response, 200, videos);
             return;
           }
@@ -1528,6 +1531,23 @@ export function createMonitorServer({
               store.updateRemixVideoDuration(video.id, dur);
               video.duration = dur;
             }
+            // 生成缩略图（第1秒截取）
+            try {
+              const { execFileSync } = await import('child_process');
+              const { getUploadDir, getOutputDir } = await import('./video-remix.js');
+              const localPath = body.url.startsWith('/data/remix-videos/') 
+                ? path.join(getUploadDir(), path.basename(body.url))
+                : body.url.startsWith('/data/remix-output/')
+                ? path.join(getOutputDir(), path.basename(body.url))
+                : body.url;
+              const thumbName = `thumb_${video.id}.jpg`;
+              const thumbDir = path.join(getUploadDir(), 'thumbs');
+              mkdirSync(thumbDir, { recursive: true });
+              const thumbPath = path.join(thumbDir, thumbName);
+              const seekTime = Math.min(1, (dur || 1) * 0.1);
+              execFileSync('ffmpeg', ['-ss', seekTime.toFixed(1), '-i', localPath, '-frames:v', '1', '-vf', 'scale=270:-1', '-q:v', '3', '-y', thumbPath], { stdio: 'pipe', timeout: 30000 });
+              video.thumbUrl = `/data/remix-videos/thumbs/${thumbName}`;
+            } catch (e) { console.error('[缩略图] 生成失败:', e.message); }
             sendJson(response, 200, video);
             return;
           }
@@ -2331,10 +2351,16 @@ export function createMonitorServer({
 
       if (pathname.startsWith("/data/remix-videos/")) {
         const filename = path.basename(pathname);
-        const filePath = path.resolve(THIS_DIR, "..", "data", "remix-videos", filename);
+        const subPath = pathname.slice("/data/remix-videos/".length);
+        const { getUploadDir } = await import("./video-remix.js");
+        const uploadDir = getUploadDir();
+        const filePath = path.resolve(uploadDir, subPath);
+        if (!filePath.startsWith(uploadDir)) { sendJson(response, 403, { error: "禁止访问" }); return; }
         if (!existsSync(filePath)) { sendJson(response, 404, { error: "文件不存在" }); return; }
         const statResult = await stat(filePath);
-        response.writeHead(200, { "Content-Type": "video/mp4", "Content-Length": statResult.size, "Cache-Control": "public, max-age=3600" });
+        const ext = path.extname(filename).toLowerCase();
+        const ct = ext === ".jpg" || ext === ".jpeg" ? "image/jpeg" : ext === ".png" ? "image/png" : "video/mp4";
+        response.writeHead(200, { "Content-Type": ct, "Content-Length": statResult.size, "Cache-Control": "public, max-age=3600" });
         createReadStream(filePath).pipe(response);
         return;
       }

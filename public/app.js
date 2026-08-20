@@ -3810,12 +3810,37 @@ function openImageGallery(imageUrls) {
   const modal = document.querySelector("#image-gallery-modal");
   const grid = document.querySelector("#image-gallery-grid");
   grid.innerHTML = imageUrls.map((url, i) => `
-    <div class="gallery-item" style="position:relative;">
-      <input type="checkbox" class="gallery-select-cb" data-url="${escapeHtml(url)}" style="position:absolute;top:4px;left:4px;z-index:2;" />
-      <img src="${escapeHtml(url)}" style="width:100%;border-radius:8px;cursor:pointer;display:block;" onclick="window.open('${escapeHtml(url)}','_blank')" />
-      <a href="${escapeHtml(url)}?download" download class="gallery-dl-btn" style="position:absolute;bottom:4px;right:4px;font-size:11px;padding:2px 6px;background:rgba(0,0,0,0.6);color:#fff;border-radius:4px;text-decoration:none;">下载</a>
+    <div class="gallery-item" data-url="${escapeHtml(url)}" style="position:relative;cursor:pointer;border:2px solid transparent;border-radius:8px;overflow:hidden;">
+      <input type="checkbox" class="gallery-select-cb" data-url="${escapeHtml(url)}" style="position:absolute;top:4px;left:4px;z-index:2;width:18px;height:18px;" />
+      <img src="${escapeHtml(url)}" style="width:100%;display:block;" />
+      <button class="gallery-zoom-btn" data-url="${escapeHtml(url)}" style="position:absolute;bottom:4px;left:4px;font-size:14px;padding:6px 14px;background:rgba(0,0,0,0.7);color:#fff;border:none;border-radius:6px;cursor:pointer;">🔍 放大</button>
+      <a href="${escapeHtml(url)}?download" download class="gallery-dl-btn" style="position:absolute;bottom:4px;right:4px;font-size:14px;padding:6px 18px;background:rgba(0,0,0,0.7);color:#fff;border-radius:6px;text-decoration:none;">下载</a>
     </div>
   `).join("");
+  // 单击图片选中/取消
+  grid.querySelectorAll(".gallery-item").forEach(item => {
+    item.addEventListener("click", (e) => {
+      if (e.target.closest(".gallery-dl-btn") || e.target.closest(".gallery-zoom-btn") || e.target.matches("input[type=checkbox]")) return;
+      const cb = item.querySelector(".gallery-select-cb");
+      cb.checked = !cb.checked;
+      item.style.borderColor = cb.checked ? "#3b82f6" : "transparent";
+    });
+    // checkbox 变化也同步边框
+    item.querySelector(".gallery-select-cb").addEventListener("change", () => {
+      item.style.borderColor = item.querySelector(".gallery-select-cb").checked ? "#3b82f6" : "transparent";
+    });
+  });
+  // 放大预览（灯箱）
+  grid.querySelectorAll(".gallery-zoom-btn").forEach(btn => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const url = btn.dataset.url;
+      const lb = document.querySelector("#image-lightbox");
+      const lbImg = document.querySelector("#image-lightbox-img");
+      lbImg.src = url;
+      lb.classList.remove("hidden");
+    });
+  });
   // 批量下载按钮
   const batchBtn = document.querySelector("#image-gallery-batch-download");
   if (batchBtn) {
@@ -3837,7 +3862,10 @@ function openImageGallery(imageUrls) {
   if (selectAll) {
     selectAll.checked = false;
     selectAll.onchange = () => {
-      grid.querySelectorAll(".gallery-select-cb").forEach(cb => cb.checked = selectAll.checked);
+      grid.querySelectorAll(".gallery-select-cb").forEach(cb => {
+        cb.checked = selectAll.checked;
+        cb.closest(".gallery-item").style.borderColor = selectAll.checked ? "#3b82f6" : "transparent";
+      });
     };
   }
   modal.classList.remove("hidden");
@@ -3847,6 +3875,18 @@ document.querySelector("#image-gallery-close")?.addEventListener("click", () => 
 });
 document.querySelector("#image-gallery-modal")?.addEventListener("click", (e) => {
   if (e.target === e.currentTarget) e.currentTarget.classList.add("hidden");
+});
+// 灯箱关闭
+document.querySelector("#image-lightbox-close")?.addEventListener("click", () => {
+  const lb = document.querySelector("#image-lightbox");
+  document.querySelector("#image-lightbox-img").src = "";
+  lb.classList.add("hidden");
+});
+document.querySelector("#image-lightbox")?.addEventListener("click", (e) => {
+  if (e.target === e.currentTarget) {
+    document.querySelector("#image-lightbox-img").src = "";
+    e.currentTarget.classList.add("hidden");
+  }
 });
 document.querySelector("#video-preview-modal")?.addEventListener("click", (e) => {
   if (e.target === e.currentTarget) {
@@ -5100,7 +5140,9 @@ function renderModalVideos() {
 
   modalEl.videoList.innerHTML = modalState.videos.map((v) => {
     const checked = modalState.selectedVideoIds.has(v.id);
-    const thumb = `<video src="${escapeHtml(v.url)}#t=0.1" muted preload="metadata" class="modal-video-thumb"></video>`;
+    const thumb = v.thumbUrl 
+      ? `<img src="${escapeHtml(v.thumbUrl)}" class="modal-video-thumb" style="object-fit:cover;background:#000;" />`
+      : `<video src="${escapeHtml(v.url)}#t=0.1" muted preload="metadata" class="modal-video-thumb"></video>`;
     const title = escapeHtml(v.title || "未命名");
     const matrixInfo = v.matrixLinks?.length ? `<span class="matrix-link-info">已链接${v.matrixLinks.length}个矩阵</span>` : "";
     const checkbox = `<input type="checkbox" value="${escapeHtml(v.id)}" ${checked ? "checked" : ""} />`;
