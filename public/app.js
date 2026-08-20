@@ -3809,7 +3809,37 @@ document.querySelector("#video-preview-close")?.addEventListener("click", () => 
 function openImageGallery(imageUrls) {
   const modal = document.querySelector("#image-gallery-modal");
   const grid = document.querySelector("#image-gallery-grid");
-  grid.innerHTML = imageUrls.map(url => `<img src="${escapeHtml(url)}" style="width:100%;border-radius:8px;cursor:pointer;" onclick="window.open('${escapeHtml(url)}','_blank')" />`).join("");
+  grid.innerHTML = imageUrls.map((url, i) => `
+    <div class="gallery-item" style="position:relative;">
+      <input type="checkbox" class="gallery-select-cb" data-url="${escapeHtml(url)}" style="position:absolute;top:4px;left:4px;z-index:2;" />
+      <img src="${escapeHtml(url)}" style="width:100%;border-radius:8px;cursor:pointer;display:block;" onclick="window.open('${escapeHtml(url)}','_blank')" />
+      <a href="${escapeHtml(url)}?download" download class="gallery-dl-btn" style="position:absolute;bottom:4px;right:4px;font-size:11px;padding:2px 6px;background:rgba(0,0,0,0.6);color:#fff;border-radius:4px;text-decoration:none;">下载</a>
+    </div>
+  `).join("");
+  // 批量下载按钮
+  const batchBtn = document.querySelector("#image-gallery-batch-download");
+  if (batchBtn) {
+    batchBtn.onclick = () => {
+      const selected = grid.querySelectorAll(".gallery-select-cb:checked");
+      const urls = selected.length ? Array.from(selected).map(cb => cb.dataset.url) : imageUrls;
+      urls.forEach((url, i) => {
+        setTimeout(() => {
+          const a = document.createElement("a");
+          a.href = url + "?download";
+          a.download = "";
+          a.click();
+        }, i * 300);
+      });
+    };
+  }
+  // 全选
+  const selectAll = document.querySelector("#image-gallery-select-all");
+  if (selectAll) {
+    selectAll.checked = false;
+    selectAll.onchange = () => {
+      grid.querySelectorAll(".gallery-select-cb").forEach(cb => cb.checked = selectAll.checked);
+    };
+  }
   modal.classList.remove("hidden");
 }
 document.querySelector("#image-gallery-close")?.addEventListener("click", () => {

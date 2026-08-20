@@ -2300,8 +2300,10 @@ export function createMonitorServer({
               return;
             }
             end = Math.min(end, statResult.size - 1);
+            const ext = path.extname(filename).toLowerCase();
+            const ct = ext === ".png" ? "image/png" : ext === ".jpg" || ext === ".jpeg" ? "image/jpeg" : ext === ".webp" ? "image/webp" : "video/mp4";
             response.writeHead(206, {
-              "Content-Type": "video/mp4",
+              "Content-Type": ct,
               "Content-Length": end - start + 1,
               "Content-Range": `bytes ${start}-${end}/${statResult.size}`,
               "Accept-Ranges": "bytes",
@@ -2313,8 +2315,11 @@ export function createMonitorServer({
         }
         // 非预览的下载请求
         const isDownload = request.headers["sec-fetch-dest"] === "document" || new URL(pathname, "http://localhost").searchParams.get("download") !== null;
+        // 根据文件扩展名设置正确的Content-Type
+        const ext = path.extname(filename).toLowerCase();
+        const contentType = ext === ".png" ? "image/png" : ext === ".jpg" || ext === ".jpeg" ? "image/jpeg" : ext === ".webp" ? "image/webp" : "video/mp4";
         response.writeHead(200, {
-          "Content-Type": "video/mp4",
+          "Content-Type": contentType,
           "Content-Length": statResult.size,
           "Accept-Ranges": "bytes",
           ...(isDownload ? { "Content-Disposition": `attachment; filename="${encodeURIComponent(filename)}"` } : {}),
