@@ -829,19 +829,23 @@ async function overlayImagesOnVideo(videoPath, imagePaths, insertStart, imgDurat
 async function concatWithTransition(segments, transitions, outputPath, targetW, targetH, fps) {
   const TRANSITION_DURATION = 0.5; // 转场持续0.5秒
 
-  // 先归一化所有片段到相同分辨率和帧率
+  // 先归一化所有片段到相同分辨率和帧率，确保有音频流
   const normalizedPaths = [];
   const durations = [];
   for (let i = 0; i < segments.length; i++) {
     const normPath = path.join(TEMP_DIR, `trans_norm_${Date.now()}_${i}.mp4`);
     const meta = await probeVideo(segments[i]);
     durations.push(meta?.duration || 0);
+    const hasAudio = meta?.hasAudio === true;
+    const audioArgs = hasAudio
+      ? ["-c:a", "aac", "-b:a", "128k"]
+      : ["-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100", "-shortest", "-c:a", "aac", "-b:a", "128k"];
     await runFfmpeg([
       "-err_detect", "ignore_err",
       "-i", segments[i],
+      ...audioArgs,
       "-vf", `scale=${targetW}:${targetH}:flags=bicubic,format=yuv420p,fps=${Math.round(fps)}`,
       "-c:v", "libx264", "-crf", "23", "-preset", "veryfast",
-      "-c:a", "aac", "-b:a", "128k",
       "-pix_fmt", "yuv420p", "-movflags", "+faststart",
       "-y", normPath,
     ]);
