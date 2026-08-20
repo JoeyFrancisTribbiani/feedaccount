@@ -321,7 +321,7 @@ async function ensureChatGPT() {
   await ensureConnection()
   if (!page.url().includes('chatgpt.com')) {
     log('导航到 ChatGPT...')
-    await page.goto(CHATGPT_URL, { waitUntil: 'domcontentloaded', timeout: 30000 })
+    await page.goto(CHATGPT_URL, { waitUntil: 'domcontentloaded', timeout: 300000 })
     await page.waitForTimeout(3000)
   }
 }
@@ -881,7 +881,7 @@ async function handleChatGptAnalyzeVideo(taskNo, params) {
   log('Step 0: 新建标签页，导航到新对话...')
   page = await context.newPage()
   await dismissModal()
-  await page.goto(CHATGPT_URL, { waitUntil: 'domcontentloaded', timeout: 15000 })
+  await page.goto(CHATGPT_URL, { waitUntil: 'domcontentloaded', timeout: 300000 })
   await page.waitForTimeout(3000)
   for (let i = 0; i < 3; i++) { await dismissModal(); await page.waitForTimeout(1000) }
   // 点击侧边栏「新聊天」按钮确保是新会话
@@ -1006,7 +1006,7 @@ async function handleChatGptAiRemix(taskNo, params) {
   log('Step 0: 新建标签页，导航到新对话...')
   page = await context.newPage()
   await dismissModal()
-  await page.goto(CHATGPT_URL, { waitUntil: 'domcontentloaded', timeout: 15000 })
+  await page.goto(CHATGPT_URL, { waitUntil: 'domcontentloaded', timeout: 300000 })
   await page.waitForTimeout(3000)
   for (let i = 0; i < 3; i++) { await dismissModal(); await page.waitForTimeout(1000) }
   // 点击侧边栏「新聊天」按钮确保是新会话
