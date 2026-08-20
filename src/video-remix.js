@@ -136,6 +136,10 @@ function genId() {
   return crypto.randomBytes(6).toString("hex");
 }
 
+function sanitizeFilename(name) {
+  return (name || "").replace(/[<>:"/\\|?*]/g, "_").replace(/\s+/g, " ").trim().substring(0, 100);
+}
+
 function randomBetween(min, max) {
   return min + Math.random() * (max - min);
 }
@@ -558,7 +562,7 @@ export { probeVideo, OUTPUT_DIR };
  * @returns {Promise<string>} 输出文件路径
  */
 export async function composeAiRemixVideo(mainVideoPath, imagePaths, config = {}, ratio = "9:16") {
-  const { introConfig = {}, outroConfig = {}, musicConfig = {} } = config;
+  const { introConfig = {}, outroConfig = {}, musicConfig = {}, videoTitle = null } = config;
   const id = genId();
   const tempPaths = [];
   const targetW = RATIO_MAP[ratio]?.w || 1080;
@@ -677,7 +681,7 @@ export async function composeAiRemixVideo(mainVideoPath, imagePaths, config = {}
     }
 
     // 叠加背景音乐
-    const outputPath = path.join(getOutputDir(), `ai_remix_${id}.mp4`);
+    const outputPath = path.join(getOutputDir(), videoTitle ? `${sanitizeFilename(videoTitle)}.mp4` : `ai_remix_${id}.mp4`);
     const musicPath = musicConfig.segmentFilePath ? resolveLocal(musicConfig.segmentFilePath) : null;
 
     if (musicConfig.enabled !== false && musicPath && existsSync(musicPath) && musicConfig.scope !== "none") {

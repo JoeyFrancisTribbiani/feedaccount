@@ -611,7 +611,7 @@ export function createMonitorServer({
       store.logCdpEvent(null, "info", `AI混剪合成: ${imagePaths.length}张图片, 方案=${preset?.name || "默认"}, 片头=${introConfig.segmentFilePath ? "有" : "无"}, 片尾=${outroConfig.segmentFilePath ? "有" : "无"}, 音乐=${musicConfig.segmentFilePath ? "有" : "无"}`, taskId);
 
       if (mainVideoLocalPath && existsSync(mainVideoLocalPath)) {
-        const finalOut = await composeAiRemixVideo(mainVideoLocalPath, imagePaths, { introConfig, outroConfig, musicConfig, dedup: preset?.dedup !== false }, "9:16");
+        const finalOut = await composeAiRemixVideo(mainVideoLocalPath, imagePaths, { introConfig, outroConfig, musicConfig, dedup: preset?.dedup !== false, videoTitle: videoTitle || null }, "9:16");
         const outputUrl = `/data/remix-output/${path.basename(finalOut)}`;
         store.logCdpEvent(null, "info", `AI 混剪成品: ${outputUrl}`, taskId);
         store.updateRemixTask(taskId, { status: "DONE", outputUrl, completedAt: nowIso() });
