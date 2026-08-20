@@ -959,9 +959,10 @@ export async function antiAiProcessImage(inputPath, outputPath) {
  * 每张图片显示 imgDuration 秒，支持动效
  */
 async function imagesToVideo(imagePaths, imgDuration, targetW, targetH, fps, effect, outputPath) {
+  // 每张图片用 -loop 1 -t 延长到指定时长，避免只有1帧
   const inputs = ["-err_detect", "ignore_err"];
   for (const img of imagePaths) {
-    inputs.push("-i", img);
+    inputs.push("-loop", "1", "-t", imgDuration.toFixed(3), "-i", img);
   }
 
   const filters = [];
@@ -975,7 +976,6 @@ async function imagesToVideo(imagePaths, imgDuration, targetW, targetH, fps, eff
     } else if (effect === "zoom_in") {
       f += `,zoompan=z='min(zoom+0.003,1.15)':d=1:s=${targetW}x${targetH}:fps=${Math.round(fps)}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'`;
     }
-    f += `,trim=duration=${imgDuration.toFixed(3)}`;
     labels.push(`[v${i}]`);
     f += labels[i];
     filters.push(f);
