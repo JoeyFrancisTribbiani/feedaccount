@@ -4366,10 +4366,14 @@ footer span {
   margin-bottom: 8px;
 }
 .preset-config-title label {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   cursor: pointer;
+  white-space: nowrap;
+  flex-direction: row !important;
+  min-width: auto !important;
+  flex: none !important;
 }
 .preset-config-title label input[type="checkbox"] {
   width: 14px;
