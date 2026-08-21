@@ -4087,6 +4087,9 @@ async function openResourceGallery(taskId, fallbackImages = []) {
     });
   }
 
+  // 重置全选状态
+  const selectAllCb = document.querySelector("#image-gallery-select-all");
+  if (selectAllCb) selectAllCb.checked = false;
   modal.classList.remove("hidden");
 }
 document.querySelector("#image-gallery-close")?.addEventListener("click", () => {
