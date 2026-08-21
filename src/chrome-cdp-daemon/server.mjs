@@ -1079,9 +1079,12 @@ async function handleChatGptAiRemix(taskNo, params) {
     // 下载 ChatGPT 生成的图片
     const images = await downloadGeneratedImages(OUTPUTS_DIR)
     if (images.length > 0) {
+      // 额外提取非图片类型资源（视频/音频/文本/其他文件）
+      const extraResources = await extractExtraResources(OUTPUTS_DIR)
       const outputs = [
         { type: 'text', content: response.text },
         ...images.map(img => ({ type: 'image', filename: img.filename, url: img.downloadUrl || `/outputs/${img.filename}` })),
+        ...extraResources,
       ]
       taskStore.set(taskNo, {
         status: 'completed', outputs, error: null, progress: '100%',
@@ -1183,6 +1186,72 @@ async function downloadFile(url, destDir, filename) {
 /**
  * 从 ChatGPT 页面提取所有生成的图片 URL 并下载
  */
+/**
+ * 提取非图片类型资源（视频/音频/文本/其他文件）
+ */
+async function extractExtraResources(destDir) {
+  const { writeFile } = await import('fs/promises')
+  mkdirSync(destDir, { recursive: true })
+  await ensureChatGPT()
+
+  const resources = await page.evaluate(() => {
+    const results = []
+
+    // 1. 查找 <video> 标签中的源
+    document.querySelectorAll('video source[src], video[src]').forEach(v => {
+      const src = v.src || v.getAttribute('src') || ''
+      if (src && !src.includes('estuary/content')) results.push({ type: 'video', url: src })
+    })
+
+    // 2. 查找 <audio> 标签中的源
+    document.querySelectorAll('audio source[src], audio[src]').forEach(a => {
+      const src = a.src || a.getAttribute('src') || ''
+      if (src) results.push({ type: 'audio', url: src })
+    })
+
+    // 3. 查找回复中的文件下载链接（sandbox/file 下载）
+    const turns = document.querySelectorAll('[data-testid^="conversation-turn-"]')
+    let lastTurn = null
+    for (let i = turns.length - 1; i >= 0; i--) {
+      if (turns[i].querySelectorAll('img[src*="estuary/content"]').length > 0) { lastTurn = turns[i]; break }
+    }
+    if (lastTurn) {
+      lastTurn.querySelectorAll('a[href]').forEach(a => {
+        const href = a.href
+        const text = a.textContent || ''
+        if (!href || href.includes('javascript:')) return
+        // 排除导航链接
+        if (href.includes('chatgpt.com') && !href.includes('/backend-api/')) return
+        // 判断文件类型
+        const ext = href.split('.').pop()?.toLowerCase().split('?')[0] || ''
+        if (['mp4', 'mov', 'avi', 'webm', 'mkv'].includes(ext)) results.push({ type: 'video', url: href })
+        else if (['mp3', 'wav', 'aac', 'ogg', 'm4a', 'flac'].includes(ext)) results.push({ type: 'audio', url: href })
+        else if (['txt', 'md', 'pdf', 'doc', 'docx', 'csv', 'json', 'srt'].includes(ext)) results.push({ type: 'text', url: href })
+        else if (!text.includes('查看') && !text.includes('登录')) results.push({ type: 'other', url: href, filename: text })
+      })
+    }
+
+    return results
+  })
+
+  const downloaded = []
+  for (const res of resources) {
+    try {
+      const downloadRes = await fetch(res.url, { redirect: 'follow' })
+      if (!downloadRes.ok) continue
+      const buffer = Buffer.from(await downloadRes.arrayBuffer())
+      if (buffer.length === 0) continue
+      const ext = res.type === 'video' ? 'mp4' : res.type === 'audio' ? 'mp3' : res.type === 'text' ? 'txt' : 'bin'
+      const filename = `ai_${res.type}_${Date.now()}_${downloaded.length + 1}.${ext}`
+      const filepath = join(destDir, filename)
+      await writeFile(filepath, buffer)
+      downloaded.push({ type: res.type, filename, url: `/outputs/${filename}` })
+      log(`资源下载: ${res.type} ${filename} (${buffer.length} bytes)`)
+    } catch (e) { log(`资源下载失败: ${res.type} ${e.message}`) }
+  }
+  return downloaded
+}
+
 async function downloadGeneratedImages(destDir) {
   const { writeFile } = await import('fs/promises')
   mkdirSync(destDir, { recursive: true })

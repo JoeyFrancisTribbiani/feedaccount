@@ -4788,12 +4788,27 @@ function renderMatrixAccounts() {
     return;
   }
   mxEl.accountsList.innerHTML = mxState.accounts.map((a) => `
-    <div class="matrix-account-item">
+    <div class="matrix-account-item" style="flex-wrap:wrap;align-items:center;gap:6px;">
       <span class="matrix-account-platform platform-${escapeHtml(a.platform)}">${escapeHtml(PLATFORM_LABELS[a.platform] || a.platform)}</span>
       <span class="matrix-account-name">${escapeHtml(a.accountName)}</span>
-      <button class="remix-del-btn" data-del-acc="${escapeHtml(a.id)}" title="删除">×</button>
+      ${a.language ? `<span style="font-size:10px;color:#64748b;">${escapeHtml(a.language)}</span>` : ""}
+      <span class="mx-bound-creators" data-acc-id="${escapeHtml(a.id)}" style="font-size:10px;color:#3b82f6;"></span>
+      <button class="button button-secondary mx-bind-creator-btn" data-acc-id="${escapeHtml(a.id)}" style="font-size:10px;padding:2px 6px;">绑定达人</button>
+      <button class="remix-del-btn" data-del-acc="${escapeHtml(a.id)}" title="删除" style="margin-left:auto;">×</button>
     </div>
   `).join("");
+  // 加载每个账号绑定的达人
+  mxState.accounts.forEach(async (a) => {
+    try {
+      const creators = await request(`/api/matrices/accounts/${encodeURIComponent(a.id)}/creators`);
+      const el = mxEl.accountsList.querySelector(`.mx-bound-creators[data-acc-id="${a.id}"]`);
+      if (el) el.textContent = creators.length ? `达人: ${creators.map(c => c.name).join("、")}` : "未绑定达人";
+    } catch {}
+  });
+  // 绑定达人按钮
+  mxEl.accountsList.querySelectorAll(".mx-bind-creator-btn").forEach((btn) => {
+    btn.addEventListener("click", () => openBindCreatorModal(btn.dataset.accId));
+  });
   mxEl.accountsList.querySelectorAll("[data-del-acc]").forEach((btn) => {
     btn.addEventListener("click", async () => {
       await request(`/api/matrices/${encodeURIComponent(mxState.selectedId)}/accounts/${encodeURIComponent(btn.dataset.delAcc)}`, { method: "DELETE" });
@@ -4827,7 +4842,7 @@ function renderMatrixVideos() {
         <span class="matrix-video-meta">${escapeHtml(v.creatorName || "—")} · ${formatDuration(v.duration)} · ${formatFileSize(v.fileSize)} · ${formatDateTime(v.createdAt)}</span>
       </div>
       <div class="matrix-video-actions">
-        ${v.filePath ? `<button class="button button-secondary mv-preview-btn" data-mv-url="${escapeHtml(v.filePath)}" style="font-size:11px;padding:2px 8px;">预览</button>${v.imagePaths?.length ? `<button class="button button-secondary mv-gallery-btn" data-images='${escapeHtml(JSON.stringify(v.imagePaths))}' style="font-size:11px;padding:2px 8px;">资源集</button>` : ""}<a href="${escapeHtml(v.filePath)}" download class="button ${v.downloaded ? "button-secondary" : "button-primary"}" style="font-size:11px;padding:2px 8px;" data-mv-id="${escapeHtml(v.id)}">${v.downloaded ? "已下载 ✓" : "下载"}</a>` : ""}
+        ${v.filePath ? `<button class="button button-secondary mv-preview-btn" data-mv-url="${escapeHtml(v.filePath)}" style="font-size:11px;padding:2px 8px;">预览</button>${(v.imagePaths?.length || v.taskId) ? `<button class="button button-secondary mv-gallery-btn" data-task-id="${escapeHtml(v.taskId || '')}" data-images='${escapeHtml(JSON.stringify(v.imagePaths))}' style="font-size:11px;padding:2px 8px;">资源集</button>` : ""}<a href="${escapeHtml(v.filePath)}" download class="button ${v.downloaded ? "button-secondary" : "button-primary"}" style="font-size:11px;padding:2px 8px;" data-mv-id="${escapeHtml(v.id)}">${v.downloaded ? "已下载 ✓" : "下载"}</a>` : ""}
         <button class="remix-del-btn" data-del-mv="${escapeHtml(v.id)}" title="删除">×</button>
       </div>
     </div>
@@ -4843,8 +4858,9 @@ function renderMatrixVideos() {
   });
   mxEl.videosList.querySelectorAll(".mv-gallery-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
-      const images = JSON.parse(btn.dataset.images);
-      openImageGallery(images);
+      const taskId = btn.dataset.taskId;
+      const images = btn.dataset.images ? JSON.parse(btn.dataset.images) : [];
+      openResourceGallery(taskId, images);
     });
   });
   mxEl.videosList.querySelectorAll("[data-del-mv]").forEach((btn) => {
@@ -4866,6 +4882,57 @@ function renderMatrixVideos() {
         renderMatrixVideos();
       } catch {}
     });
+  });
+}
+
+// 绑定达人弹窗
+async function openBindCreatorModal(accountId) {
+  // 加载所有达人
+  const allCreators = await request("/api/remix/creators").catch(() => []);
+  // 加载已绑定的达人
+  const boundCreators = await request(`/api/matrices/accounts/${encodeURIComponent(accountId)}/creators`).catch(() => []);
+  const boundIds = new Set(boundCreators.map(c => c.id));
+
+  const list = allCreators.map(c => `
+    <label style="display:flex;align-items:center;gap:6px;padding:4px 0;">
+      <input type="checkbox" value="${escapeHtml(c.id)}" ${boundIds.has(c.id) ? "checked" : ""} />
+      <span>${escapeHtml(c.name)}</span>
+    </label>
+  `).join("");
+
+  const html = `<div id="bind-creator-overlay" class="modal-overlay" style="z-index:10001;">
+    <div class="modal-content" style="max-width:400px;">
+      <div class="modal-header"><h3>绑定达人</h3><button class="modal-close" onclick="document.getElementById('bind-creator-overlay').remove()">×</button></div>
+      <div class="modal-body" style="max-height:60vh;overflow-y:auto;">
+        ${allCreators.length ? list : '<div class="empty-state compact">暂无达人</div>'}
+      </div>
+      <div class="modal-footer" style="padding:8px;">
+        <button id="bind-creator-confirm" class="button button-primary" style="width:100%;">保存</button>
+      </div>
+    </div>
+  </div>`;
+  document.body.insertAdjacentHTML("beforeend", html);
+
+  document.querySelector("#bind-creator-confirm")?.addEventListener("click", async () => {
+    const checked = [...document.querySelectorAll("#bind-creator-overlay input[type=checkbox]:checked")].map(cb => cb.value);
+    const unchecked = allCreators.filter(c => !checked.includes(c.id)).map(c => c.id);
+    // 绑定新选的
+    if (checked.length) {
+      await request(`/api/matrices/accounts/${encodeURIComponent(accountId)}/creators`, {
+        method: "POST", body: JSON.stringify({ creatorIds: checked }),
+      });
+    }
+    // 解绑取消选的
+    for (const cid of unchecked) {
+      if (boundIds.has(cid)) {
+        await request(`/api/matrices/accounts/${encodeURIComponent(accountId)}/creators`, {
+          method: "DELETE", body: JSON.stringify({ creatorId: cid }),
+        });
+      }
+    }
+    document.querySelector("#bind-creator-overlay")?.remove();
+    showToast("绑定已更新");
+    await fetchMatrixAccounts(mxState.selectedId);
   });
 }
 

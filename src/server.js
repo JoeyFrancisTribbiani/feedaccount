@@ -2374,13 +2374,14 @@ export function createMonitorServer({
           if (request.method === "GET") {
             const videos = store.listMatrixVideos(matrixId).map((v) => {
               const fp = normalizeRemixUrl(v.filePath);
-              // 查找与该视频filePath匹配的任务的imagePaths
+              // 查找与该视频filePath匹配的任务
               const allTasks = store.listRemixTasks();
-              const matchingTask = allTasks.find(t => t.outputUrl === fp && t.imagePaths?.length);
+              const matchingTask = allTasks.find(t => t.outputUrl === fp);
               return {
                 ...v,
                 filePath: fp,
                 imagePaths: matchingTask?.imagePaths || [],
+                taskId: matchingTask?.id || null,
               };
             });
             sendJson(response, 200, videos);
