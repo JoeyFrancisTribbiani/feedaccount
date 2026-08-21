@@ -2638,7 +2638,7 @@ export function createMonitorServer({
         }
         if (!existsSync(filePath)) {
           response.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
-          response.end("文件不存在: " + filename);
+          response.end("文件不存在: " + subPath);
           return;
         }
         const statResult = await stat(filePath);
@@ -2720,7 +2720,7 @@ export function createMonitorServer({
         if (!filePath.startsWith(resourceBase)) { sendJson(response, 403, { error: "禁止访问" }); return; }
         if (!existsSync(filePath)) {
           response.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
-          response.end("文件不存在: " + filename);
+          response.end("文件不存在: " + subPath);
           return;
         }
         const statResult = await stat(filePath);
