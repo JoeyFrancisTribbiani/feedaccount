@@ -3421,9 +3421,11 @@ function bindRemixDownloadLinks(container) {
   container.querySelectorAll("a[data-task-id]").forEach((a) => {
     if (a._bound) return;
     a._bound = true;
-    a.addEventListener("click", async () => {
+    a.addEventListener("click", async (e) => {
+      e.preventDefault();
       const taskId = a.dataset.taskId;
-      if (!taskId) return;
+      const outUrl = a.dataset.outUrl;
+      if (!taskId || !outUrl) return;
       try {
         await request(`/api/remix/tasks/${encodeURIComponent(taskId)}/downloaded`, { method: "POST", body: "{}" });
         const task = remix.tasks.find((t) => t.id === taskId);
@@ -3433,6 +3435,13 @@ function bindRemixDownloadLinks(container) {
         updateRemixVideoBadges();
         renderRemixTasks();
       } catch {}
+      // 触发实际文件下载
+      const dl = document.createElement("a");
+      dl.href = outUrl;
+      dl.download = "";
+      document.body.appendChild(dl);
+      dl.click();
+      dl.remove();
     });
   });
 }
