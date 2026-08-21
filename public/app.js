@@ -3818,6 +3818,71 @@ document.querySelector("#video-preview-close")?.addEventListener("click", () => 
   modal.classList.add("hidden");
 });
 
+// 文本预览弹窗（可编辑/复制）
+async function openTextPreviewModal(url) {
+  // 动态创建弹窗
+  let overlay = document.querySelector("#text-preview-overlay");
+  if (!overlay) {
+    overlay = document.createElement("div");
+    overlay.id = "text-preview-overlay";
+    overlay.className = "modal-overlay";
+    overlay.style.cssText = "z-index:10002;";
+    overlay.innerHTML = `
+      <div class="modal-content" style="max-width:700px;width:80vw;display:flex;flex-direction:column;max-height:90vh;">
+        <div class="modal-header">
+          <h3>文本预览</h3>
+          <div style="display:flex;gap:6px;">
+            <button id="text-copy-all" class="button button-secondary" type="button" style="font-size:11px;padding:4px 10px;">全部复制</button>
+            <button id="text-close" class="modal-close" type="button">×</button>
+          </div>
+        </div>
+        <div class="modal-body" style="flex:1;overflow:hidden;padding:8px;">
+          <textarea id="text-content" style="width:100%;height:60vh;font-size:13px;font-family:monospace;line-height:1.6;resize:none;border:1px solid #e2e8f0;border-radius:6px;padding:12px;" placeholder="加载中..." spellcheck="false"></textarea>
+        </div>
+        <div style="padding:8px;border-top:1px solid #e2e8f0;display:flex;justify-content:space-between;align-items:center;">
+          <span id="text-info" style="font-size:11px;color:#94a3b8;"></span>
+          <button id="text-download" class="button button-primary" type="button" style="font-size:11px;padding:4px 12px;">下载</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+    overlay.addEventListener("click", (e) => {
+      if (e.target === overlay) overlay.classList.add("hidden");
+    });
+    overlay.querySelector("#text-close").addEventListener("click", () => overlay.classList.add("hidden"));
+    overlay.querySelector("#text-copy-all").addEventListener("click", () => {
+      const ta = overlay.querySelector("#text-content");
+      ta.select();
+      document.execCommand("copy");
+      showToast("已复制全部");
+    });
+    overlay.querySelector("#text-download").addEventListener("click", () => {
+      const a = document.createElement("a");
+      a.href = overlay.dataset.url;
+      a.download = "";
+      a.click();
+    });
+  }
+  overlay.dataset.url = url;
+  overlay.classList.remove("hidden");
+  const textarea = overlay.querySelector("#text-content");
+  const info = overlay.querySelector("#text-info");
+  textarea.value = "加载中...";
+  textarea.disabled = true;
+  try {
+    const res = await fetch(url);
+    const text = await res.text();
+    textarea.value = text;
+    textarea.disabled = false;
+    const lines = text.split("\n").length;
+    const chars = text.length;
+    info.textContent = `${chars} 字符 · ${lines} 行`;
+  } catch (e) {
+    textarea.value = "加载失败: " + e.message;
+    info.textContent = "加载失败";
+  }
+}
+
 // 资源集弹框（原图集）
 function openImageGallery(imageUrls) {
   openResourceGallery(null, imageUrls);
@@ -3874,10 +3939,33 @@ async function openResourceGallery(taskId, fallbackImages = []) {
     const label = { image: "图片", video: "视频", audio: "音频", text: "文本", other: "其他" }[activeType] || activeType;
 
     if (activeType === "text") {
-      // 文本类型用 textarea 展示
-      grid.innerHTML = items.map(item => `<div style="padding:8px;border:1px solid #e2e8f0;border-radius:8px;">
-        <a href="${escapeHtml(item.url)}?download" download style="font-size:12px;">下载 ${escapeHtml(item.filename)}</a>
-      </div>`).join("");
+      // 文本类型：显示 txt 缩略图 + 预览按钮 + 下载
+      grid.innerHTML = items.map((item, i) => `
+        <div class="gallery-item" data-url="${escapeHtml(item.url)}" style="position:relative;cursor:pointer;border:2px solid transparent;border-radius:8px;overflow:hidden;">
+          <input type="checkbox" class="gallery-select-cb" data-url="${escapeHtml(item.url)}" style="position:absolute;top:4px;left:4px;z-index:2;width:18px;height:18px;" />
+          <div style="padding:30px 8px;text-align:center;background:#f8fafc;">
+            <div style="font-size:32px;margin-bottom:6px;">📄</div>
+            <div style="font-size:10px;color:#64748b;word-break:break-all;line-height:1.4;">${escapeHtml(item.filename || "文本文件")}</div>
+          </div>
+          <button class="text-preview-btn" data-url="${escapeHtml(item.url)}" style="position:absolute;bottom:4px;left:4px;font-size:14px;padding:6px 14px;background:rgba(0,0,0,0.7);color:#fff;border:none;border-radius:6px;cursor:pointer;">预览</button>
+          <a href="${escapeHtml(item.url)}?download" download class="gallery-dl-btn" style="position:absolute;bottom:4px;right:4px;font-size:14px;padding:6px 18px;background:rgba(0,0,0,0.7);color:#fff;border-radius:6px;text-decoration:none;">下载</a>
+        </div>
+      `).join("");
+      // 文本预览按钮
+      grid.querySelectorAll(".text-preview-btn").forEach(btn => {
+        btn.addEventListener("click", async (e) => {
+          e.stopPropagation();
+          await openTextPreviewModal(btn.dataset.url);
+        });
+      });
+      // 单击文本项也选中
+      grid.querySelectorAll(".gallery-item").forEach(item => {
+        item.addEventListener("click", (e) => {
+          if (e.target.closest(".gallery-dl-btn") || e.target.closest(".text-preview-btn") || e.target.matches("input[type=checkbox]")) return;
+          const cb = item.querySelector(".gallery-select-cb");
+          if (cb) { cb.checked = !cb.checked; item.style.borderColor = cb.checked ? "#3b82f6" : "transparent"; }
+        });
+      });
     } else if (activeType === "video") {
       grid.innerHTML = items.map(item => `<div style="position:relative;">
         <video src="${escapeHtml(item.url)}" controls style="width:100%;border-radius:8px;"></video>
