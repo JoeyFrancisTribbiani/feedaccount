@@ -2083,10 +2083,62 @@ export function createMonitorServer({
             return;
           }
           if (request.method === "DELETE") {
+            const task = store.getRemixTask(taskId);
+            // 删除输出视频文件
+            if (task?.outputUrl) {
+              try {
+                const fp = task.outputUrl.startsWith("/data/remix-output/")
+                  ? path.join(getOutputDir(), task.outputUrl.replace("/data/remix-output/", ""))
+                  : task.outputUrl;
+                if (existsSync(fp)) unlink(fp);
+              } catch {}
+            }
+            // 删除任务专属目录（图片等资源）
+            if (task?.seqNum) {
+              try {
+                const taskDir = path.join(getOutputDir(), "tasks", String(task.seqNum));
+                if (existsSync(taskDir)) {
+                  const { rmSync } = await import("node:fs");
+                  rmSync(taskDir, { recursive: true, force: true });
+                }
+              } catch {}
+            }
+            // 删除任务资源记录
+            try { store.deleteTaskResources(taskId); } catch {}
             store.deleteRemixTask(taskId);
             sendJson(response, 200, { ok: true });
             return;
           }
+        }
+
+        // 批量删除任务
+        if (request.method === "POST" && pathname === "/api/remix/tasks/batch-delete") {
+          const body = await readJson(request);
+          const taskIds = body.taskIds || [];
+          for (const taskId of taskIds) {
+            const task = store.getRemixTask(taskId);
+            if (task?.outputUrl) {
+              try {
+                const fp = task.outputUrl.startsWith("/data/remix-output/")
+                  ? path.join(getOutputDir(), task.outputUrl.replace("/data/remix-output/", ""))
+                  : task.outputUrl;
+                if (existsSync(fp)) unlink(fp);
+              } catch {}
+            }
+            if (task?.seqNum) {
+              try {
+                const taskDir = path.join(getOutputDir(), "tasks", String(task.seqNum));
+                if (existsSync(taskDir)) {
+                  const { rmSync } = await import("node:fs");
+                  rmSync(taskDir, { recursive: true, force: true });
+                }
+              } catch {}
+            }
+            try { store.deleteTaskResources(taskId); } catch {}
+            store.deleteRemixTask(taskId);
+          }
+          sendJson(response, 200, { ok: true, deleted: taskIds.length });
+          return;
         }
 
         // 重新剪辑
@@ -2524,7 +2576,7 @@ export function createMonitorServer({
                 // 删除视频文件
                 try {
                   const fp = mv.filePath.startsWith("/data/remix-output/")
-                    ? path.join(getOutputDir(), path.basename(mv.filePath))
+                    ? path.join(getOutputDir(), mv.filePath.replace("/data/remix-output/", ""))
                     : mv.filePath;
                   if (existsSync(fp)) unlink(fp);
                 } catch {}

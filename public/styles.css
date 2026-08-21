@@ -2536,7 +2536,9 @@ footer span {
   transition: all 0.15s ease;
 }
 
-.matrix-account-item .remix-del-btn {
+.matrix-account-item .remix-del-btn,
+.matrix-video-item .remix-del-btn,
+.remix-task-item .remix-del-btn {
   opacity: 1;
 }
 .remix-creator-item:hover .remix-del-btn {

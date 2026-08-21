@@ -3661,7 +3661,12 @@ function renderRemixTasks() {
     remixEl.tasksList.innerHTML = '<div class="empty-state compact">暂无记录</div>';
     return;
   }
-  remixEl.tasksList.innerHTML = remix.tasks.map((t) => {
+  // 全选 + 批量删除
+  const batchBar = `<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;padding:4px 0;">
+    <label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;"><input type="checkbox" id="task-select-all" /> 全选</label>
+    <button id="task-batch-delete" class="danger-button" type="button" style="font-size:11px;padding:4px 10px;" disabled>批量删除</button>
+  </div>`;
+  remixEl.tasksList.innerHTML = batchBar + remix.tasks.map((t) => {
     const isDedup = t.mode === "dedup";
     const isMatrixRemix = t.mode === "matrix-remix";
     const isAiRemix = t.mode === "ai-remix";
@@ -3675,7 +3680,7 @@ function renderRemixTasks() {
     return `
       <div class="remix-task-item">
         <div class="remix-task-info">
-          ${t.status === "DONE" && t.outputUrl ? `<input type="checkbox" class="task-select-cb" data-task-id="${escapeHtml(t.id)}" data-out-url="${escapeHtml(t.outputUrl)}" style="margin-right:8px;" />` : ""}
+          <input type="checkbox" class="task-select-cb" data-task-id="${escapeHtml(t.id)}" style="margin-right:8px;" />
           <span class="remix-task-mode ${isDedup ? "mode-dedup" : "mode-stitch"}">${modeLabel}</span>
           <strong>${escapeHtml(t.title)}</strong>
           <span style="font-size:10px;color:#94a3b8;font-family:monospace;">#${t.seqNum || '-'}</span>
@@ -3695,10 +3700,38 @@ function renderRemixTasks() {
       </div>
     `;
   }).join("");
+  // 全选
+  remixEl.tasksList.querySelector("#task-select-all")?.addEventListener("change", (e) => {
+    const checked = e.target.checked;
+    remixEl.tasksList.querySelectorAll(".task-select-cb").forEach(cb => { cb.checked = checked; });
+    remixEl.tasksList.querySelector("#task-batch-delete").disabled = !checked && !remixEl.tasksList.querySelector(".task-select-cb:checked");
+  });
+  // 单个checkbox变化
+  remixEl.tasksList.querySelectorAll(".task-select-cb").forEach(cb => {
+    cb.addEventListener("change", () => {
+      const anyChecked = remixEl.tasksList.querySelector(".task-select-cb:checked");
+      remixEl.tasksList.querySelector("#task-batch-delete").disabled = !anyChecked;
+    });
+  });
+  // 批量删除
+  remixEl.tasksList.querySelector("#task-batch-delete")?.addEventListener("click", async () => {
+    const ids = [...remixEl.tasksList.querySelectorAll(".task-select-cb:checked")].map(cb => cb.dataset.taskId);
+    if (!ids.length) return;
+    if (!confirm(`确定删除选中的 ${ids.length} 个任务？视频文件和资源也会一并删除。`)) return;
+    try {
+      await request("/api/remix/tasks/batch-delete", { method: "POST", body: JSON.stringify({ taskIds: ids }) });
+      showToast(`已删除 ${ids.length} 个任务`);
+      await fetchRemixTasks();
+    } catch (e) { showToast(e.message, true); }
+  });
+  // 删除单个任务
   remixEl.tasksList.querySelectorAll("[data-del-task]").forEach((btn) => {
     btn.addEventListener("click", async () => {
-      await request(`/api/remix/tasks/${encodeURIComponent(btn.dataset.delTask)}`, { method: "DELETE" });
-      await fetchRemixTasks();
+      if (!confirm("确定删除此任务？视频文件和资源也会一并删除。")) return;
+      try {
+        await request(`/api/remix/tasks/${encodeURIComponent(btn.dataset.delTask)}`, { method: "DELETE" });
+        await fetchRemixTasks();
+      } catch (e) { showToast(e.message, true); }
     });
   });
   // 预览按钮
@@ -5035,7 +5068,12 @@ function renderMatrixVideos() {
     mxEl.videosList.innerHTML = '<div class="empty-state compact">暂无成品视频</div>';
     return;
   }
-  mxEl.videosList.innerHTML = mxState.videos.map((v) => `
+  const batchBar = `<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;padding:4px 0;">
+    <label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;"><input type="checkbox" id="mv-select-all" /> 全选</label>
+    <button id="mv-batch-download" class="button button-primary" type="button" style="font-size:11px;padding:4px 10px;" disabled>批量下载</button>
+    <button id="mv-batch-delete" class="danger-button" type="button" style="font-size:11px;padding:4px 10px;" disabled>批量删除</button>
+  </div>`;
+  mxEl.videosList.innerHTML = batchBar + mxState.videos.map((v) => `
     <div class="matrix-video-item">
       <input type="checkbox" class="mv-select-cb" data-mv-id="${escapeHtml(v.id)}" data-mv-url="${escapeHtml(v.filePath)}" style="margin-right:4px;" />
       <div class="matrix-video-thumb">
@@ -5075,6 +5113,51 @@ function renderMatrixVideos() {
       await fetchMatrixVideos(mxState.selectedId);
       await fetchMatrices();
     });
+  });
+  // 全选
+  mxEl.videosList.querySelector("#mv-select-all")?.addEventListener("change", (e) => {
+    const checked = e.target.checked;
+    mxEl.videosList.querySelectorAll(".mv-select-cb").forEach(cb => { cb.checked = checked; });
+    mxEl.videosList.querySelector("#mv-batch-download").disabled = !checked;
+    mxEl.videosList.querySelector("#mv-batch-delete").disabled = !checked;
+  });
+  // 单个checkbox变化
+  mxEl.videosList.querySelectorAll(".mv-select-cb").forEach(cb => {
+    cb.addEventListener("change", () => {
+      const anyChecked = mxEl.videosList.querySelector(".mv-select-cb:checked");
+      mxEl.videosList.querySelector("#mv-batch-download").disabled = !anyChecked;
+      mxEl.videosList.querySelector("#mv-batch-delete").disabled = !anyChecked;
+    });
+  });
+  // 批量下载
+  mxEl.videosList.querySelector("#mv-batch-download")?.addEventListener("click", async () => {
+    const cbs = mxEl.videosList.querySelectorAll(".mv-select-cb:checked");
+    for (const cb of cbs) {
+      const url = cb.dataset.mvUrl;
+      if (url) {
+        const a = document.createElement("a");
+        a.href = url + (url.includes("?") ? "&" : "?") + "download";
+        a.download = "";
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        await new Promise(r => setTimeout(r, 500));
+      }
+    }
+  });
+  // 批量删除
+  mxEl.videosList.querySelector("#mv-batch-delete")?.addEventListener("click", async () => {
+    const ids = [...mxEl.videosList.querySelectorAll(".mv-select-cb:checked")].map(cb => cb.dataset.mvId);
+    if (!ids.length) return;
+    if (!confirm(`确定删除选中的 ${ids.length} 个视频？文件也会一并删除。`)) return;
+    try {
+      for (const vid of ids) {
+        await request(`/api/matrices/${encodeURIComponent(mxState.selectedId)}/videos`, { method: "DELETE", body: JSON.stringify({ videoId: vid }) });
+      }
+      showToast(`已删除 ${ids.length} 个视频`);
+      await fetchMatrixVideos(mxState.selectedId);
+      await fetchMatrices();
+    } catch (e) { showToast(e.message, true); }
   });
   mxEl.videosList.querySelectorAll("a[data-mv-id]").forEach((a) => {
     a.addEventListener("click", async (e) => {
