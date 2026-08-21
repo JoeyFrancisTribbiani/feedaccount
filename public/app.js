@@ -5012,9 +5012,12 @@ function renderMatrixAccounts() {
   // 删除账号
   mxEl.accountsList.querySelectorAll("[data-del-acc]").forEach((btn) => {
     btn.addEventListener("click", async () => {
-      await request(`/api/matrices/${encodeURIComponent(mxState.selectedId)}/accounts/${encodeURIComponent(btn.dataset.delAcc)}`, { method: "DELETE" });
-      await fetchMatrixAccounts(mxState.selectedId);
-      await fetchMatrices();
+      if (!confirm("确定删除此账号？绑定关系也会一并删除。")) return;
+      try {
+        await request(`/api/matrices/${encodeURIComponent(mxState.selectedId)}/accounts/${encodeURIComponent(btn.dataset.delAcc)}`, { method: "DELETE" });
+        await fetchMatrixAccounts(mxState.selectedId);
+        await fetchMatrices();
+      } catch (e) { showToast(e.message, true); }
     });
   });
 }
