@@ -2500,7 +2500,11 @@ export function createMonitorServer({
           const defaultPath = path.join(defaultDir, filename);
           if (existsSync(defaultPath)) { filePath = defaultPath; outputDir = defaultDir; }
         }
-        if (!existsSync(filePath)) { sendJson(response, 404, { error: "文件不存在" }); return; }
+        if (!existsSync(filePath)) {
+          response.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+          response.end("文件不存在: " + filename);
+          return;
+        }
         const statResult = await stat(filePath);
         const range = request.headers["range"];
         if (range) {
@@ -2557,7 +2561,11 @@ export function createMonitorServer({
           if (existsSync(defaultPath)) { filePath = defaultPath; uploadDir = defaultDir; }
         }
         if (!filePath.startsWith(uploadDir)) { sendJson(response, 403, { error: "禁止访问" }); return; }
-        if (!existsSync(filePath)) { sendJson(response, 404, { error: "文件不存在" }); return; }
+        if (!existsSync(filePath)) {
+          response.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+          response.end("文件不存在: " + filename);
+          return;
+        }
         const statResult = await stat(filePath);
         const ext = path.extname(filename).toLowerCase();
         const ct = ext === ".jpg" || ext === ".jpeg" ? "image/jpeg" : ext === ".png" ? "image/png" : "video/mp4";
@@ -2571,7 +2579,11 @@ export function createMonitorServer({
         const filePath = path.resolve(THIS_DIR, "..", "data", "remix-resources", subPath);
         const resourceBase = path.resolve(THIS_DIR, "..", "data", "remix-resources");
         if (!filePath.startsWith(resourceBase)) { sendJson(response, 403, { error: "禁止访问" }); return; }
-        if (!existsSync(filePath)) { sendJson(response, 404, { error: "文件不存在" }); return; }
+        if (!existsSync(filePath)) {
+          response.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+          response.end("文件不存在: " + filename);
+          return;
+        }
         const statResult = await stat(filePath);
         const ext = path.extname(filePath).toLowerCase();
         const mime = ext === ".mp4" ? "video/mp4" : ext === ".mp3" ? "audio/mpeg" : "application/octet-stream";
