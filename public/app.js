@@ -5648,51 +5648,8 @@ function updateSelectedVideosSummary() {
 }
 
 function renderModalCreators() {
-  if (!modalState.creators.length) {
-    modalEl.creatorList.innerHTML = '<div class="empty-state compact">暂无达人</div>';
-    return;
-  }
-  modalEl.creatorList.innerHTML = modalState.creators.map((c) => `
-    <label class="modal-radio-item ${modalState.selectedCreatorId === c.id ? "checked" : ""}">
-      <input type="radio" name="modal-creator" value="${escapeHtml(c.id)}" ${modalState.selectedCreatorId === c.id ? "checked" : ""} />
-      <span>${escapeHtml(c.name)}</span>
-      <span class="muted-activity" style="font-size: 11px;">${c._count?.videos || 0}视频 · ${c._count?.resources || 0}资源</span>
-    </label>
-  `).join("");
-  modalEl.creatorList.querySelectorAll("input[type=radio]").forEach((rb) => {
-    rb.addEventListener("change", async () => {
-      modalState.selectedCreatorId = rb.value;
-      modalState.selectedVideoIds.clear();
-      rb.closest("label").classList.add("checked");
-      modalEl.creatorList.querySelectorAll("label").forEach((l) => {
-        if (l !== rb.closest("label")) l.classList.remove("checked");
-      });
-      // 加载该达人的视频
-      try {
-        const data = await request(`/api/remix/creators/${encodeURIComponent(rb.value)}/videos`);
-        modalState.videos = Array.isArray(data) ? data : [];
-      } catch { modalState.videos = []; }
-      renderModalVideos();
-      // 加载该达人的资源到下拉框
-      try {
-        const resData = await request(`/api/remix/creators/${encodeURIComponent(rb.value)}/resources`);
-        const resources = Array.isArray(resData) ? resData : [];
-        const fillSelect = (sel, type, keepNone) => {
-          if (!sel) return;
-          const oldVal = sel.value;
-          const opts = keepNone
-            ? `<option value="">随机</option><option value="none">不加</option>`
-            : `<option value="">随机</option>`;
-          sel.innerHTML = opts + resources.filter(r => r.type === type).map(r => `<option value="${escapeHtml(r.id)}">${escapeHtml(r.filename || r.title || type)}</option>`).join("");
-          sel.value = oldVal;
-        };
-        fillSelect(modalEl.introSelect, "intro");
-        fillSelect(modalEl.outroSelect, "outro");
-        fillSelect(modalEl.musicSelect, "music", true);
-      } catch {}
-      updateModalStartBtn();
-    });
-  });
+  // tab 页模式下达人列表由 renderModalTabs 渲染
+  renderModalTabs();
 }
 
 function renderModalVideos() {
