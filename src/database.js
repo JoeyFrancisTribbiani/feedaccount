@@ -1712,6 +1712,13 @@ export class LocalDatabase {
     return this.db.prepare(`DELETE FROM matrix_accounts WHERE id = ?`).run(id).changes;
   }
 
+  updateMatrixAccount(id, { platform, accountName, language }) {
+    const ts = nowIso();
+    this.db.prepare(`UPDATE matrix_accounts SET platform = COALESCE(?, platform), account_name = COALESCE(?, account_name), language = COALESCE(?, language) WHERE id = ?`).run(platform ?? null, accountName ?? null, language ?? null, id);
+    const row = this.db.prepare(`SELECT * FROM matrix_accounts WHERE id = ?`).get(id);
+    return row ? { id: row.id, matrixId: row.matrix_id, platform: row.platform, accountName: row.account_name, language: row.language, createdAt: row.created_at } : null;
+  }
+
   // 社媒账号绑定达人
   bindMatrixAccountCreators(accountId, creatorIds) {
     const ts = nowIso();

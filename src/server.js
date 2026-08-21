@@ -2416,11 +2416,24 @@ export function createMonitorServer({
             return;
           }
         }
-        const matrixAccountDeleteMatch = pathname.match(/^\/api\/matrices\/([^/]+)\/accounts\/([^/]+)$/);
-        if (request.method === "DELETE" && matrixAccountDeleteMatch) {
-          store.deleteMatrixAccount(decodeURIComponent(matrixAccountDeleteMatch[2]));
-          sendJson(response, 200, { ok: true });
-          return;
+        const matrixAccountMatch = pathname.match(/^\/api\/matrices\/([^/]+)\/accounts\/([^/]+)$/);
+        if (matrixAccountMatch) {
+          const accountId = decodeURIComponent(matrixAccountMatch[2]);
+          if (request.method === "DELETE") {
+            store.deleteMatrixAccount(accountId);
+            sendJson(response, 200, { ok: true });
+            return;
+          }
+          if (request.method === "PUT") {
+            const body = await readJson(request);
+            const updated = store.updateMatrixAccount(accountId, {
+              platform: body.platform,
+              accountName: body.accountName,
+              language: body.language || null,
+            });
+            sendJson(response, 200, updated);
+            return;
+          }
         }
 
         // 社媒账号绑定达人

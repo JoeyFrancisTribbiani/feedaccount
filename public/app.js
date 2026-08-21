@@ -4962,6 +4962,7 @@ function renderMatrixAccounts() {
       ${a.language ? `<span style="font-size:10px;color:#64748b;">${escapeHtml(a.language)}</span>` : ""}
       <span class="mx-bound-creators" data-acc-id="${escapeHtml(a.id)}" style="font-size:10px;color:#3b82f6;"></span>
       <button class="button button-secondary mx-bind-creator-btn" data-acc-id="${escapeHtml(a.id)}" style="font-size:10px;padding:2px 6px;">绑定达人</button>
+      <button class="button button-secondary mx-edit-acc-btn" data-acc-id="${escapeHtml(a.id)}" data-platform="${escapeHtml(a.platform)}" data-name="${escapeHtml(a.accountName)}" data-language="${escapeHtml(a.language || "")}" style="font-size:10px;padding:2px 6px;">编辑</button>
       <button class="remix-del-btn" data-del-acc="${escapeHtml(a.id)}" title="删除" style="margin-left:auto;">×</button>
     </div>
   `).join("");
@@ -4977,6 +4978,11 @@ function renderMatrixAccounts() {
   mxEl.accountsList.querySelectorAll(".mx-bind-creator-btn").forEach((btn) => {
     btn.addEventListener("click", () => openBindCreatorModal(btn.dataset.accId));
   });
+  // 编辑账号按钮
+  mxEl.accountsList.querySelectorAll(".mx-edit-acc-btn").forEach((btn) => {
+    btn.addEventListener("click", () => openEditAccountModal(btn.dataset));
+  });
+  // 删除账号
   mxEl.accountsList.querySelectorAll("[data-del-acc]").forEach((btn) => {
     btn.addEventListener("click", async () => {
       await request(`/api/matrices/${encodeURIComponent(mxState.selectedId)}/accounts/${encodeURIComponent(btn.dataset.delAcc)}`, { method: "DELETE" });
@@ -5050,6 +5056,61 @@ function renderMatrixVideos() {
         renderMatrixVideos();
       } catch {}
     });
+  });
+}
+
+// 编辑社媒账号弹窗
+function openEditAccountModal(data) {
+  const html = `<div id="edit-acc-overlay" class="modal-overlay" style="z-index:10001;">
+    <div class="modal-content" style="max-width:360px;">
+      <div class="modal-header"><h3>编辑账号</h3><button class="modal-close" onclick="document.getElementById('edit-acc-overlay').remove()">×</button></div>
+      <div class="modal-body" style="display:flex;flex-direction:column;gap:10px;">
+        <select id="edit-acc-platform" style="padding:6px;">
+          <option value="tiktok">TikTok</option>
+          <option value="instagram">Instagram</option>
+          <option value="youtube">YouTube</option>
+        </select>
+        <input type="text" id="edit-acc-name" placeholder="账号名称" style="padding:6px;" />
+        <select id="edit-acc-language" style="padding:6px;">
+          <option value="">语言(选填)</option>
+          <option value="English">English</option>
+          <option value="中文">中文</option>
+          <option value="日本語">日本語</option>
+          <option value="한국어">한국어</option>
+          <option value="Français">Français</option>
+          <option value="Deutsch">Deutsch</option>
+          <option value="Español">Español</option>
+          <option value="Português">Português</option>
+          <option value="العربية">العربية</option>
+          <option value="ภาษาไทย">ภาษาไทย</option>
+          <option value="Tiếng Việt">Tiếng Việt</option>
+          <option value="Bahasa Indonesia">Bahasa Indonesia</option>
+        </select>
+      </div>
+      <div class="modal-footer" style="padding:8px;">
+        <button id="edit-acc-confirm" class="button button-primary" style="width:100%;">保存</button>
+      </div>
+    </div>
+  </div>`;
+  document.body.insertAdjacentHTML("beforeend", html);
+  const overlay = document.querySelector("#edit-acc-overlay");
+  overlay.querySelector("#edit-acc-platform").value = data.platform || "tiktok";
+  overlay.querySelector("#edit-acc-name").value = data.name || "";
+  overlay.querySelector("#edit-acc-language").value = data.language || "";
+  overlay.querySelector("#edit-acc-confirm").addEventListener("click", async () => {
+    const platform = overlay.querySelector("#edit-acc-platform").value;
+    const accountName = overlay.querySelector("#edit-acc-name").value.trim();
+    const language = overlay.querySelector("#edit-acc-language").value || null;
+    if (!accountName) { showToast("请输入账号名称", true); return; }
+    try {
+      await request(`/api/matrices/${encodeURIComponent(mxState.selectedId)}/accounts/${encodeURIComponent(data.accId)}`, {
+        method: "PUT", body: JSON.stringify({ platform, accountName, language }),
+      });
+      overlay.remove();
+      showToast("已更新");
+      await fetchMatrixAccounts(mxState.selectedId);
+      await fetchMatrices();
+    } catch (e) { showToast(e.message, true); }
   });
 }
 
