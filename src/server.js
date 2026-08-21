@@ -2490,7 +2490,7 @@ export function createMonitorServer({
 
       // ---- 静态文件: remix 输出 ----
       if (pathname.startsWith("/data/remix-output/")) {
-        const filename = path.basename(pathname);
+        const filename = decodeURIComponent(path.basename(pathname));
         const { getOutputDir } = await import("./video-remix.js");
         let outputDir = getOutputDir();
         let filePath = path.join(outputDir, filename);
@@ -2551,7 +2551,7 @@ export function createMonitorServer({
       }
 
       if (pathname.startsWith("/data/remix-videos/")) {
-        const filename = path.basename(pathname);
+        const filename = decodeURIComponent(path.basename(pathname));
         const subPath = pathname.slice("/data/remix-videos/".length);
         const { getUploadDir } = await import("./video-remix.js");
         let uploadDir = getUploadDir();
