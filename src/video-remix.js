@@ -597,8 +597,8 @@ export async function composeAiRemixVideo(mainVideoPath, imagePaths, config = {}
       const introImages = imagePaths.slice(0, introImgCount);
       const introImgDuration = introConfig.imageDuration || 0.7;
 
-      if (introConfig.mode === "image") {
-        // 纯图模式：只用图片拼接，不需要视频片段
+      if (introConfig.mode === "image" || (!introConfig.mode && !introConfig.segmentFilePath)) {
+        // 纯图模式 或 没有视频片段时自动用纯图模式
         const introPath = path.join(TEMP_DIR, `ai_intro_images_${id}.mp4`);
         await imagesToVideo(introImages, introImgDuration, targetW, targetH, mainMeta.fps, introConfig.effect || "none", introPath);
         tempPaths.push(introPath);
@@ -623,14 +623,15 @@ export async function composeAiRemixVideo(mainVideoPath, imagePaths, config = {}
     segments.push(normalizedMain);
 
     // 处理片尾
-    const outroImgCount = Math.min(outroConfig.imageCount || 4, Math.max(0, imagePaths.length - (introConfig.imageCount || 6)));
+    // 片头未启用时不减去片头的图片数量，全部图片给片尾
+    const introImgCountActual = (introConfig.enabled !== false) ? (introConfig.imageCount || 6) : 0;
+    const outroImgCount = Math.min(outroConfig.imageCount || 4, Math.max(0, imagePaths.length - introImgCountActual));
     if (outroConfig.enabled !== false && outroImgCount > 0) {
-      const introCount = introConfig.imageCount || 6;
-      const outroImages = imagePaths.slice(introCount, introCount + outroImgCount);
+      const outroImages = imagePaths.slice(introImgCountActual, introImgCountActual + outroImgCount);
       const outroImgDuration = outroConfig.imageDuration || 3;
 
-      if (outroConfig.mode === "image") {
-        // 纯图模式
+      if (outroConfig.mode === "image" || (!outroConfig.mode && !outroConfig.segmentFilePath)) {
+        // 纯图模式 或 没有视频片段时自动用纯图模式
         const outroPath = path.join(TEMP_DIR, `ai_outro_images_${id}.mp4`);
         await imagesToVideo(outroImages, outroImgDuration, targetW, targetH, mainMeta.fps, outroConfig.effect || "none", outroPath);
         tempPaths.push(outroPath);
