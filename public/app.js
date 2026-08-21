@@ -3688,6 +3688,7 @@ function renderRemixTasks() {
           ${(t.status === "FAILED" || t.status === "DONE") ? `<button class="button button-secondary task-retry-btn" data-task-id="${escapeHtml(t.id)}" style="font-size: 11px; padding:2px 8px;">重试</button>` : ""}
           ${t.status === "DONE" && t.outputUrl ? `<button class="button button-secondary task-preview-btn" data-out-url="${escapeHtml(t.outputUrl)}" style="font-size: 11px; padding:2px 8px;">预览</button>` : ""}
           ${t.imagePaths?.length || t.resourceTypes?.length ? `<button class="button button-secondary task-gallery-btn" data-task-id="${escapeHtml(t.id)}" data-images='${escapeHtml(JSON.stringify(t.imagePaths))}' style="font-size: 11px; padding:2px 8px;">资源集</button>` : ""}
+          ${t.imagePaths?.length && t.status === "DONE" ? `<button class="button button-secondary task-recompose-btn" data-task-id="${escapeHtml(t.id)}" style="font-size: 11px; padding:2px 8px;">重新剪辑</button>` : ""}
           ${t.status === "DONE" && t.outputUrl ? `<a href="${escapeHtml(t.outputUrl)}" download data-task-id="${escapeHtml(t.id)}" data-out-url="${escapeHtml(t.outputUrl)}" class="button button-primary" style="font-size: 11px;">${t.downloaded ? "已下载 ✓" : "下载"}</a>` : ""}
           <button class="remix-del-task" data-del-task="${escapeHtml(t.id)}" style="color: #dc2626; background: none; border: none; cursor: pointer; font-size: 16px;">×</button>
         </div>
@@ -3716,6 +3717,19 @@ function renderRemixTasks() {
       const taskId = btn.dataset.taskId;
       const images = btn.dataset.images ? JSON.parse(btn.dataset.images) : [];
       openResourceGallery(taskId, images);
+    });
+  });
+  // 重新剪辑按钮
+  remixEl.tasksList.querySelectorAll(".task-recompose-btn").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      if (!confirm("确定重新剪辑？将从图片拼接步骤开始重新执行。")) return;
+      try {
+        btn.disabled = true;
+        btn.textContent = "剪辑中...";
+        await request(`/api/remix/tasks/${encodeURIComponent(btn.dataset.taskId)}/recompose`, { method: "POST" });
+        showToast("重新剪辑已开始");
+        await fetchRemixTasks();
+      } catch (e) { showToast(e.message, true); btn.disabled = false; btn.textContent = "重新剪辑"; }
     });
   });
   // 日志按钮
@@ -3976,13 +3990,79 @@ async function openResourceGallery(taskId, fallbackImages = []) {
         <audio src="${escapeHtml(item.url)}" controls style="width:100%;"></audio>
         <a href="${escapeHtml(item.url)}?download" download style="display:block;text-align:center;font-size:11px;padding:4px;background:#3b82f6;color:#fff;border-radius:4px;text-decoration:none;margin-top:4px;">下载</a>
       </div>`).join("");
+    } else if (activeType === "image") {
+      // 图片类型：支持拖拽排序 + 序号 + 添加图片
+      grid.innerHTML = `
+        <div style="grid-column:1/-1;display:flex;gap:8px;margin-bottom:8px;">
+          <label class="button button-primary" style="font-size:11px;padding:4px 12px;cursor:pointer;">+ 添加图片
+            <input type="file" id="gallery-add-image" accept="image/*" multiple style="display:none;" />
+          </label>
+          <button id="gallery-save-order" class="button button-secondary" style="font-size:11px;padding:4px 12px;">保存顺序</button>
+          <button id="gallery-reset-order" class="button button-secondary" style="font-size:11px;padding:4px 12px;">重置顺序</button>
+        </div>
+      ` + items.map((item, i) => `
+        <div class="gallery-item" data-url="${escapeHtml(item.url)}" draggable="true" data-index="${i}" style="position:relative;cursor:grab;border:2px solid transparent;border-radius:8px;overflow:hidden;">
+          <span style="position:absolute;top:2px;left:24px;z-index:2;background:rgba(0,0,0,0.7);color:#fff;font-size:10px;padding:1px 6px;border-radius:3px;">${i + 1}</span>
+          <input type="checkbox" class="gallery-select-cb" data-url="${escapeHtml(item.url)}" style="position:absolute;top:4px;left:4px;z-index:2;width:18px;height:18px;" />
+          <img src="${escapeHtml(item.url)}" style="width:100%;display:block;" />
+          <button class="gallery-zoom-btn" data-url="${escapeHtml(item.url)}" style="position:absolute;bottom:4px;left:4px;font-size:14px;padding:6px 14px;background:rgba(0,0,0,0.7);color:#fff;border:none;border-radius:6px;cursor:pointer;">🔍 放大</button>
+          <a href="${escapeHtml(item.url)}?download" download class="gallery-dl-btn" style="position:absolute;bottom:4px;right:4px;font-size:14px;padding:6px 18px;background:rgba(0,0,0,0.7);color:#fff;border-radius:6px;text-decoration:none;">下载</a>
+        </div>
+      `).join("");
+      // 拖拽排序
+      let dragSrcEl = null;
+      grid.querySelectorAll(".gallery-item[draggable]").forEach(item => {
+        item.addEventListener("dragstart", (e) => { dragSrcEl = item; item.style.opacity = "0.5"; });
+        item.addEventListener("dragend", (e) => { item.style.opacity = ""; });
+        item.addEventListener("dragover", (e) => { e.preventDefault(); });
+        item.addEventListener("drop", (e) => {
+          e.preventDefault();
+          if (!dragSrcEl || dragSrcEl === item) return;
+          // 交换位置
+          const grid = item.parentElement;
+          const srcIndex = [...grid.querySelectorAll(".gallery-item[draggable]")].indexOf(dragSrcEl);
+          const tgtIndex = [...grid.querySelectorAll(".gallery-item[draggable]")].indexOf(item);
+          if (srcIndex < tgtIndex) item.parentElement.insertBefore(dragSrcEl, item.nextSibling);
+          else item.parentElement.insertBefore(dragSrcEl, item);
+          // 更新序号
+          grid.querySelectorAll(".gallery-item[draggable]").forEach((el, i) => {
+            const span = el.querySelector("span");
+            if (span) span.textContent = i + 1;
+          });
+        });
+      });
+      // 保存顺序
+      document.querySelector("#gallery-save-order")?.addEventListener("click", async () => {
+        if (!taskId) { showToast("非任务资源，无法保存顺序", true); return; }
+        const ordered = [...grid.querySelectorAll(".gallery-item[draggable]")].map(el => el.dataset.url);
+        try {
+          await request(`/api/remix/tasks/${encodeURIComponent(taskId)}/image-order`, { method: "POST", body: JSON.stringify({ order: ordered }) });
+          showToast("顺序已保存");
+        } catch (e) { showToast(e.message, true); }
+      });
+      // 重置顺序
+      document.querySelector("#gallery-reset-order")?.addEventListener("click", () => {
+        renderResourceByType(types, activeType);
+      });
+      // 添加图片
+      document.querySelector("#gallery-add-image")?.addEventListener("change", async (e) => {
+        if (!taskId) { showToast("非任务资源，无法添加", true); return; }
+        const files = [...e.target.files];
+        for (const file of files) {
+          const formData = new FormData();
+          formData.append("file", file);
+          await fetch(`/api/remix/tasks/${encodeURIComponent(taskId)}/add-image`, { method: "POST", body: formData });
+        }
+        showToast(`已添加 ${files.length} 张图片`);
+        // 重新加载
+        await openResourceGallery(taskId, []);
+      });
     } else {
-      // 图片和其他文件用 grid
+      // 其他文件用 grid
       grid.innerHTML = items.map((item, i) => `
         <div class="gallery-item" data-url="${escapeHtml(item.url)}" style="position:relative;cursor:pointer;border:2px solid transparent;border-radius:8px;overflow:hidden;">
           <input type="checkbox" class="gallery-select-cb" data-url="${escapeHtml(item.url)}" style="position:absolute;top:4px;left:4px;z-index:2;width:18px;height:18px;" />
-          ${item.type === "image" ? `<img src="${escapeHtml(item.url)}" style="width:100%;display:block;" />` : `<div style="padding:20px;text-align:center;font-size:12px;">${escapeHtml(item.filename)}</div>`}
-          <button class="gallery-zoom-btn" data-url="${escapeHtml(item.url)}" style="position:absolute;bottom:4px;left:4px;font-size:14px;padding:6px 14px;background:rgba(0,0,0,0.7);color:#fff;border:none;border-radius:6px;cursor:pointer;">🔍 放大</button>
+          <div style="padding:20px;text-align:center;font-size:12px;">${escapeHtml(item.filename)}</div>
           <a href="${escapeHtml(item.url)}?download" download class="gallery-dl-btn" style="position:absolute;bottom:4px;right:4px;font-size:14px;padding:6px 18px;background:rgba(0,0,0,0.7);color:#fff;border-radius:6px;text-decoration:none;">下载</a>
         </div>
       `).join("");

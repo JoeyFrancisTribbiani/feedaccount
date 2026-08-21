@@ -1,4 +1,4 @@
-import { createReadStream, mkdirSync, writeFileSync, existsSync } from "node:fs";
+import { createReadStream, mkdirSync, writeFileSync, existsSync, unlinkSync } from "node:fs";
 import { stat, readFile, unlink } from "node:fs/promises";
 import { createServer } from "node:http";
 import path from "node:path";
@@ -506,40 +506,50 @@ export function createMonitorServer({
         let outputUrl = null;
 
         if (fileOutputs.length > 0 && fileOutputs[0].type === "image") {
-          // 图片输出：下载图片到本地，然后用方案配置拼接成视频
-            store.logCdpEvent(null, "info", "AI 返回图片，开始下载图片...", taskId)
+          // 图片输出：下载图片到任务专属目录，按序号命名
+          const task = store.getRemixTask(taskId);
+          const taskSeq = task?.seqNum || taskId.replace(/[^0-9]/g, "").slice(-6) || taskId;
+          const taskDir = path.join(getOutputDir(), "tasks", String(taskSeq));
+          mkdirSync(taskDir, { recursive: true });
+          store.logCdpEvent(null, "info", `任务专属目录: tasks/${taskSeq}`, taskId)
+          store.logCdpEvent(null, "info", "AI 返回图片，开始下载图片...", taskId)
             const imagePaths = [];
             for (const imgOutput of fileOutputs) {
               try {
                 const downloadRes = await fetch(`${daemonUrl}${imgOutput.url}`);
                 if (downloadRes.ok) {
                   const buffer = Buffer.from(await downloadRes.arrayBuffer());
-                  const imgFileName = `ai_img_${Date.now()}_${imagePaths.length + 1}.png`;
-                  const imgPath = path.join(getOutputDir(), imgFileName);
-                  writeFileSync(imgPath, buffer);
+                  const imgIndex = imagePaths.length + 1;
+                  const rawPath = path.join(taskDir, `${imgIndex}_raw.png`);
+                  writeFileSync(rawPath, buffer);
                   // 反AI检测处理
-                  const processedPath = imgPath.replace(/\.png$/, "_anti.png");
+                  const processedPath = path.join(taskDir, `${imgIndex}.png`);
                   try {
-                    await antiAiProcessImage(imgPath, processedPath);
+                    await antiAiProcessImage(rawPath, processedPath);
                     imagePaths.push(processedPath);
                     store.logCdpEvent(null, "info", `图片反AI处理完成: ${imagePaths.length}/${fileOutputs.length}`, taskId);
                   } catch (e) {
                     store.logCdpEvent(null, "warning", `图片反AI处理失败，使用原图: ${e.message}`, taskId);
-                    imagePaths.push(imgPath);
+                    // 原图重命名为最终文件
+                    writeFileSync(processedPath, buffer);
+                    imagePaths.push(processedPath);
                   }
+                  // 删除raw文件
+                  try { unlinkSync(rawPath); } catch {}
                 }
               } catch (e) { store.logCdpEvent(null, "warning", `下载图片失败: ${e.message}`, taskId); }
             }
 
-            // 记录图片路径到数据库（失败不影响拼接）
+            // 记录图片路径到数据库（用任务目录的相对URL）
             try {
-              store.updateRemixTask(taskId, { imagePaths: imagePaths.map(p => `/data/remix-output/${path.basename(p)}`) });
+              const imgUrls = imagePaths.map(p => `/data/remix-output/tasks/${taskSeq}/${path.basename(p)}`);
+              store.updateRemixTask(taskId, { imagePaths: imgUrls });
             } catch (e) { console.error("[AI混剪] 记录图片路径失败:", e.message); }
 
             // 自动存入 TikTok 图片素材库
             try {
               for (const imgPath of imagePaths) {
-                const imgUrl = `/data/remix-output/${path.basename(imgPath)}`;
+                const imgUrl = `/data/remix-output/tasks/${taskSeq}/${path.basename(imgPath)}`;
                 store.createTkMaterial({ title: path.basename(imgPath), filePath: imgUrl, category: "image", hashtags: [] });
               }
               store.logCdpEvent(null, "info", `已将 ${imagePaths.length} 张图片存入图片素材库`, taskId);
@@ -2077,6 +2087,106 @@ export function createMonitorServer({
             sendJson(response, 200, { ok: true });
             return;
           }
+        }
+
+        // 重新剪辑
+        const remixRecomposeMatch = pathname.match(/^\/api\/remix\/tasks\/([^/]+)\/recompose$/);
+        if (request.method === "POST" && remixRecomposeMatch) {
+          const taskId = decodeURIComponent(remixRecomposeMatch[1]);
+          const origTask = store.getRemixTask(taskId);
+          if (!origTask) { sendJson(response, 404, { error: "任务不存在" }); return; }
+
+          // 从任务专属目录读取图片
+          const taskSeq = origTask.seqNum || taskId.replace(/[^0-9]/g, "").slice(-6) || taskId;
+          const taskDir = path.join(getOutputDir(), "tasks", String(taskSeq));
+          if (!existsSync(taskDir)) { sendJson(response, 400, { error: "任务目录不存在" }); return; }
+
+          // 读取目录中的图片（按序号排序），也支持自定义顺序
+          const orderFile = path.join(taskDir, "order.json");
+          let imageUrls = origTask.imagePaths || [];
+          // 如果有自定义顺序文件，用它
+          if (existsSync(orderFile)) {
+            try {
+              const order = JSON.parse(readFileSync(orderFile, "utf-8"));
+              if (Array.isArray(order) && order.length) imageUrls = order;
+            } catch {}
+          }
+
+          // 转为本地路径
+          const imagePaths = imageUrls.map(url => {
+            if (url.startsWith("/data/remix-output/tasks/")) {
+              return path.join(getOutputDir(), "tasks", url.replace("/data/remix-output/tasks/", ""));
+            }
+            if (url.startsWith("/data/remix-output/")) {
+              return path.join(getOutputDir(), path.basename(url));
+            }
+            return url;
+          }).filter(p => existsSync(p));
+
+          if (!imagePaths.length) { sendJson(response, 400, { error: "没有可用的图片" }); return; }
+
+          // 获取原视频路径
+          const resolveLocal = (url) => {
+            if (url.startsWith("/data/remix-videos/")) return path.join(getUploadDir(), path.basename(url));
+            if (url.startsWith("/data/remix-output/")) return path.join(getOutputDir(), path.basename(url));
+            return url;
+          };
+          const mainVideoLocalPath = resolveLocal(origTask.videoUrls[0]);
+          if (!mainVideoLocalPath || !existsSync(mainVideoLocalPath)) {
+            sendJson(response, 400, { error: "原视频文件不存在" }); return;
+          }
+
+          // 异步重新拼接
+          store.updateRemixTask(taskId, { status: "PROCESSING", errorMessage: null });
+          store.logCdpEvent(null, "info", `重新剪辑: ${imagePaths.length}张图片`, taskId);
+          composeAiRemixVideoAsync(taskId, mainVideoLocalPath, imagePaths, origTask.presetId, origTask.matrixIds, origTask.creatorId, null, origTask.title);
+
+          sendJson(response, 200, { ok: true, message: "重新剪辑已开始" });
+          return;
+        }
+
+        // 保存图片顺序
+        const remixSaveOrderMatch = pathname.match(/^\/api\/remix\/tasks\/([^/]+)\/image-order$/);
+        if (request.method === "POST" && remixSaveOrderMatch) {
+          const taskId = decodeURIComponent(remixSaveOrderMatch[1]);
+          const body = await readJson(request);
+          const task = store.getRemixTask(taskId);
+          if (!task) { sendJson(response, 404, { error: "任务不存在" }); return; }
+          const taskSeq = task.seqNum || taskId.replace(/[^0-9]/g, "").slice(-6) || taskId;
+          const taskDir = path.join(getOutputDir(), "tasks", String(taskSeq));
+          const orderFile = path.join(taskDir, "order.json");
+          writeFileSync(orderFile, JSON.stringify(body.order || []));
+          // 也更新数据库
+          store.updateRemixTask(taskId, { imagePaths: body.order || [] });
+          sendJson(response, 200, { ok: true });
+          return;
+        }
+
+        // 上传图片到任务目录
+        const remixAddImageMatch = pathname.match(/^\/api\/remix\/tasks\/([^/]+)\/add-image$/);
+        if (request.method === "POST" && remixAddImageMatch) {
+          const taskId = decodeURIComponent(remixAddImageMatch[1]);
+          const task = store.getRemixTask(taskId);
+          if (!task) { sendJson(response, 404, { error: "任务不存在" }); return; }
+          const taskSeq = task.seqNum || taskId.replace(/[^0-9]/g, "").slice(-6) || taskId;
+          const taskDir = path.join(getOutputDir(), "tasks", String(taskSeq));
+          if (!existsSync(taskDir)) mkdirSync(taskDir, { recursive: true });
+
+          // 找最大编号
+          const existing = require("fs").readdirSync(taskDir).filter(f => /^(\d+)\.png$/.test(f)).map(f => parseInt(f)).sort((a,b)=>a-b);
+          const nextNum = existing.length ? existing[existing.length-1] + 1 : 1;
+          const imgPath = path.join(taskDir, `${nextNum}.png`);
+          const buffer = await readFile(request);
+          writeFileSync(imgPath, buffer);
+          const imgUrl = `/data/remix-output/tasks/${taskSeq}/${nextNum}.png`;
+          // 更新数据库 imagePaths
+          const currentPaths = task.imagePaths || [];
+          if (!currentPaths.includes(imgUrl)) {
+            currentPaths.push(imgUrl);
+            store.updateRemixTask(taskId, { imagePaths: currentPaths });
+          }
+          sendJson(response, 200, { url: imgUrl, filename: `${nextNum}.png` });
+          return;
         }
 
         // 查询任务资源
