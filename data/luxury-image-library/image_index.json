@@ -561,8 +561,8 @@
     "classification_note": "",
     "final_image_url": "https://media.gucci.com/style/DarkGray_Center_0_0_600x314/1767032141/851888_ZAUB6_9777_001_100_0000_Light-check-cotton-tweed-jacket.jpg",
     "status": "downloaded",
-    "local_path": "data\\luxury-image-library\\images\\Gucci\\Outerwear\\SKU0028_579eb1d433f7.jpg",
-    "sha256": "579eb1d433f79d98be9dac6dbbbe2f6b83cdf16d6f036ac0ce6ac31129f900d2",
+    "local_path": "data\\luxury-image-library\\images\\Gucci\\Outerwear\\SKU0028_c5ff5db60527.jpg",
+    "sha256": "c5ff5db60527e4d3e679fae1be9c0238c5e9e9d2f2f38bde9b3105424819c96b",
     "failure_reason": "",
     "attempted_urls": [
       "https://www.gucci.com/us/en/pr/women/ready-to-wear-for-women/coats-and-jackets-for-women/jackets-for-women/check-cotton-tweed-jacket-p-851888ZAUB69777",
@@ -1943,18 +1943,17 @@
     "product": "CHANEL 25 Small Handbag",
     "sku_ref": "AS5293B24748U9397",
     "original_url": "https://www.chanel.com/us/fashion/p/AS5293B24748U9397/chanel-25-small-handbag-washed-denim-gold-tone-metal/",
-    "declared_image_url": "",
+    "declared_image_url": "https://www.chanel.com/images/as///f_auto,q_auto:good,dpr_1.1/w_3200/-82316461.jpg",
     "product_page_url": "https://www.chanel.com/us/fashion/p/AS5293B24748U9397/chanel-25-small-handbag-washed-denim-gold-tone-metal/",
-    "source_link_type": "官网商品页（动态图片）",
+    "source_link_type": "browser-verified product image override",
     "classification_note": "",
-    "final_image_url": "https://www.chanel.com/_ui/responsive/theme-onechanel/assets/media/favicon/192x192.png",
+    "final_image_url": "https://www.chanel.com/images/as///f_auto,q_auto:good,dpr_1.1/w_3200/-82316461.jpg",
     "status": "downloaded",
-    "local_path": "data\\luxury-image-library\\images\\CHANEL\\Bag\\SKU0094_c7ae9a858fbe.png",
-    "sha256": "c7ae9a858fbec77d6b886cf1054662936e2420c5850a7b3f8a3299082e1411d2",
+    "local_path": "data\\luxury-image-library\\images\\CHANEL\\Bag\\SKU0094_5895ced5bf1a.webp",
+    "sha256": "5895ced5bf1a1f6c890b680f3c2700769ea53b329724cc89a2a2424795b6ad4b",
     "failure_reason": "",
     "attempted_urls": [
-      "https://www.chanel.com/us/fashion/p/AS5293B24748U9397/chanel-25-small-handbag-washed-denim-gold-tone-metal/",
-      "https://www.chanel.com/_ui/responsive/theme-onechanel/assets/media/favicon/192x192.png"
+      "https://www.chanel.com/images/as///f_auto,q_auto:good,dpr_1.1/w_3200/-82316461.jpg"
     ]
   },
   {

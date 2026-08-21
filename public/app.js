@@ -4095,6 +4095,30 @@ document.querySelector("#image-gallery-close")?.addEventListener("click", () => 
 document.querySelector("#image-gallery-modal")?.addEventListener("click", (e) => {
   if (e.target === e.currentTarget) e.currentTarget.classList.add("hidden");
 });
+// 全选
+document.querySelector("#image-gallery-select-all")?.addEventListener("change", (e) => {
+  const checked = e.target.checked;
+  document.querySelectorAll("#image-gallery-grid .gallery-select-cb").forEach(cb => {
+    cb.checked = checked;
+    const item = cb.closest(".gallery-item");
+    if (item) item.style.borderColor = checked ? "#3b82f6" : "transparent";
+  });
+});
+// 批量下载
+document.querySelector("#image-gallery-batch-download")?.addEventListener("click", async () => {
+  const cbs = document.querySelectorAll("#image-gallery-grid .gallery-select-cb:checked");
+  if (!cbs.length) { showToast("请先选择文件", true); return; }
+  for (const cb of cbs) {
+    const url = cb.dataset.url;
+    const a = document.createElement("a");
+    a.href = url + (url.includes("?") ? "&" : "?") + "download";
+    a.download = "";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    await new Promise(r => setTimeout(r, 500));
+  }
+});
 // 灯箱关闭
 document.querySelector("#image-lightbox-close")?.addEventListener("click", () => {
   const lb = document.querySelector("#image-lightbox");

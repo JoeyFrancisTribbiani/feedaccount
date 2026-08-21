@@ -18,6 +18,7 @@ NS = {"x": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
 UA = "Mozilla/5.0 (compatible; FeedaccountImageLibrary/1.0; +local-asset-download)"
 IMAGE_MAGIC = ((b"\xff\xd8\xff", ".jpg"), (b"\x89PNG\r\n\x1a\n", ".png"), (b"GIF87a", ".gif"), (b"GIF89a", ".gif"), (b"RIFF", ".webp"))
 LOCK = Lock()
+NON_PRODUCT_URL = re.compile(r"(?:favicon|/logo(?:/|\\.|_)|/icons?/)" , re.I)
 
 def clean_part(value: str, fallback: str) -> str:
     value = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", (value or "").strip())
@@ -80,7 +81,8 @@ def urls_from_page(page: str, base: str, rule: dict):
         value = html.unescape(value.strip())
         if value.startswith("//"): value = "https:" + value
         absolute = urllib.parse.urljoin(base, value)
-        if absolute.startswith("http"): candidates.append((score, absolute))
+        # A site shell icon is a valid raster image but never a product image.
+        if absolute.startswith("http") and not NON_PRODUCT_URL.search(urllib.parse.urlparse(absolute).path): candidates.append((score, absolute))
     for prop in ("og:image", "og:image:secure_url", "twitter:image"):
         for value in re.findall(r'<meta[^>]+(?:property|name)=["\']' + re.escape(prop) + r'["\'][^>]+content=["\']([^"\']+)', page, re.I): add(value, 100)
     attrs = rule.get("preferred_attributes", []) + ["data-zoom-image", "data-src", "data-original", "data-lazy-src", "srcset", "src"]
@@ -155,17 +157,41 @@ def atomic_json(path, value):
     temp.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
     temp.replace(path)
 
+def prior_download_is_usable(record):
+    """Do not trust a stale index entry just because it says downloaded."""
+    local = record.get("local_path", "")
+    url = record.get("final_image_url", "")
+    path = ROOT / local
+    return bool(local and path.is_file() and path.stat().st_size >= 10_000 and not NON_PRODUCT_URL.search(urllib.parse.urlparse(url).path))
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--source", type=Path, default=ROOT / "500_luxury_verified_sku_image_links.xlsx")
     parser.add_argument("--output", type=Path, default=ROOT / "data" / "luxury-image-library")
     parser.add_argument("--workers", type=int, default=6); parser.add_argument("--timeout", type=int, default=20); parser.add_argument("--retries", type=int, default=2); parser.add_argument("--limit", type=int)
+    parser.add_argument("--override-image", action="append", default=[], metavar="SKU_ID=URL", help="Retry one SKU with a verified product-image URL while preserving its original source URL")
     args = parser.parse_args(); out = args.output; out.mkdir(parents=True, exist_ok=True)
     rules_path, index_path = out / "domain_rules.json", out / "image_index.json"
     rules = json.loads(rules_path.read_text(encoding="utf-8")) if rules_path.exists() else {}
     existing = {x["sku_id"]: x for x in json.loads(index_path.read_text(encoding="utf-8"))} if index_path.exists() else {}
     manifest = xlsx_manifest(args.source); atomic_json(out / "source_manifest.json", manifest)
-    todo = [x for x in manifest if not (existing.get(x["sku_id"], {}).get("status") == "downloaded" and (ROOT / existing[x["sku_id"]]["local_path"]).exists())]
+    overrides = {}
+    for value in args.override_image:
+        sku, separator, url = value.partition("=")
+        if not separator or not sku or not url.startswith("http"):
+            parser.error("--override-image must be SKU_ID=https://verified-product-image")
+        overrides[sku] = url
+    if overrides:
+        found = set()
+        for item in manifest:
+            if item["sku_id"] in overrides:
+                item["declared_image_url"] = overrides[item["sku_id"]]
+                item["source_link_type"] = "browser-verified product image override"
+                found.add(item["sku_id"])
+        unknown = set(overrides) - found
+        if unknown: parser.error("unknown SKU ID(s): " + ", ".join(sorted(unknown)))
+    todo = [x for x in manifest if not (existing.get(x["sku_id"], {}).get("status") == "downloaded" and prior_download_is_usable(existing[x["sku_id"]]))]
+    if overrides: todo = [x for x in todo if x["sku_id"] in overrides]
     if args.limit: todo = todo[:args.limit]
     print(f"Manifest: {len(manifest)} SKU; queued: {len(todo)}; output: {out}", flush=True)
     with ThreadPoolExecutor(max_workers=args.workers) as pool:
