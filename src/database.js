@@ -1695,7 +1695,8 @@ export class LocalDatabase {
     const id = `ma_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     const ts = nowIso();
     this.db.prepare(`INSERT INTO matrix_accounts (id, matrix_id, platform, account_name, language, created_at) VALUES (?, ?, ?, ?, ?, ?)`).run(id, matrixId, platform, accountName, language, ts);
-    return this.getMatrixAccount(id);
+    const row = this.db.prepare(`SELECT * FROM matrix_accounts WHERE id = ?`).get(id);
+    return row ? { id: row.id, matrixId: row.matrix_id, platform: row.platform, accountName: row.account_name, language: row.language, createdAt: row.created_at } : null;
   }
 
   listMatrixAccounts(matrixId) {
