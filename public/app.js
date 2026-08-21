@@ -4941,9 +4941,12 @@ const modalState = {
   matrices: [],
   creators: [],
   videos: [],
+  // 多 tab 模式：每个选中的社媒账号一个 tab
+  tabs: {}, // matrixId → { creatorId, videoIds: Set, cdpInstanceId }
   selectedMatrixIds: new Set(),
   selectedCreatorId: null,
   selectedVideoIds: new Set(),
+  activeTabId: null,
   mode: "stitch",
   videoViewMode: "grid",
 };

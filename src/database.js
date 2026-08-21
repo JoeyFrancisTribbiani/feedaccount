@@ -463,6 +463,18 @@ export class LocalDatabase {
     this.#ensureColumn("ai_remix_presets", "dedup", "INTEGER DEFAULT 1");
     this.#ensureColumn("ai_remix_presets", "ref_lang", "INTEGER DEFAULT 0");
     this.#ensureColumn("matrix_accounts", "language", "TEXT");
+    // 社媒账号绑定达人（多对多）
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS matrix_account_creators (
+        id TEXT PRIMARY KEY,
+        matrix_account_id TEXT NOT NULL,
+        creator_id TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        UNIQUE(matrix_account_id, creator_id),
+        FOREIGN KEY (matrix_account_id) REFERENCES matrix_accounts(id) ON DELETE CASCADE,
+        FOREIGN KEY (creator_id) REFERENCES remix_creators(id) ON DELETE CASCADE
+      );
+    `);
     this.#ensureColumn("remix_videos", "file_size", "INTEGER DEFAULT 0");
     this.#ensureColumn("matrix_videos", "file_size", "INTEGER DEFAULT 0");
     this.#ensureColumn("matrix_videos", "duration", "REAL");
@@ -1680,7 +1692,31 @@ export class LocalDatabase {
   }
 
   deleteMatrixAccount(id) {
+    this.db.prepare(`DELETE FROM matrix_account_creators WHERE matrix_account_id = ?`).run(id);
     return this.db.prepare(`DELETE FROM matrix_accounts WHERE id = ?`).run(id).changes;
+  }
+
+  // 社媒账号绑定达人
+  bindMatrixAccountCreators(accountId, creatorIds) {
+    const ts = nowIso();
+    const insert = this.db.prepare(`INSERT OR IGNORE INTO matrix_account_creators (id, matrix_account_id, creator_id, created_at) VALUES (?, ?, ?, ?)`);
+    for (const cid of creatorIds) {
+      insert.run(`mac_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`, accountId, cid, ts);
+    }
+  }
+
+  unbindMatrixAccountCreator(accountId, creatorId) {
+    return this.db.prepare(`DELETE FROM matrix_account_creators WHERE matrix_account_id = ? AND creator_id = ?`).run(accountId, creatorId).changes;
+  }
+
+  getMatrixAccountCreators(accountId) {
+    const rows = this.db.prepare(`
+      SELECT c.* FROM matrix_account_creators mac
+      JOIN remix_creators c ON c.id = mac.creator_id
+      WHERE mac.matrix_account_id = ?
+      ORDER BY c.name ASC
+    `).all(accountId);
+    return rows.map((r) => ({ id: r.id, name: r.name, platform: r.platform, avatar: r.avatar }));
   }
 
   // --- 矩阵成品视频管理 ---

@@ -2247,6 +2247,28 @@ export function createMonitorServer({
           return;
         }
 
+        // 社媒账号绑定达人
+        const accountCreatorsMatch = pathname.match(/^\/api\/matrices\/accounts\/([^/]+)\/creators$/);
+        if (accountCreatorsMatch) {
+          const accountId = decodeURIComponent(accountCreatorsMatch[1]);
+          if (request.method === "GET") {
+            sendJson(response, 200, store.getMatrixAccountCreators(accountId));
+            return;
+          }
+          if (request.method === "POST") {
+            const body = await readJson(request);
+            store.bindMatrixAccountCreators(accountId, body.creatorIds || []);
+            sendJson(response, 200, { ok: true });
+            return;
+          }
+          if (request.method === "DELETE") {
+            const body = await readJson(request);
+            store.unbindMatrixAccountCreator(accountId, body.creatorId);
+            sendJson(response, 200, { ok: true });
+            return;
+          }
+        }
+
         // 矩阵-实例绑定管理
         const matrixProfilesMatch = pathname.match(/^\/api\/matrices\/([^/]+)\/profiles$/);
         if (matrixProfilesMatch) {
