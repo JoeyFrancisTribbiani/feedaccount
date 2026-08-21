@@ -449,6 +449,20 @@ export class LocalDatabase {
     this.#ensureColumn("remix_tasks", "cdp_instance_id", "TEXT");
     this.#ensureColumn("remix_tasks", "image_paths_json", "TEXT");
     this.#ensureColumn("remix_tasks", "seq_num", "INTEGER");
+    this.#ensureColumn("remix_tasks", "resource_types_json", "TEXT");
+    // AI 生成的多类型资源
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS ai_task_resources (
+        id TEXT PRIMARY KEY,
+        task_id TEXT NOT NULL,
+        type TEXT NOT NULL,
+        file_path TEXT NOT NULL,
+        filename TEXT,
+        file_size INTEGER DEFAULT 0,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (task_id) REFERENCES remix_tasks(id) ON DELETE CASCADE
+      );
+    `);
     // 初始化已有数据的 seq_num
     const needsSeq = this.db.prepare("SELECT COUNT(*) as c FROM remix_tasks WHERE seq_num IS NULL").get();
     if (needsSeq.c > 0) {
@@ -462,6 +476,7 @@ export class LocalDatabase {
     this.#ensureColumn("ai_remix_presets", "music_config_json", "TEXT");
     this.#ensureColumn("ai_remix_presets", "dedup", "INTEGER DEFAULT 1");
     this.#ensureColumn("ai_remix_presets", "ref_lang", "INTEGER DEFAULT 0");
+    this.#ensureColumn("ai_remix_presets", "resource_types_json", "TEXT");
     this.#ensureColumn("matrix_accounts", "language", "TEXT");
     // 社媒账号绑定达人（多对多）
     this.db.exec(`
@@ -1792,24 +1807,26 @@ export class LocalDatabase {
       musicConfig: parseJson(r.music_config_json, null),
       dedup: r.dedup === undefined ? true : Boolean(r.dedup),
       refLang: r.ref_lang === 1,
+      resourceTypes: parseJson(r.resource_types_json, null),
     };
   }
 
-  createAiRemixPreset({ name, prompt, isDefault = false, introConfig = null, outroConfig = null, musicConfig = null, dedup = true, refLang = false }) {
+  createAiRemixPreset({ name, prompt, isDefault = false, introConfig = null, outroConfig = null, musicConfig = null, dedup = true, refLang = false, resourceTypes = null }) {
     const id = `ap_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     const ts = nowIso();
     if (isDefault) {
       this.db.exec("UPDATE ai_remix_presets SET is_default = 0");
     }
     this.db.prepare(`
-      INSERT INTO ai_remix_presets (id, name, prompt, is_default, intro_config_json, outro_config_json, music_config_json, dedup, ref_lang, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO ai_remix_presets (id, name, prompt, is_default, intro_config_json, outro_config_json, music_config_json, dedup, ref_lang, resource_types_json, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(id, name, prompt, booleanInt(isDefault),
       introConfig ? JSON.stringify(introConfig) : null,
       outroConfig ? JSON.stringify(outroConfig) : null,
       musicConfig ? JSON.stringify(musicConfig) : null,
       booleanInt(dedup),
       booleanInt(refLang),
+      resourceTypes ? JSON.stringify(resourceTypes) : null,
       ts, ts);
     return this.getAiRemixPreset(id);
   }
@@ -1846,7 +1863,7 @@ export class LocalDatabase {
     };
   }
 
-  updateAiRemixPreset(id, { name, prompt, isDefault, introConfig, outroConfig, musicConfig, dedup, refLang }) {
+  updateAiRemixPreset(id, { name, prompt, isDefault, introConfig, outroConfig, musicConfig, dedup, refLang, resourceTypes }) {
     const ts = nowIso();
     if (isDefault) {
       this.db.exec("UPDATE ai_remix_presets SET is_default = 0");
@@ -1861,6 +1878,7 @@ export class LocalDatabase {
           music_config_json = CASE WHEN ? IS NOT NULL THEN ? ELSE music_config_json END,
           dedup = COALESCE(?, dedup),
           ref_lang = COALESCE(?, ref_lang),
+          resource_types_json = COALESCE(?, resource_types_json),
           updated_at = ?
       WHERE id = ?
     `).run(
@@ -1870,6 +1888,7 @@ export class LocalDatabase {
       musicConfig === undefined ? null : 1, musicConfig === undefined ? null : (musicConfig ? JSON.stringify(musicConfig) : null),
       dedup === undefined ? null : booleanInt(dedup),
       refLang === undefined ? null : booleanInt(refLang),
+      resourceTypes === undefined ? null : (resourceTypes ? JSON.stringify(resourceTypes) : null),
       ts, id,
     );
     return this.getAiRemixPreset(id);
@@ -1981,24 +2000,42 @@ export class LocalDatabase {
       musicId: r.music_id || null,
       cdpInstanceId: r.cdp_instance_id || null,
       imagePaths: r.image_paths_json ? JSON.parse(r.image_paths_json) : [],
+      resourceTypes: r.resource_types_json ? JSON.parse(r.resource_types_json) : [],
     };
   }
 
   markRemixTaskDownloaded(id) {
-    this.db.prepare(`UPDATE remix_tasks SET downloaded = 1 WHERE id = ?`).run(id);
+    this.db.prepare("UPDATE remix_tasks SET downloaded = 1 WHERE id = ?").run(id);
     return this.getRemixTask(id);
   }
 
-  updateRemixTask(id, { status = null, outputUrl = null, errorMessage = null, completedAt = null, imagePaths = null }) {
+  // AI 任务资源
+  createTaskResource({ taskId, type, filePath, filename, fileSize = 0 }) {
+    const id = `tr_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    this.db.prepare("INSERT INTO ai_task_resources (id, task_id, type, file_path, filename, file_size, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)").run(id, taskId, type, filePath, filename, fileSize, nowIso());
+    return id;
+  }
+
+  listTaskResources(taskId) {
+    const rows = this.db.prepare("SELECT * FROM ai_task_resources WHERE task_id = ? ORDER BY created_at ASC").all(taskId);
+    return rows.map(r => ({ id: r.id, taskId: r.task_id, type: r.type, filePath: r.file_path, filename: r.filename, fileSize: r.file_size, createdAt: r.created_at }));
+  }
+
+  deleteTaskResources(taskId) {
+    return this.db.prepare("DELETE FROM ai_task_resources WHERE task_id = ?").run(taskId).changes;
+  }
+
+  updateRemixTask(id, { status = null, outputUrl = null, errorMessage = null, completedAt = null, imagePaths = null, resourceTypes = null }) {
     this.db.prepare(`
       UPDATE remix_tasks
       SET status = COALESCE(?, status),
           output_url = COALESCE(?, output_url),
           error_message = COALESCE(?, error_message),
           completed_at = COALESCE(?, completed_at),
-          image_paths_json = COALESCE(?, image_paths_json)
+          image_paths_json = COALESCE(?, image_paths_json),
+          resource_types_json = COALESCE(?, resource_types_json)
       WHERE id = ?
-    `).run(status, outputUrl, errorMessage, completedAt, imagePaths ? JSON.stringify(imagePaths) : null, id);
+    `).run(status, outputUrl, errorMessage, completedAt, imagePaths ? JSON.stringify(imagePaths) : null, resourceTypes ? JSON.stringify(resourceTypes) : null, id);
     return this.getRemixTask(id);
   }
 

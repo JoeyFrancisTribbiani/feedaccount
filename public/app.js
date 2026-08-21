@@ -3678,7 +3678,7 @@ function renderRemixTasks() {
           ${(t.status === "PENDING" || t.status === "PROCESSING") ? `<button class="danger-button task-abort-btn" data-task-id="${escapeHtml(t.id)}" style="font-size: 11px; padding:2px 8px;">中止</button>` : ""}
           ${(t.status === "FAILED" || t.status === "DONE") ? `<button class="button button-secondary task-retry-btn" data-task-id="${escapeHtml(t.id)}" style="font-size: 11px; padding:2px 8px;">重试</button>` : ""}
           ${t.status === "DONE" && t.outputUrl ? `<button class="button button-secondary task-preview-btn" data-out-url="${escapeHtml(t.outputUrl)}" style="font-size: 11px; padding:2px 8px;">预览</button>` : ""}
-          ${t.imagePaths?.length ? `<button class="button button-secondary task-gallery-btn" data-images='${escapeHtml(JSON.stringify(t.imagePaths))}' style="font-size: 11px; padding:2px 8px;">图集</button>` : ""}
+          ${t.imagePaths?.length || t.resourceTypes?.length ? `<button class="button button-secondary task-gallery-btn" data-task-id="${escapeHtml(t.id)}" data-images='${escapeHtml(JSON.stringify(t.imagePaths))}' style="font-size: 11px; padding:2px 8px;">资源集</button>` : ""}
           ${t.status === "DONE" && t.outputUrl ? `<a href="${escapeHtml(t.outputUrl)}" download data-task-id="${escapeHtml(t.id)}" data-out-url="${escapeHtml(t.outputUrl)}" class="button button-primary" style="font-size: 11px;">${t.downloaded ? "已下载 ✓" : "下载"}</a>` : ""}
           <button class="remix-del-task" data-del-task="${escapeHtml(t.id)}" style="color: #dc2626; background: none; border: none; cursor: pointer; font-size: 16px;">×</button>
         </div>
@@ -3701,11 +3701,12 @@ function renderRemixTasks() {
       modal.classList.remove("hidden");
     });
   });
-  // 图集按钮
+  // 资源集按钮
   remixEl.tasksList.querySelectorAll(".task-gallery-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
-      const images = JSON.parse(btn.dataset.images);
-      openImageGallery(images);
+      const taskId = btn.dataset.taskId;
+      const images = btn.dataset.images ? JSON.parse(btn.dataset.images) : [];
+      openResourceGallery(taskId, images);
     });
   });
   // 日志按钮
@@ -3808,69 +3809,107 @@ document.querySelector("#video-preview-close")?.addEventListener("click", () => 
   modal.classList.add("hidden");
 });
 
-// 图集弹框
+// 资源集弹框（原图集）
 function openImageGallery(imageUrls) {
+  openResourceGallery(taskId = null, imageUrls);
+}
+
+async function openResourceGallery(taskId, fallbackImages = []) {
   const modal = document.querySelector("#image-gallery-modal");
   const grid = document.querySelector("#image-gallery-grid");
-  grid.innerHTML = imageUrls.map((url, i) => `
-    <div class="gallery-item" data-url="${escapeHtml(url)}" style="position:relative;cursor:pointer;border:2px solid transparent;border-radius:8px;overflow:hidden;">
-      <input type="checkbox" class="gallery-select-cb" data-url="${escapeHtml(url)}" style="position:absolute;top:4px;left:4px;z-index:2;width:18px;height:18px;" />
-      <img src="${escapeHtml(url)}" style="width:100%;display:block;" />
-      <button class="gallery-zoom-btn" data-url="${escapeHtml(url)}" style="position:absolute;bottom:4px;left:4px;font-size:14px;padding:6px 14px;background:rgba(0,0,0,0.7);color:#fff;border:none;border-radius:6px;cursor:pointer;">🔍 放大</button>
-      <a href="${escapeHtml(url)}?download" download class="gallery-dl-btn" style="position:absolute;bottom:4px;right:4px;font-size:14px;padding:6px 18px;background:rgba(0,0,0,0.7);color:#fff;border-radius:6px;text-decoration:none;">下载</a>
-    </div>
-  `).join("");
-  // 单击图片选中/取消
-  grid.querySelectorAll(".gallery-item").forEach(item => {
-    item.addEventListener("click", (e) => {
-      if (e.target.closest(".gallery-dl-btn") || e.target.closest(".gallery-zoom-btn") || e.target.matches("input[type=checkbox]")) return;
-      const cb = item.querySelector(".gallery-select-cb");
-      cb.checked = !cb.checked;
-      item.style.borderColor = cb.checked ? "#3b82f6" : "transparent";
-    });
-    // checkbox 变化也同步边框
-    item.querySelector(".gallery-select-cb").addEventListener("change", () => {
-      item.style.borderColor = item.querySelector(".gallery-select-cb").checked ? "#3b82f6" : "transparent";
-    });
-  });
-  // 放大预览（灯箱）
-  grid.querySelectorAll(".gallery-zoom-btn").forEach(btn => {
-    btn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const url = btn.dataset.url;
-      const lb = document.querySelector("#image-lightbox");
-      const lbImg = document.querySelector("#image-lightbox-img");
-      lbImg.src = url;
-      lb.classList.remove("hidden");
-    });
-  });
-  // 批量下载按钮
-  const batchBtn = document.querySelector("#image-gallery-batch-download");
-  if (batchBtn) {
-    batchBtn.onclick = () => {
-      const selected = grid.querySelectorAll(".gallery-select-cb:checked");
-      const urls = selected.length ? Array.from(selected).map(cb => cb.dataset.url) : imageUrls;
-      urls.forEach((url, i) => {
-        setTimeout(() => {
-          const a = document.createElement("a");
-          a.href = url + "?download";
-          a.download = "";
-          a.click();
-        }, i * 300);
-      });
-    };
+  const titleEl = modal.querySelector("h3");
+
+  let resources = [];
+  let allImages = [...(fallbackImages || [])];
+
+  // 从 API 加载资源
+  if (taskId) {
+    try {
+      const data = await request(`/api/remix/tasks/${encodeURIComponent(taskId)}/resources`);
+      resources = data.resources || [];
+      if (data.imagePaths?.length) allImages = data.imagePaths;
+    } catch {}
   }
-  // 全选
-  const selectAll = document.querySelector("#image-gallery-select-all");
-  if (selectAll) {
-    selectAll.checked = false;
-    selectAll.onchange = () => {
-      grid.querySelectorAll(".gallery-select-cb").forEach(cb => {
-        cb.checked = selectAll.checked;
-        cb.closest(".gallery-item").style.borderColor = selectAll.checked ? "#3b82f6" : "transparent";
-      });
-    };
+
+  // 合并：旧图片 + 新资源
+  const allItems = [];
+  // 旧图片归为 image 类型
+  for (const img of allImages) {
+    allItems.push({ type: "image", url: img, filename: img.split("/").pop() });
   }
+  // 新资源
+  for (const res of resources) {
+    allItems.push({ type: res.type, url: res.filePath, filename: res.filename });
+  }
+
+  // 按类型分组
+  const types = [...new Set(allItems.map(i => i.type))];
+  const activeType = types[0] || "image";
+  titleEl.textContent = "资源集";
+  renderResourceByType(types, activeType);
+
+  function renderResourceByType(types, activeType) {
+    // 类型 tab
+    const tabsHeader = modal.querySelector(".modal-header > div");
+    if (tabsHeader) {
+      tabsHeader.innerHTML = types.map(t => {
+        const label = { image: "图片", video: "视频", audio: "音频", text: "文本", other: "其他" }[t] || t;
+        const active = t === activeType ? "background:#3b82f6;color:#fff;" : "background:#f1f5f9;cursor:pointer;";
+        return `<span data-type="${t}" style="padding:2px 10px;border-radius:4px;font-size:12px;${active}">${label}(${allItems.filter(i => i.type === t).length})</span>`;
+      }).join("");
+      tabsHeader.querySelectorAll("[data-type]").forEach(el => {
+        el.addEventListener("click", () => renderResourceByType(types, el.dataset.type));
+      });
+    }
+    const items = allItems.filter(i => i.type === activeType);
+    const label = { image: "图片", video: "视频", audio: "音频", text: "文本", other: "其他" }[activeType] || activeType;
+
+    if (activeType === "text") {
+      // 文本类型用 textarea 展示
+      grid.innerHTML = items.map(item => `<div style="padding:8px;border:1px solid #e2e8f0;border-radius:8px;">
+        <a href="${escapeHtml(item.url)}?download" download style="font-size:12px;">下载 ${escapeHtml(item.filename)}</a>
+      </div>`).join("");
+    } else if (activeType === "video") {
+      grid.innerHTML = items.map(item => `<div style="position:relative;">
+        <video src="${escapeHtml(item.url)}" controls style="width:100%;border-radius:8px;"></video>
+        <a href="${escapeHtml(item.url)}?download" download style="display:block;text-align:center;font-size:11px;padding:4px;background:#3b82f6;color:#fff;border-radius:4px;text-decoration:none;margin-top:4px;">下载</a>
+      </div>`).join("");
+    } else if (activeType === "audio") {
+      grid.innerHTML = items.map(item => `<div style="padding:8px;">
+        <audio src="${escapeHtml(item.url)}" controls style="width:100%;"></audio>
+        <a href="${escapeHtml(item.url)}?download" download style="display:block;text-align:center;font-size:11px;padding:4px;background:#3b82f6;color:#fff;border-radius:4px;text-decoration:none;margin-top:4px;">下载</a>
+      </div>`).join("");
+    } else {
+      // 图片和其他文件用 grid
+      grid.innerHTML = items.map((item, i) => `
+        <div class="gallery-item" data-url="${escapeHtml(item.url)}" style="position:relative;cursor:pointer;border:2px solid transparent;border-radius:8px;overflow:hidden;">
+          <input type="checkbox" class="gallery-select-cb" data-url="${escapeHtml(item.url)}" style="position:absolute;top:4px;left:4px;z-index:2;width:18px;height:18px;" />
+          ${item.type === "image" ? `<img src="${escapeHtml(item.url)}" style="width:100%;display:block;" />` : `<div style="padding:20px;text-align:center;font-size:12px;">${escapeHtml(item.filename)}</div>`}
+          <button class="gallery-zoom-btn" data-url="${escapeHtml(item.url)}" style="position:absolute;bottom:4px;left:4px;font-size:14px;padding:6px 14px;background:rgba(0,0,0,0.7);color:#fff;border:none;border-radius:6px;cursor:pointer;">🔍 放大</button>
+          <a href="${escapeHtml(item.url)}?download" download class="gallery-dl-btn" style="position:absolute;bottom:4px;right:4px;font-size:14px;padding:6px 18px;background:rgba(0,0,0,0.7);color:#fff;border-radius:6px;text-decoration:none;">下载</a>
+        </div>
+      `).join("");
+    }
+    // 绑定图片交互（放大灯箱、选中）
+    grid.querySelectorAll(".gallery-item").forEach(item => {
+      item.addEventListener("click", (e) => {
+        if (e.target.closest(".gallery-dl-btn") || e.target.closest(".gallery-zoom-btn") || e.target.matches("input[type=checkbox]")) return;
+        const cb = item.querySelector(".gallery-select-cb");
+        if (cb) { cb.checked = !cb.checked; item.style.borderColor = cb.checked ? "#3b82f6" : "transparent"; }
+      });
+    });
+    grid.querySelectorAll(".gallery-zoom-btn").forEach(btn => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const url = btn.dataset.url;
+        const lb = document.querySelector("#image-lightbox");
+        const lbImg = document.querySelector("#image-lightbox-img");
+        lbImg.src = url;
+        lb.classList.remove("hidden");
+      });
+    });
+  }
+
   modal.classList.remove("hidden");
 }
 document.querySelector("#image-gallery-close")?.addEventListener("click", () => {
@@ -4779,7 +4818,7 @@ function renderMatrixVideos() {
         <span class="matrix-video-meta">${escapeHtml(v.creatorName || "—")} · ${formatDuration(v.duration)} · ${formatFileSize(v.fileSize)} · ${formatDateTime(v.createdAt)}</span>
       </div>
       <div class="matrix-video-actions">
-        ${v.filePath ? `<button class="button button-secondary mv-preview-btn" data-mv-url="${escapeHtml(v.filePath)}" style="font-size:11px;padding:2px 8px;">预览</button>${v.imagePaths?.length ? `<button class="button button-secondary mv-gallery-btn" data-images='${escapeHtml(JSON.stringify(v.imagePaths))}' style="font-size:11px;padding:2px 8px;">图集</button>` : ""}<a href="${escapeHtml(v.filePath)}" download class="button ${v.downloaded ? "button-secondary" : "button-primary"}" style="font-size:11px;padding:2px 8px;" data-mv-id="${escapeHtml(v.id)}">${v.downloaded ? "已下载 ✓" : "下载"}</a>` : ""}
+        ${v.filePath ? `<button class="button button-secondary mv-preview-btn" data-mv-url="${escapeHtml(v.filePath)}" style="font-size:11px;padding:2px 8px;">预览</button>${v.imagePaths?.length ? `<button class="button button-secondary mv-gallery-btn" data-images='${escapeHtml(JSON.stringify(v.imagePaths))}' style="font-size:11px;padding:2px 8px;">资源集</button>` : ""}<a href="${escapeHtml(v.filePath)}" download class="button ${v.downloaded ? "button-secondary" : "button-primary"}" style="font-size:11px;padding:2px 8px;" data-mv-id="${escapeHtml(v.id)}">${v.downloaded ? "已下载 ✓" : "下载"}</a>` : ""}
         <button class="remix-del-btn" data-del-mv="${escapeHtml(v.id)}" title="删除">×</button>
       </div>
     </div>
@@ -5720,6 +5759,17 @@ function openPresetEditModal(preset) {
             <span id="preset-music-file-info" class="preset-file-info"></span>
           </div>
           <div class="preset-config-section">
+            <div class="preset-config-title" style="font-size:12px;margin-bottom:6px;">AI结果包含的资源类型</div>
+            <div style="display:flex;flex-wrap:wrap;gap:8px;font-size:11px;">
+              <label style="display:inline-flex;align-items:center;gap:4px;"><input type="checkbox" class="preset-resource-type" value="image" checked /> 图片</label>
+              <label style="display:inline-flex;align-items:center;gap:4px;"><input type="checkbox" class="preset-resource-type" value="video" /> 视频</label>
+              <label style="display:inline-flex;align-items:center;gap:4px;"><input type="checkbox" class="preset-resource-type" value="audio" /> 音频</label>
+              <label style="display:inline-flex;align-items:center;gap:4px;"><input type="checkbox" class="preset-resource-type" value="text" /> 文本</label>
+              <label style="display:inline-flex;align-items:center;gap:4px;"><input type="checkbox" class="preset-resource-type" value="other" /> 其他文件</label>
+            </div>
+            <span class="muted-activity" style="font-size:11px;">选择后会在AI输出中寻找对应类型的资源并下载</span>
+          </div>
+          <div class="preset-config-section">
             <div class="preset-config-title" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
               <label style="display:inline-flex;align-items:center;gap:4px;white-space:nowrap;"><input type="checkbox" id="preset-dedup" checked /> 原视频去重</label>
               <label style="display:inline-flex;align-items:center;gap:4px;white-space:nowrap;"><input type="checkbox" id="preset-ref-lang" /> 参考社媒账号语言</label>
@@ -5866,7 +5916,10 @@ function collectPresetConfig() {
     loop: presetModalEl.musicLoop?.checked ?? true,
     segmentFilePath: pendingSegmentFiles.music ? pendingSegmentFiles.music.filePath : null,
   };
-  return { introConfig, outroConfig, musicConfig, dedup: presetModalEl.dedup?.checked ?? true, refLang: presetModalEl.refLang?.checked ?? false };
+  // 收集资源类型
+  const resourceTypeCbs = overlay.querySelectorAll(".preset-resource-type:checked");
+  const resourceTypes = Array.from(resourceTypeCbs).map(cb => cb.value);
+  return { introConfig, outroConfig, musicConfig, dedup: presetModalEl.dedup?.checked ?? true, refLang: presetModalEl.refLang?.checked ?? false, resourceTypes };
 }
 
 function fillPresetConfigForm(preset) {
@@ -5898,6 +5951,11 @@ function fillPresetConfigForm(preset) {
   if (presetModalEl.musicLoop) presetModalEl.musicLoop.checked = mc.loop ?? true;
   if (presetModalEl.dedup) presetModalEl.dedup.checked = preset?.dedup !== false;
   if (presetModalEl.refLang) presetModalEl.refLang.checked = preset?.refLang === true;
+  // 回填资源类型
+  overlay.querySelectorAll(".preset-resource-type").forEach(cb => {
+    const types = preset?.resourceTypes || ["image"];
+    cb.checked = types.includes(cb.value);
+  });
   // 显示已绑定的片段文件名
   if (presetModalEl.introFileInfo) {
     const introFile = preset?.files?.find((f) => f.varName === "_intro_segment");
@@ -6078,7 +6136,7 @@ async function handlePresetAdd() {
     prompt = defaultPreset?.prompt || BUILTIN_DEFAULT_PROMPT;
     showToast("提示词为空，已使用默认提示词");
   }
-  const { introConfig, outroConfig, musicConfig, dedup, refLang } = collectPresetConfig();
+  const { introConfig, outroConfig, musicConfig, dedup, refLang, resourceTypes } = collectPresetConfig();
   // 校验：图片开始时间+总持续时间不能超过片段时长
   const introTotal = (introConfig.imageInsertStart || 0) + (introConfig.imageCount || 0) * (introConfig.imageDuration || 0);
   const outroTotal = (outroConfig.imageInsertStart || 0) + (outroConfig.imageCount || 0) * (outroConfig.imageDuration || 0);
@@ -6101,7 +6159,7 @@ async function handlePresetAdd() {
   try {
     const created = await request("/api/ai-presets", {
       method: "POST",
-      body: JSON.stringify({ name, prompt, isDefault: presetModalEl.isDefault.checked, introConfig, outroConfig, musicConfig, dedup, refLang }),
+      body: JSON.stringify({ name, prompt, isDefault: presetModalEl.isDefault.checked, introConfig, outroConfig, musicConfig, dedup, refLang, resourceTypes }),
     });
     // 绑定暂存的变量文件
     if (pendingVarFiles.size > 0) {
@@ -6142,7 +6200,7 @@ async function handlePresetUpdate() {
   const name = presetModalEl.name.value.trim();
   const prompt = presetModalEl.prompt.value.trim();
   if (!currentEditPresetId) { showToast("请先点击方案列表中的「编辑」", true); return; }
-  const { introConfig, outroConfig, musicConfig, dedup, refLang } = collectPresetConfig();
+  const { introConfig, outroConfig, musicConfig, dedup, refLang, resourceTypes } = collectPresetConfig();
   // 校验：图片开始时间+总持续时间不能超过片段时长
   const introTotal = (introConfig.imageInsertStart || 0) + (introConfig.imageCount || 0) * (introConfig.imageDuration || 0);
   const outroTotal = (outroConfig.imageInsertStart || 0) + (outroConfig.imageCount || 0) * (outroConfig.imageDuration || 0);
@@ -6165,7 +6223,7 @@ async function handlePresetUpdate() {
   try {
     await request(`/api/ai-presets/${encodeURIComponent(currentEditPresetId)}`, {
       method: "PUT",
-      body: JSON.stringify({ name, prompt, isDefault: presetModalEl.isDefault.checked, introConfig, outroConfig, musicConfig, dedup, refLang }),
+      body: JSON.stringify({ name, prompt, isDefault: presetModalEl.isDefault.checked, introConfig, outroConfig, musicConfig, dedup, refLang, resourceTypes }),
     });
     // 绑定新上传的片头/片尾片段文件
     if (pendingSegmentFiles.intro) {

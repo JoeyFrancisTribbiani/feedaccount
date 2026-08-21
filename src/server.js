@@ -545,6 +545,21 @@ export function createMonitorServer({
               store.logCdpEvent(null, "info", `已将 ${imagePaths.length} 张图片存入图片素材库`, taskId);
             } catch (e) { console.error("[AI混剪] 存入图片素材库失败:", e.message); }
 
+            // ★ 多类型资源下载（不影响现有图片逻辑）
+            try {
+              const taskInfo = store.getRemixTask(taskId);
+              const resourceTypes = taskInfo?.resourceTypes || ["image"];
+              // 如果只选了 image，跳过多类型下载（现有逻辑已处理）
+              if (resourceTypes.length > 1 || !resourceTypes.includes("image")) {
+                store.logCdpEvent(null, "info", `开始下载多类型资源: ${resourceTypes.join(", ")}`, taskId);
+                const allResources = await downloadAllResources(daemonUrl, fileOutputs, resourceTypes, taskId);
+                for (const res of allResources) {
+                  store.createTaskResource({ taskId, type: res.type, filePath: res.url, filename: res.filename, fileSize: res.size || 0 });
+                }
+                store.logCdpEvent(null, "info", `多类型资源下载完成: ${allResources.length}个`, taskId);
+              }
+            } catch (e) { console.error("[AI混剪] 多类型资源下载失败:", e.message); }
+
             // ★ 图片下载完成，AI 部分结束。提前释放队列，允许下一个 AI 任务开始
             store.logCdpEvent(null, "info", `图片下载完成(${imagePaths.length}张)，开始本地拼接，释放AI队列`, taskId);
             aiRemixActiveCount--;
@@ -589,6 +604,35 @@ export function createMonitorServer({
       }
     console.log(`[AI混剪] 任务结束: ${taskId}`);
     activeDaemonTasks.delete(taskId);
+  }
+
+  // 多类型资源下载
+  async function downloadAllResources(daemonUrl, fileOutputs, resourceTypes, taskId) {
+    const results = [];
+    for (const output of fileOutputs) {
+      // 根据输出类型匹配用户选的资源类型
+      let matchedType = null;
+      if (output.type === "image" && resourceTypes.includes("image")) matchedType = "image";
+      else if (output.type === "video" && resourceTypes.includes("video")) matchedType = "video";
+      else if (output.type === "audio" && resourceTypes.includes("audio")) matchedType = "audio";
+      else if (output.type === "text" && resourceTypes.includes("text")) matchedType = "text";
+      else if (output.type === "file" && resourceTypes.includes("other")) matchedType = "other";
+      if (!matchedType) continue;
+
+      try {
+        const downloadRes = await fetch(`${daemonUrl}${output.url}`);
+        if (downloadRes.ok) {
+          const buffer = Buffer.from(await downloadRes.arrayBuffer());
+          const ext = matchedType === "image" ? "png" : matchedType === "video" ? "mp4" : matchedType === "audio" ? "mp3" : matchedType === "text" ? "txt" : "bin";
+          const fileName = `ai_res_${matchedType}_${Date.now()}_${results.length + 1}.${ext}`;
+          const filePath = path.join(getOutputDir(), fileName);
+          writeFileSync(filePath, buffer);
+          results.push({ type: matchedType, url: `/data/remix-output/${fileName}`, filename: fileName, size: buffer.length });
+          store.logCdpEvent(null, "info", `资源下载: ${matchedType} ${fileName} (${buffer.length} bytes)`, taskId);
+        }
+      } catch (e) { store.logCdpEvent(null, "warning", `资源下载失败: ${e.message}`, taskId); }
+    }
+    return results;
   }
 
   // 本地拼接异步执行（不阻塞 AI 队列）
@@ -1703,6 +1747,10 @@ export function createMonitorServer({
           // 参考社媒账号语言：在提示词顶部注入语言
           if (presetId) {
             const preset = store.getAiRemixPreset(presetId);
+            // 记录资源类型到任务
+            if (preset?.resourceTypes) {
+              store.updateRemixTask(task.id, { resourceTypes: preset.resourceTypes });
+            }
             if (preset?.refLang && matrixIds?.length) {
               const accounts = [];
               for (const mid of matrixIds) {
@@ -2026,6 +2074,18 @@ export function createMonitorServer({
             sendJson(response, 200, { ok: true });
             return;
           }
+        }
+
+        // 查询任务资源
+        const taskResourcesMatch = pathname.match(/^\/api\/remix\/tasks\/([^/]+)\/resources$/);
+        if (request.method === "GET" && taskResourcesMatch) {
+          const tid = decodeURIComponent(taskResourcesMatch[1]);
+          const resources = store.listTaskResources(tid);
+          // 也返回图片路径（兼容旧的imagePaths）
+          const task = store.getRemixTask(tid);
+          const imagePaths = task?.imagePaths || [];
+          sendJson(response, 200, { resources, imagePaths });
+          return;
         }
 
         // 中止任务
@@ -2373,7 +2433,7 @@ export function createMonitorServer({
           sendJson(response, 200, store.createAiRemixPreset({
             name: body.name, prompt: body.prompt, isDefault: body.isDefault || false,
             introConfig: body.introConfig ?? null, outroConfig: body.outroConfig ?? null, musicConfig: body.musicConfig ?? null,
-            dedup: body.dedup, refLang: body.refLang,
+            dedup: body.dedup, refLang: body.refLang, resourceTypes: body.resourceTypes ?? null,
           }));
           return;
         }
@@ -2387,7 +2447,7 @@ export function createMonitorServer({
           const updated = store.updateAiRemixPreset(presetId, {
             name: body.name, prompt: body.prompt, isDefault: body.isDefault,
             introConfig: body.introConfig, outroConfig: body.outroConfig, musicConfig: body.musicConfig,
-            dedup: body.dedup, refLang: body.refLang,
+            dedup: body.dedup, refLang: body.refLang, resourceTypes: body.resourceTypes,
           });
           if (!updated) { sendJson(response, 404, { error: "方案不存在" }); return; }
           sendJson(response, 200, updated);
