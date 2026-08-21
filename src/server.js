@@ -2492,8 +2492,14 @@ export function createMonitorServer({
       if (pathname.startsWith("/data/remix-output/")) {
         const filename = path.basename(pathname);
         const { getOutputDir } = await import("./video-remix.js");
-        const outputDir = getOutputDir();
-        const filePath = path.join(outputDir, filename);
+        let outputDir = getOutputDir();
+        let filePath = path.join(outputDir, filename);
+        // 文件不在自定义路径，回退到默认路径
+        if (!existsSync(filePath)) {
+          const defaultDir = path.resolve(THIS_DIR, "..", "data", "remix-output");
+          const defaultPath = path.join(defaultDir, filename);
+          if (existsSync(defaultPath)) { filePath = defaultPath; outputDir = defaultDir; }
+        }
         if (!existsSync(filePath)) { sendJson(response, 404, { error: "文件不存在" }); return; }
         const statResult = await stat(filePath);
         const range = request.headers["range"];
@@ -2542,8 +2548,14 @@ export function createMonitorServer({
         const filename = path.basename(pathname);
         const subPath = pathname.slice("/data/remix-videos/".length);
         const { getUploadDir } = await import("./video-remix.js");
-        const uploadDir = getUploadDir();
-        const filePath = path.resolve(uploadDir, subPath);
+        let uploadDir = getUploadDir();
+        let filePath = path.resolve(uploadDir, subPath);
+        // 文件不在自定义路径，回退到默认路径
+        if (!existsSync(filePath)) {
+          const defaultDir = path.resolve(THIS_DIR, "..", "data", "remix-videos");
+          const defaultPath = path.join(defaultDir, subPath);
+          if (existsSync(defaultPath)) { filePath = defaultPath; uploadDir = defaultDir; }
+        }
         if (!filePath.startsWith(uploadDir)) { sendJson(response, 403, { error: "禁止访问" }); return; }
         if (!existsSync(filePath)) { sendJson(response, 404, { error: "文件不存在" }); return; }
         const statResult = await stat(filePath);
