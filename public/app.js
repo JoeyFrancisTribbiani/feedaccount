@@ -5926,7 +5926,7 @@ function collectPresetConfig() {
     segmentFilePath: pendingSegmentFiles.music ? pendingSegmentFiles.music.filePath : null,
   };
   // 收集资源类型
-  const resourceTypeCbs = overlay.querySelectorAll(".preset-resource-type:checked");
+  const resourceTypeCbs = document.querySelectorAll(".preset-resource-type:checked");
   const resourceTypes = Array.from(resourceTypeCbs).map(cb => cb.value);
   return { introConfig, outroConfig, musicConfig, dedup: presetModalEl.dedup?.checked ?? true, refLang: presetModalEl.refLang?.checked ?? false, resourceTypes };
 }
@@ -5961,7 +5961,7 @@ function fillPresetConfigForm(preset) {
   if (presetModalEl.dedup) presetModalEl.dedup.checked = preset?.dedup !== false;
   if (presetModalEl.refLang) presetModalEl.refLang.checked = preset?.refLang === true;
   // 回填资源类型
-  overlay.querySelectorAll(".preset-resource-type").forEach(cb => {
+  document.querySelectorAll(".preset-resource-type").forEach(cb => {
     const types = preset?.resourceTypes || ["image"];
     cb.checked = types.includes(cb.value);
   });
