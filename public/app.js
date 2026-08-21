@@ -5770,11 +5770,11 @@ function openPresetEditModal(preset) {
           <div class="preset-config-section">
             <div class="preset-config-title" style="font-size:12px;margin-bottom:6px;">AI结果包含的资源类型</div>
             <div style="display:flex;flex-wrap:wrap;gap:8px;font-size:11px;">
-              <label style="display:inline-flex;align-items:center;gap:4px;"><input type="checkbox" class="preset-resource-type" value="image" checked /> 图片</label>
-              <label style="display:inline-flex;align-items:center;gap:4px;"><input type="checkbox" class="preset-resource-type" value="video" /> 视频</label>
-              <label style="display:inline-flex;align-items:center;gap:4px;"><input type="checkbox" class="preset-resource-type" value="audio" /> 音频</label>
-              <label style="display:inline-flex;align-items:center;gap:4px;"><input type="checkbox" class="preset-resource-type" value="text" /> 文本</label>
-              <label style="display:inline-flex;align-items:center;gap:4px;"><input type="checkbox" class="preset-resource-type" value="other" /> 其他文件</label>
+              <label style="display:inline-flex;align-items:center;gap:4px;white-space:nowrap;"><input type="checkbox" class="preset-resource-type" value="image" checked /> 图片</label>
+              <label style="display:inline-flex;align-items:center;gap:4px;white-space:nowrap;"><input type="checkbox" class="preset-resource-type" value="video" /> 视频</label>
+              <label style="display:inline-flex;align-items:center;gap:4px;white-space:nowrap;"><input type="checkbox" class="preset-resource-type" value="audio" /> 音频</label>
+              <label style="display:inline-flex;align-items:center;gap:4px;white-space:nowrap;"><input type="checkbox" class="preset-resource-type" value="text" /> 文本</label>
+              <label style="display:inline-flex;align-items:center;gap:4px;white-space:nowrap;"><input type="checkbox" class="preset-resource-type" value="other" /> 其他文件</label>
             </div>
             <span class="muted-activity" style="font-size:11px;">选择后会在AI输出中寻找对应类型的资源并下载</span>
           </div>
