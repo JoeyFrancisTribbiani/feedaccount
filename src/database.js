@@ -461,6 +461,8 @@ export class LocalDatabase {
     this.#ensureColumn("ai_remix_presets", "outro_config_json", "TEXT");
     this.#ensureColumn("ai_remix_presets", "music_config_json", "TEXT");
     this.#ensureColumn("ai_remix_presets", "dedup", "INTEGER DEFAULT 1");
+    this.#ensureColumn("ai_remix_presets", "ref_lang", "INTEGER DEFAULT 0");
+    this.#ensureColumn("matrix_accounts", "language", "TEXT");
     this.#ensureColumn("remix_videos", "file_size", "INTEGER DEFAULT 0");
     this.#ensureColumn("matrix_videos", "file_size", "INTEGER DEFAULT 0");
     this.#ensureColumn("matrix_videos", "duration", "REAL");
@@ -1662,10 +1664,10 @@ export class LocalDatabase {
   }
 
   // --- 矩阵账号管理 ---
-  createMatrixAccount({ matrixId, platform, accountName }) {
+  createMatrixAccount({ matrixId, platform, accountName, language = null }) {
     const id = `ma_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     const ts = nowIso();
-    this.db.prepare(`INSERT INTO matrix_accounts (id, matrix_id, platform, account_name, created_at) VALUES (?, ?, ?, ?, ?)`).run(id, matrixId, platform, accountName, ts);
+    this.db.prepare(`INSERT INTO matrix_accounts (id, matrix_id, platform, account_name, language, created_at) VALUES (?, ?, ?, ?, ?, ?)`).run(id, matrixId, platform, accountName, language, ts);
     return this.getMatrixAccount(id);
   }
 
@@ -1673,7 +1675,7 @@ export class LocalDatabase {
     const rows = this.db.prepare(`SELECT * FROM matrix_accounts WHERE matrix_id = ? ORDER BY created_at ASC`).all(matrixId);
     return rows.map((r) => ({
       id: r.id, matrixId: r.matrix_id, platform: r.platform,
-      accountName: r.account_name, createdAt: r.created_at,
+      accountName: r.account_name, language: r.language, createdAt: r.created_at,
     }));
   }
 
@@ -1753,23 +1755,25 @@ export class LocalDatabase {
       outroConfig: parseJson(r.outro_config_json, null),
       musicConfig: parseJson(r.music_config_json, null),
       dedup: r.dedup === undefined ? true : Boolean(r.dedup),
+      refLang: r.ref_lang === 1,
     };
   }
 
-  createAiRemixPreset({ name, prompt, isDefault = false, introConfig = null, outroConfig = null, musicConfig = null, dedup = true }) {
+  createAiRemixPreset({ name, prompt, isDefault = false, introConfig = null, outroConfig = null, musicConfig = null, dedup = true, refLang = false }) {
     const id = `ap_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     const ts = nowIso();
     if (isDefault) {
       this.db.exec("UPDATE ai_remix_presets SET is_default = 0");
     }
     this.db.prepare(`
-      INSERT INTO ai_remix_presets (id, name, prompt, is_default, intro_config_json, outro_config_json, music_config_json, dedup, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO ai_remix_presets (id, name, prompt, is_default, intro_config_json, outro_config_json, music_config_json, dedup, ref_lang, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(id, name, prompt, booleanInt(isDefault),
       introConfig ? JSON.stringify(introConfig) : null,
       outroConfig ? JSON.stringify(outroConfig) : null,
       musicConfig ? JSON.stringify(musicConfig) : null,
       booleanInt(dedup),
+      booleanInt(refLang),
       ts, ts);
     return this.getAiRemixPreset(id);
   }
@@ -1806,7 +1810,7 @@ export class LocalDatabase {
     };
   }
 
-  updateAiRemixPreset(id, { name, prompt, isDefault, introConfig, outroConfig, musicConfig, dedup }) {
+  updateAiRemixPreset(id, { name, prompt, isDefault, introConfig, outroConfig, musicConfig, dedup, refLang }) {
     const ts = nowIso();
     if (isDefault) {
       this.db.exec("UPDATE ai_remix_presets SET is_default = 0");
@@ -1820,6 +1824,7 @@ export class LocalDatabase {
           outro_config_json = CASE WHEN ? IS NOT NULL THEN ? ELSE outro_config_json END,
           music_config_json = CASE WHEN ? IS NOT NULL THEN ? ELSE music_config_json END,
           dedup = COALESCE(?, dedup),
+          ref_lang = COALESCE(?, ref_lang),
           updated_at = ?
       WHERE id = ?
     `).run(
@@ -1828,6 +1833,7 @@ export class LocalDatabase {
       outroConfig === undefined ? null : 1, outroConfig === undefined ? null : (outroConfig ? JSON.stringify(outroConfig) : null),
       musicConfig === undefined ? null : 1, musicConfig === undefined ? null : (musicConfig ? JSON.stringify(musicConfig) : null),
       dedup === undefined ? null : booleanInt(dedup),
+      refLang === undefined ? null : booleanInt(refLang),
       ts, id,
     );
     return this.getAiRemixPreset(id);

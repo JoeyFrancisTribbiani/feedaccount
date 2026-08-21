@@ -1700,6 +1700,23 @@ export function createMonitorServer({
             const preset = store.getAiRemixPreset(presetId);
             if (preset) prompt = preset.prompt;
           }
+          // 参考社媒账号语言：在提示词顶部注入语言
+          if (presetId) {
+            const preset = store.getAiRemixPreset(presetId);
+            if (preset?.refLang && matrixIds?.length) {
+              const accounts = [];
+              for (const mid of matrixIds) {
+                const accs = store.listMatrixAccounts(mid);
+                accounts.push(...accs);
+              }
+              const languages = [...new Set(accounts.map(a => a.language).filter(Boolean))];
+              if (languages.length === 1) {
+                prompt = `文案语言为〖${languages[0]}〗\n\n${prompt}`;
+              } else if (languages.length > 1) {
+                prompt = `文案语言为〖${languages.join("、")}〗\n\n${prompt}`;
+              }
+            }
+          }
           if (!matrixIds?.length) { sendJson(response, 400, { error: "请选择至少一个社媒矩阵" }); return; }
           if (!creatorId) { sendJson(response, 400, { error: "请选择达人" }); return; }
           if (!videoIds?.length) { sendJson(response, 400, { error: "请选择至少一个视频" }); return; }
@@ -2215,7 +2232,7 @@ export function createMonitorServer({
               return;
             }
             try {
-              const account = store.createMatrixAccount({ matrixId, platform: body.platform, accountName: body.accountName });
+              const account = store.createMatrixAccount({ matrixId, platform: body.platform, accountName: body.accountName, language: body.language || null });
               sendJson(response, 200, account);
             } catch (e) {
               sendJson(response, 400, { error: e.message.includes("UNIQUE") ? "该矩阵中此平台已有账号" : e.message });
@@ -2334,7 +2351,7 @@ export function createMonitorServer({
           sendJson(response, 200, store.createAiRemixPreset({
             name: body.name, prompt: body.prompt, isDefault: body.isDefault || false,
             introConfig: body.introConfig ?? null, outroConfig: body.outroConfig ?? null, musicConfig: body.musicConfig ?? null,
-            dedup: body.dedup,
+            dedup: body.dedup, refLang: body.refLang,
           }));
           return;
         }
@@ -2348,7 +2365,7 @@ export function createMonitorServer({
           const updated = store.updateAiRemixPreset(presetId, {
             name: body.name, prompt: body.prompt, isDefault: body.isDefault,
             introConfig: body.introConfig, outroConfig: body.outroConfig, musicConfig: body.musicConfig,
-            dedup: body.dedup,
+            dedup: body.dedup, refLang: body.refLang,
           });
           if (!updated) { sendJson(response, 404, { error: "方案不存在" }); return; }
           sendJson(response, 200, updated);
