@@ -5363,7 +5363,11 @@ async function openRemixTaskModal(presetMode = "stitch") {
   // 加载 CDP 实例列表（用于 AI 模式）
   await loadModalCdpInstances();
 
-  modalEl.videoList.innerHTML = '<div class="empty-state compact">请先选择达人</div>';
+  // tab 页模式下 videoList 不存在，用 tabs 内容区代替
+  const tabsContent = document.querySelector("#modal-tabs-content");
+  if (tabsContent) {
+    tabsContent.innerHTML = '<div class="empty-state compact">请先选择社媒账号</div>';
+  }
   modalEl.start.disabled = true;
 
   // 加载 AI 混剪方案列表
