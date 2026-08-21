@@ -1747,10 +1747,6 @@ export function createMonitorServer({
           // 参考社媒账号语言：在提示词顶部注入语言
           if (presetId) {
             const preset = store.getAiRemixPreset(presetId);
-            // 记录资源类型到任务
-            if (preset?.resourceTypes) {
-              store.updateRemixTask(task.id, { resourceTypes: preset.resourceTypes });
-            }
             if (preset?.refLang && matrixIds?.length) {
               const accounts = [];
               for (const mid of matrixIds) {
@@ -1817,6 +1813,13 @@ export function createMonitorServer({
               creatorId, matrixIds, presetId, prompt,
               cdpInstanceId,
             });
+            // 记录资源类型到任务
+            if (presetId) {
+              const preset = store.getAiRemixPreset(presetId);
+              if (preset?.resourceTypes) {
+                store.updateRemixTask(task.id, { resourceTypes: preset.resourceTypes });
+              }
+            }
 
             // AI混剪只上传原视频，方案绑定的文件用于后续拼接不上传给ChatGPT
             let mainVideoLocalPath = resolveLocal(video.url);
