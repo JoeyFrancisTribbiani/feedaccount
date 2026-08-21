@@ -1858,6 +1858,26 @@ export function createMonitorServer({
             } catch (e) { store.logCdpEvent(null, "warning", `预压缩失败，使用原文件: ${e.message}`, null, task.id); }
             const filesToUpload = [mainVideoLocalPath];
 
+            // 穿搭指南：方案开启时随机选鞋子+衣服+场景图片一起上传
+            if (presetId) {
+              const preset = store.getAiRemixPreset(presetId);
+              if (preset?.outfitGuide) {
+                const outfitCats = ["shoes", "clothing", "scene"];
+                for (const cat of outfitCats) {
+                  const outfit = store.randomOutfitByCategory(cat);
+                  if (outfit) {
+                    const outfitLocalPath = path.resolve(THIS_DIR, "..", outfit.file_path.replace(/^\//, ""));
+                    if (existsSync(outfitLocalPath)) {
+                      filesToUpload.push(outfitLocalPath);
+                      store.logCdpEvent(null, "info", `穿搭指南[${cat}]: ${outfit.brand} ${outfit.filename}`, null, task.id);
+                    }
+                  } else {
+                    store.logCdpEvent(null, "info", `穿搭指南[${cat}]: 无可用图片，跳过`, null, task.id);
+                  }
+                }
+              }
+            }
+
             // 提交到 AI 混剪队列（异步处理）
             aiRemixQueue.push({
               taskId: task.id, daemonUrl, filesToUpload, prompt: prompt || "",
@@ -2138,6 +2158,62 @@ export function createMonitorServer({
             store.deleteRemixTask(taskId);
           }
           sendJson(response, 200, { ok: true, deleted: taskIds.length });
+          return;
+        }
+
+        // 穿搭图库索引
+        if (request.method === "POST" && pathname === "/api/outfit-library/index") {
+          const OUTFIT_DIR = path.resolve(THIS_DIR, "..", "data", "luxury-image-library", "images");
+          if (!existsSync(OUTFIT_DIR)) { sendJson(response, 404, { error: "穿搭图库目录不存在" }); return; }
+          store.clearOutfitLibrary();
+          const { readdirSync: rdSync } = await import("node:fs");
+          // 品牌目录
+          const brands = rdSync(OUTFIT_DIR, { withFileTypes: true }).filter(d => d.isDirectory() && !d.name.startsWith("_")).map(d => d.name);
+          // 全局分类目录 _Scene 和 _Accessories
+          const globalCats = ["_Scene", "_Accessories"];
+          // 服装类别映射
+          const clothingCats = ["Top", "Bottom", "Outerwear", "Dress", "Knitwear", "Denim", "Pants", "Shorts", "Skirt"];
+          let count = 0;
+          for (const brand of brands) {
+            const brandDir = path.join(OUTFIT_DIR, brand);
+            const cats = rdSync(brandDir, { withFileTypes: true }).filter(d => d.isDirectory()).map(d => d.name);
+            for (const cat of cats) {
+              if (cat === "Bag" || cat === "Eyewear") continue; // 排除 Bag
+              const catDir = path.join(brandDir, cat);
+              const files = rdSync(catDir).filter(f => /\.(jpg|jpeg|png|webp)$/i.test(f));
+              for (const file of files) {
+                const filePath = `/data/luxury-image-library/images/${brand}/${cat}/${file}`;
+                // 统一分类：所有服装类归为"衣服"，Shoes归为"鞋子"
+                const unifiedCat = cat === "Shoes" ? "shoes" : clothingCats.includes(cat) ? "clothing" : cat.toLowerCase();
+                store.indexOutfitLibrary(brand, unifiedCat, filePath, file);
+                count++;
+              }
+            }
+          }
+          // 索引全局分类目录
+          for (const gcat of globalCats) {
+            const gdir = path.join(OUTFIT_DIR, gcat);
+            if (existsSync(gdir)) {
+              const files = rdSync(gdir).filter(f => /\.(jpg|jpeg|png|webp)$/i.test(f));
+              const unifiedCat = gcat === "_Scene" ? "scene" : "accessories";
+              for (const file of files) {
+                const filePath = `/data/luxury-image-library/images/${gcat}/${file}`;
+                store.indexOutfitLibrary(gcat, unifiedCat, filePath, file);
+                count++;
+              }
+            }
+          }
+          sendJson(response, 200, { ok: true, indexed: count });
+          return;
+        }
+        // 查询穿搭图库
+        if (request.method === "GET" && pathname === "/api/outfit-library/stats") {
+          const stats = {};
+          for (const cat of ["shoes", "clothing", "scene", "accessories"]) {
+            stats[cat] = store.db.prepare("SELECT COUNT(*) as c FROM outfit_library WHERE category = ?").get(cat).c;
+          }
+          stats.total = store.countOutfitLibrary();
+          sendJson(response, 200, stats);
           return;
         }
 
@@ -2615,7 +2691,7 @@ export function createMonitorServer({
           sendJson(response, 200, store.createAiRemixPreset({
             name: body.name, prompt: body.prompt, isDefault: body.isDefault || false,
             introConfig: body.introConfig ?? null, outroConfig: body.outroConfig ?? null, musicConfig: body.musicConfig ?? null,
-            dedup: body.dedup, refLang: body.refLang, resourceTypes: body.resourceTypes ?? null,
+            dedup: body.dedup, refLang: body.refLang, resourceTypes: body.resourceTypes, outfitGuide: body.outfitGuide,
           }));
           return;
         }
@@ -2629,7 +2705,7 @@ export function createMonitorServer({
           const updated = store.updateAiRemixPreset(presetId, {
             name: body.name, prompt: body.prompt, isDefault: body.isDefault,
             introConfig: body.introConfig, outroConfig: body.outroConfig, musicConfig: body.musicConfig,
-            dedup: body.dedup, refLang: body.refLang, resourceTypes: body.resourceTypes,
+            dedup: body.dedup, refLang: body.refLang, resourceTypes: body.resourceTypes, outfitGuide: body.outfitGuide,
           });
           if (!updated) { sendJson(response, 404, { error: "方案不存在" }); return; }
           sendJson(response, 200, updated);
@@ -2667,6 +2743,21 @@ export function createMonitorServer({
         const varName = decodeURIComponent(presetFileDeleteMatch[2]);
         store.deletePresetFile(presetId, varName);
         sendJson(response, 200, { ok: true });
+        return;
+      }
+
+      // ---- 静态文件: 穿搭图库 ----
+      if (pathname.startsWith("/data/luxury-image-library/")) {
+        const subPath = decodeURIComponent(pathname.replace("/data/luxury-image-library/", ""));
+        const filePath = path.resolve(THIS_DIR, "..", "data", "luxury-image-library", subPath);
+        const baseDir = path.resolve(THIS_DIR, "..", "data", "luxury-image-library");
+        if (!filePath.startsWith(baseDir)) { response.writeHead(403, { "Content-Type": "text/plain" }); response.end("禁止访问"); return; }
+        if (!existsSync(filePath)) { response.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" }); response.end("文件不存在"); return; }
+        const statResult = await stat(filePath);
+        const ext = path.extname(subPath).toLowerCase();
+        const ct = ext === ".png" ? "image/png" : ext === ".jpg" || ext === ".jpeg" ? "image/jpeg" : ext === ".webp" ? "image/webp" : "application/octet-stream";
+        response.writeHead(200, { "Content-Type": ct, "Content-Length": statResult.size, "Cache-Control": "public, max-age=3600" });
+        createReadStream(filePath).pipe(response);
         return;
       }
 

@@ -448,6 +448,17 @@ export class LocalDatabase {
     this.#ensureColumn("remix_tasks", "music_id", "TEXT");
     this.#ensureColumn("remix_tasks", "cdp_instance_id", "TEXT");
     this.#ensureColumn("remix_tasks", "image_paths_json", "TEXT");
+    // 穿搭图库索引
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS outfit_library (
+        id TEXT PRIMARY KEY,
+        brand TEXT NOT NULL,
+        category TEXT NOT NULL,
+        file_path TEXT NOT NULL,
+        filename TEXT,
+        created_at TEXT
+      )
+    `);
     this.#ensureColumn("remix_tasks", "seq_num", "INTEGER");
     this.#ensureColumn("remix_tasks", "resource_types_json", "TEXT");
     // AI 生成的多类型资源
@@ -477,6 +488,7 @@ export class LocalDatabase {
     this.#ensureColumn("ai_remix_presets", "dedup", "INTEGER DEFAULT 1");
     this.#ensureColumn("ai_remix_presets", "ref_lang", "INTEGER DEFAULT 0");
     this.#ensureColumn("ai_remix_presets", "resource_types_json", "TEXT");
+    this.#ensureColumn("ai_remix_presets", "outfit_guide", "INTEGER DEFAULT 0");
     this.#ensureColumn("matrix_accounts", "language", "TEXT");
     // 社媒账号绑定达人（多对多）
     this.db.exec(`
@@ -1816,18 +1828,19 @@ export class LocalDatabase {
       dedup: r.dedup === undefined ? true : Boolean(r.dedup),
       refLang: r.ref_lang === 1,
       resourceTypes: parseJson(r.resource_types_json, null),
+      outfitGuide: r.outfit_guide === 1,
     };
   }
 
-  createAiRemixPreset({ name, prompt, isDefault = false, introConfig = null, outroConfig = null, musicConfig = null, dedup = true, refLang = false, resourceTypes = null }) {
+  createAiRemixPreset({ name, prompt, isDefault = false, introConfig = null, outroConfig = null, musicConfig = null, dedup = true, refLang = false, resourceTypes = null, outfitGuide = false }) {
     const id = `ap_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     const ts = nowIso();
     if (isDefault) {
       this.db.exec("UPDATE ai_remix_presets SET is_default = 0");
     }
     this.db.prepare(`
-      INSERT INTO ai_remix_presets (id, name, prompt, is_default, intro_config_json, outro_config_json, music_config_json, dedup, ref_lang, resource_types_json, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO ai_remix_presets (id, name, prompt, is_default, intro_config_json, outro_config_json, music_config_json, dedup, ref_lang, resource_types_json, outfit_guide, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(id, name, prompt, booleanInt(isDefault),
       introConfig ? JSON.stringify(introConfig) : null,
       outroConfig ? JSON.stringify(outroConfig) : null,
@@ -1835,6 +1848,7 @@ export class LocalDatabase {
       booleanInt(dedup),
       booleanInt(refLang),
       resourceTypes ? JSON.stringify(resourceTypes) : null,
+      booleanInt(outfitGuide),
       ts, ts);
     return this.getAiRemixPreset(id);
   }
@@ -1871,7 +1885,7 @@ export class LocalDatabase {
     };
   }
 
-  updateAiRemixPreset(id, { name, prompt, isDefault, introConfig, outroConfig, musicConfig, dedup, refLang, resourceTypes }) {
+  updateAiRemixPreset(id, { name, prompt, isDefault, introConfig, outroConfig, musicConfig, dedup, refLang, resourceTypes, outfitGuide }) {
     const ts = nowIso();
     if (isDefault) {
       this.db.exec("UPDATE ai_remix_presets SET is_default = 0");
@@ -1887,6 +1901,7 @@ export class LocalDatabase {
           dedup = COALESCE(?, dedup),
           ref_lang = COALESCE(?, ref_lang),
           resource_types_json = COALESCE(?, resource_types_json),
+          outfit_guide = COALESCE(?, outfit_guide),
           updated_at = ?
       WHERE id = ?
     `).run(
@@ -1897,6 +1912,7 @@ export class LocalDatabase {
       dedup === undefined ? null : booleanInt(dedup),
       refLang === undefined ? null : booleanInt(refLang),
       resourceTypes === undefined ? null : (resourceTypes ? JSON.stringify(resourceTypes) : null),
+      outfitGuide === undefined ? null : booleanInt(outfitGuide),
       ts, id,
     );
     return this.getAiRemixPreset(id);
@@ -2049,6 +2065,32 @@ export class LocalDatabase {
 
   deleteRemixTask(id) {
     return this.db.prepare(`DELETE FROM remix_tasks WHERE id = ?`).run(id).changes;
+  }
+
+  // 穿搭图库
+  indexOutfitLibrary(brand, category, filePath, filename) {
+    const id = `ol_${Date.now()}_${Math.random().toString(36).substring(2, 7)}_${this.db.prepare("SELECT COUNT(*) as c FROM outfit_library").get().c}`;
+    this.db.prepare("INSERT INTO outfit_library (id, brand, category, file_path, filename) VALUES (?, ?, ?, ?, ?)").run(id, brand, category, filePath, filename);
+    return id;
+  }
+
+  listOutfitLibrary(category = null) {
+    if (category) {
+      return this.db.prepare("SELECT * FROM outfit_library WHERE category = ? ORDER BY brand, filename").all(category);
+    }
+    return this.db.prepare("SELECT * FROM outfit_library ORDER BY brand, category, filename").all();
+  }
+
+  randomOutfitByCategory(category) {
+    return this.db.prepare("SELECT * FROM outfit_library WHERE category = ? ORDER BY RANDOM() LIMIT 1").get(category);
+  }
+
+  clearOutfitLibrary() {
+    this.db.prepare("DELETE FROM outfit_library").run();
+  }
+
+  countOutfitLibrary() {
+    return this.db.prepare("SELECT COUNT(*) as c FROM outfit_library").get().c;
   }
 
   close() {

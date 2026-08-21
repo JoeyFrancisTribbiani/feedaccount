@@ -6152,8 +6152,9 @@ function openPresetEditModal(preset) {
             <div class="preset-config-title" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
               <label style="display:inline-flex;align-items:center;gap:4px;white-space:nowrap;"><input type="checkbox" id="preset-dedup" checked /> 原视频去重</label>
               <label style="display:inline-flex;align-items:center;gap:4px;white-space:nowrap;"><input type="checkbox" id="preset-ref-lang" /> 参考社媒账号语言</label>
+              <label style="display:inline-flex;align-items:center;gap:4px;white-space:nowrap;"><input type="checkbox" id="preset-outfit-guide" /> 穿搭指南</label>
             </div>
-            <span class="muted-activity" style="font-size:11px;">去重：关闭后原视频不做去重处理，只归一化分辨率。参考语言：开启后在提示词顶部注入社媒账号的语言</span>
+            <span class="muted-activity" style="font-size:11px;">去重：关闭后原视频不做去重处理，只归一化分辨率。参考语言：开启后在提示词顶部注入社媒账号的语言。穿搭指南：开启后从穿搭图库随机选鞋子+衣服+场景图片一起上传给AI</span>
           </div>
           <div class="preset-form-actions">
             <button id="preset-form-save" class="button button-primary" type="button">${isEdit ? "保存修改" : "创建方案"}</button>
@@ -6298,7 +6299,8 @@ function collectPresetConfig() {
   // 收集资源类型
   const resourceTypeCbs = document.querySelectorAll(".preset-resource-type:checked");
   const resourceTypes = Array.from(resourceTypeCbs).map(cb => cb.value);
-  return { introConfig, outroConfig, musicConfig, dedup: presetModalEl.dedup?.checked ?? true, refLang: presetModalEl.refLang?.checked ?? false, resourceTypes };
+  const outfitGuide = document.querySelector("#preset-outfit-guide")?.checked ?? false;
+  return { introConfig, outroConfig, musicConfig, dedup: presetModalEl.dedup?.checked ?? true, refLang: presetModalEl.refLang?.checked ?? false, resourceTypes, outfitGuide };
 }
 
 function fillPresetConfigForm(preset) {
@@ -6330,6 +6332,8 @@ function fillPresetConfigForm(preset) {
   if (presetModalEl.musicLoop) presetModalEl.musicLoop.checked = mc.loop ?? true;
   if (presetModalEl.dedup) presetModalEl.dedup.checked = preset?.dedup !== false;
   if (presetModalEl.refLang) presetModalEl.refLang.checked = preset?.refLang === true;
+  const outfitGuideCb = document.querySelector("#preset-outfit-guide");
+  if (outfitGuideCb) outfitGuideCb.checked = preset?.outfitGuide === true;
   // 回填资源类型
   document.querySelectorAll(".preset-resource-type").forEach(cb => {
     const types = preset?.resourceTypes || ["image"];
@@ -6515,7 +6519,7 @@ async function handlePresetAdd() {
     prompt = defaultPreset?.prompt || BUILTIN_DEFAULT_PROMPT;
     showToast("提示词为空，已使用默认提示词");
   }
-  const { introConfig, outroConfig, musicConfig, dedup, refLang, resourceTypes } = collectPresetConfig();
+  const { introConfig, outroConfig, musicConfig, dedup, refLang, resourceTypes, outfitGuide } = collectPresetConfig();
   // 校验：图片开始时间+总持续时间不能超过片段时长
   const introTotal = (introConfig.imageInsertStart || 0) + (introConfig.imageCount || 0) * (introConfig.imageDuration || 0);
   const outroTotal = (outroConfig.imageInsertStart || 0) + (outroConfig.imageCount || 0) * (outroConfig.imageDuration || 0);
@@ -6538,7 +6542,7 @@ async function handlePresetAdd() {
   try {
     const created = await request("/api/ai-presets", {
       method: "POST",
-      body: JSON.stringify({ name, prompt, isDefault: presetModalEl.isDefault.checked, introConfig, outroConfig, musicConfig, dedup, refLang, resourceTypes }),
+      body: JSON.stringify({ name, prompt, isDefault: presetModalEl.isDefault.checked, introConfig, outroConfig, musicConfig, dedup, refLang, resourceTypes, outfitGuide }),
     });
     // 绑定暂存的变量文件
     if (pendingVarFiles.size > 0) {
@@ -6579,7 +6583,7 @@ async function handlePresetUpdate() {
   const name = presetModalEl.name.value.trim();
   const prompt = presetModalEl.prompt.value.trim();
   if (!currentEditPresetId) { showToast("请先点击方案列表中的「编辑」", true); return; }
-  const { introConfig, outroConfig, musicConfig, dedup, refLang, resourceTypes } = collectPresetConfig();
+  const { introConfig, outroConfig, musicConfig, dedup, refLang, resourceTypes, outfitGuide } = collectPresetConfig();
   // 校验：图片开始时间+总持续时间不能超过片段时长
   const introTotal = (introConfig.imageInsertStart || 0) + (introConfig.imageCount || 0) * (introConfig.imageDuration || 0);
   const outroTotal = (outroConfig.imageInsertStart || 0) + (outroConfig.imageCount || 0) * (outroConfig.imageDuration || 0);
@@ -6602,7 +6606,7 @@ async function handlePresetUpdate() {
   try {
     await request(`/api/ai-presets/${encodeURIComponent(currentEditPresetId)}`, {
       method: "PUT",
-      body: JSON.stringify({ name, prompt, isDefault: presetModalEl.isDefault.checked, introConfig, outroConfig, musicConfig, dedup, refLang, resourceTypes }),
+      body: JSON.stringify({ name, prompt, isDefault: presetModalEl.isDefault.checked, introConfig, outroConfig, musicConfig, dedup, refLang, resourceTypes, outfitGuide }),
     });
     // 绑定新上传的片头/片尾片段文件
     if (pendingSegmentFiles.intro) {
