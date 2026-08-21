@@ -1184,9 +1184,6 @@ async function downloadFile(url, destDir, filename) {
 }
 
 /**
- * 从 ChatGPT 页面提取所有生成的图片 URL 并下载
- */
-/**
  * 提取非图片类型资源（视频/音频/文本/其他文件）
  */
 async function extractExtraResources(destDir) {
