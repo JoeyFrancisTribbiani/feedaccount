@@ -2533,15 +2533,17 @@ export function createMonitorServer({
           }
         }
         // 非预览的下载请求
-        const isDownload = request.headers["sec-fetch-dest"] === "document" || new URL(pathname, "http://localhost").searchParams.get("download") !== null;
+        const isDownload = request.headers["sec-fetch-dest"] === "document" || request.headers["sec-fetch-dest"] === "empty" || new URL(pathname, "http://localhost").searchParams.get("download") !== null;
         // 根据文件扩展名设置正确的Content-Type
         const ext = path.extname(filename).toLowerCase();
         const contentType = ext === ".png" ? "image/png" : ext === ".jpg" || ext === ".jpeg" ? "image/jpeg" : ext === ".webp" ? "image/webp" : "video/mp4";
+        // Content-Disposition 用 RFC 5987 格式支持中文文件名
+        const dispositionFilename = `attachment; filename="${filename.replace(/[^\x20-\x7E]/g, "_")}"; filename*=UTF-8''${encodeURIComponent(filename)}`;
         response.writeHead(200, {
           "Content-Type": contentType,
           "Content-Length": statResult.size,
           "Accept-Ranges": "bytes",
-          ...(isDownload ? { "Content-Disposition": `attachment; filename="${encodeURIComponent(filename)}"` } : {}),
+          ...(isDownload ? { "Content-Disposition": dispositionFilename } : {}),
           "Cache-Control": "public, max-age=3600",
         });
         createReadStream(filePath).pipe(response);
