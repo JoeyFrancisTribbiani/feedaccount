@@ -2737,9 +2737,13 @@ export function createMonitorServer({
       }
       await serveStatic(publicDir, pathname, response, request.method === "HEAD");
     } catch (error) {
-      sendJson(response, error?.statusCode || 400, {
-        error: error instanceof Error ? error.message : String(error),
-      });
+      if (!response.headersSent) {
+        sendJson(response, error?.statusCode || 400, {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      } else {
+        console.error("[server] 响应头已发送，无法返回错误:", error?.message || error);
+      }
     }
   });
 
