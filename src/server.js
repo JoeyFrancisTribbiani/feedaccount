@@ -1,4 +1,4 @@
-import { createReadStream, mkdirSync, writeFileSync, existsSync, unlinkSync } from "node:fs";
+import { createReadStream, mkdirSync, writeFileSync, existsSync, unlinkSync, readFileSync, readdirSync } from "node:fs";
 import { stat, readFile, unlink } from "node:fs/promises";
 import { createServer } from "node:http";
 import path from "node:path";
@@ -2173,10 +2173,13 @@ export function createMonitorServer({
           if (!existsSync(taskDir)) mkdirSync(taskDir, { recursive: true });
 
           // 找最大编号
-          const existing = require("fs").readdirSync(taskDir).filter(f => /^(\d+)\.png$/.test(f)).map(f => parseInt(f)).sort((a,b)=>a-b);
+          const existing = readdirSync(taskDir).filter(f => /^(\d+)\.png$/.test(f)).map(f => parseInt(f)).sort((a,b)=>a-b);
           const nextNum = existing.length ? existing[existing.length-1] + 1 : 1;
           const imgPath = path.join(taskDir, `${nextNum}.png`);
-          const buffer = await readFile(request);
+          // 读取 raw body
+          const chunks = [];
+          for await (const chunk of request) chunks.push(chunk);
+          const buffer = Buffer.concat(chunks);
           writeFileSync(imgPath, buffer);
           const imgUrl = `/data/remix-output/tasks/${taskSeq}/${nextNum}.png`;
           // 更新数据库 imagePaths
@@ -2604,14 +2607,20 @@ export function createMonitorServer({
 
       // ---- 静态文件: remix 输出 ----
       if (pathname.startsWith("/data/remix-output/")) {
-        const filename = decodeURIComponent(path.basename(pathname));
+        const subPath = decodeURIComponent(pathname.replace("/data/remix-output/", ""));
         const { getOutputDir } = await import("./video-remix.js");
         let outputDir = getOutputDir();
-        let filePath = path.join(outputDir, filename);
+        let filePath = path.join(outputDir, subPath);
+        // 防止路径穿越
+        if (!filePath.startsWith(outputDir)) {
+          response.writeHead(403, { "Content-Type": "text/plain" });
+          response.end("禁止访问");
+          return;
+        }
         // 文件不在自定义路径，回退到默认路径
         if (!existsSync(filePath)) {
           const defaultDir = path.resolve(THIS_DIR, "..", "data", "remix-output");
-          const defaultPath = path.join(defaultDir, filename);
+          const defaultPath = path.join(defaultDir, subPath);
           if (existsSync(defaultPath)) { filePath = defaultPath; outputDir = defaultDir; }
         }
         if (!existsSync(filePath)) {
@@ -2633,7 +2642,7 @@ export function createMonitorServer({
               return;
             }
             end = Math.min(end, statResult.size - 1);
-            const ext = path.extname(filename).toLowerCase();
+            const ext = path.extname(subPath).toLowerCase();
             const ct = ext === ".png" ? "image/png" : ext === ".jpg" || ext === ".jpeg" ? "image/jpeg" : ext === ".webp" ? "image/webp" : "video/mp4";
             response.writeHead(206, {
               "Content-Type": ct,
@@ -2649,10 +2658,11 @@ export function createMonitorServer({
         // 非预览的下载请求
         const isDownload = request.headers["sec-fetch-dest"] === "document" || request.headers["sec-fetch-dest"] === "empty" || new URL(pathname, "http://localhost").searchParams.get("download") !== null;
         // 根据文件扩展名设置正确的Content-Type
-        const ext = path.extname(filename).toLowerCase();
+        const basename = path.basename(subPath);
+        const ext = path.extname(subPath).toLowerCase();
         const contentType = ext === ".png" ? "image/png" : ext === ".jpg" || ext === ".jpeg" ? "image/jpeg" : ext === ".webp" ? "image/webp" : "video/mp4";
         // Content-Disposition 用 RFC 5987 格式支持中文文件名
-        const dispositionFilename = `attachment; filename="${filename.replace(/[^\x20-\x7E]/g, "_")}"; filename*=UTF-8''${encodeURIComponent(filename)}`;
+        const dispositionFilename = `attachment; filename="${basename.replace(/[^\x20-\x7E]/g, "_")}"; filename*=UTF-8''${encodeURIComponent(basename)}`;
         response.writeHead(200, {
           "Content-Type": contentType,
           "Content-Length": statResult.size,
