@@ -3820,7 +3820,7 @@ document.querySelector("#video-preview-close")?.addEventListener("click", () => 
 
 // 资源集弹框（原图集）
 function openImageGallery(imageUrls) {
-  openResourceGallery(taskId = null, imageUrls);
+  openResourceGallery(null, imageUrls);
 }
 
 async function openResourceGallery(taskId, fallbackImages = []) {
@@ -3858,8 +3858,8 @@ async function openResourceGallery(taskId, fallbackImages = []) {
   renderResourceByType(types, activeType);
 
   function renderResourceByType(types, activeType) {
-    // 类型 tab
-    const tabsHeader = modal.querySelector(".modal-header > div");
+    // 类型 tab - 插入到 header 的 div 前面，不覆盖全选/批量下载
+    const tabsHeader = modal.querySelector("#image-gallery-tabs");
     if (tabsHeader) {
       tabsHeader.innerHTML = types.map(t => {
         const label = { image: "图片", video: "视频", audio: "音频", text: "文本", other: "其他" }[t] || t;
