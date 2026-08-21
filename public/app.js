@@ -5082,13 +5082,225 @@ function renderModalMatrices() {
     </label>
   `).join("");
   modalEl.matrixList.querySelectorAll("input[type=checkbox]").forEach((cb) => {
-    cb.addEventListener("change", () => {
-      if (cb.checked) modalState.selectedMatrixIds.add(cb.value);
-      else modalState.selectedMatrixIds.delete(cb.value);
+    cb.addEventListener("change", async () => {
+      if (cb.checked) {
+        modalState.selectedMatrixIds.add(cb.value);
+        // 创建 tab
+        modalState.tabs[cb.value] = { creatorId: null, videoIds: new Set() };
+        // 加载绑定的达人
+        const matrix = modalState.matrices.find(m => m.id === cb.value);
+        if (matrix?._count?.accounts) {
+          const accounts = await request(`/api/matrices/${encodeURIComponent(cb.value)}/accounts`);
+          const boundCreators = [];
+          for (const acc of accounts) {
+            const creators = await request(`/api/matrices/accounts/${encodeURIComponent(acc.id)}/creators`);
+            boundCreators.push(...creators);
+          }
+          modalState.tabs[cb.value].boundCreators = boundCreators;
+          // 默认选中第一个绑定的达人
+          if (boundCreators.length) {
+            modalState.tabs[cb.value].creatorId = boundCreators[0].id;
+            // 加载达人的视频
+            const vids = await request(`/api/remix/creators/${encodeURIComponent(boundCreators[0].id)}/videos`);
+            modalState.tabs[cb.value].videos = vids;
+          }
+        }
+      } else {
+        modalState.selectedMatrixIds.delete(cb.value);
+        delete modalState.tabs[cb.value];
+        if (modalState.activeTabId === cb.value) modalState.activeTabId = null;
+      }
       cb.closest("label").classList.toggle("checked", cb.checked);
+      renderModalTabs();
       updateModalStartBtn();
     });
   });
+}
+
+// 渲染 Tab 页
+function renderModalTabs() {
+  const tabsHeader = document.querySelector("#modal-tabs-header");
+  const tabsContent = document.querySelector("#modal-tabs-content");
+  if (!tabsHeader || !tabsContent) return;
+
+  const matrixIds = [...modalState.selectedMatrixIds];
+  if (!matrixIds.length) {
+    tabsHeader.innerHTML = "";
+    tabsContent.innerHTML = '<div class="empty-state compact">请先选择社媒矩阵</div>';
+    updateSelectedVideosSummary();
+    return;
+  }
+
+  // 默认选第一个 tab
+  if (!modalState.activeTabId || !modalState.tabs[modalState.activeTabId]) {
+    modalState.activeTabId = matrixIds[0];
+  }
+
+  // Tab 头
+  tabsHeader.innerHTML = matrixIds.map(mid => {
+    const m = modalState.matrices.find(x => x.id === mid);
+    const name = m ? escapeHtml(m.name) : mid;
+    const active = mid === modalState.activeTabId ? "background:#3b82f6;color:#fff;" : "background:#f1f5f9;cursor:pointer;";
+    return `<div data-tab-id="${escapeHtml(mid)}" style="padding:4px 12px;border-radius:6px 6px 0 0;font-size:12px;${active}">${name}</div>`;
+  }).join("");
+
+  tabsHeader.querySelectorAll("[data-tab-id]").forEach(el => {
+    el.addEventListener("click", () => {
+      modalState.activeTabId = el.dataset.tabId;
+      renderModalTabs();
+    });
+  });
+
+  // Tab 内容
+  const tab = modalState.tabs[modalState.activeTabId];
+  if (!tab) { tabsContent.innerHTML = ""; return; }
+
+  const m = modalState.matrices.find(x => x.id === modalState.activeTabId);
+  const tabName = m ? escapeHtml(m.name) : "";
+
+  // 达人选择区
+  const boundCreators = tab.boundCreators || [];
+  let creatorHtml = "";
+  if (boundCreators.length) {
+    creatorHtml = boundCreators.map(c => {
+      const active = tab.creatorId === c.id ? "checked" : "";
+      return `<label class="modal-check-item ${active}" style="display:inline-flex;">
+        <input type="radio" name="tab-creator" value="${escapeHtml(c.id)}" ${active} />
+        <span>${escapeHtml(c.name)}</span>
+      </label>`;
+    }).join("");
+  } else {
+    creatorHtml = '<span class="muted-activity" style="font-size:11px;">该矩阵未绑定达人</span>';
+  }
+
+  // 视频选择区
+  const videos = tab.videos || [];
+  let videoHtml = "";
+  if (videos.length) {
+    videoHtml = videos.map(v => {
+      const checked = tab.videoIds.has(v.id);
+      const thumb = v.thumbUrl
+        ? `<img src="${escapeHtml(v.thumbUrl)}" class="modal-video-thumb" style="object-fit:cover;background:#000;" />`
+        : `<video src="${escapeHtml(v.url)}#t=0.1" muted preload="metadata" class="modal-video-thumb"></video>`;
+      const title = escapeHtml(v.title || "未命名");
+      const meta = `<span class="video-meta">${formatDuration(v.duration)} · ${formatFileSize(v.fileSize)}</span>`;
+      return `<label class="modal-check-item modal-video-card ${checked ? "checked" : ""}">
+        <input type="checkbox" value="${escapeHtml(v.id)}" ${checked ? "checked" : ""} />
+        ${thumb}
+        <span class="modal-video-card-title">${title}</span>
+        ${meta}
+      </label>`;
+    }).join("");
+  } else if (tab.creatorId) {
+    videoHtml = '<div class="empty-state compact">该达人暂无视频</div>';
+  } else {
+    videoHtml = '<div class="empty-state compact">请先选择达人</div>';
+  }
+
+  tabsContent.innerHTML = `
+    <div style="border:1px solid #e2e8f0;border-radius:8px;padding:12px;margin-bottom:8px;">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+        <strong style="font-size:12px;">达人</strong>
+        <button id="tab-select-other-creator" class="button button-secondary" type="button" style="font-size:10px;padding:2px 8px;">选择其他达人</button>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;">${creatorHtml}</div>
+    </div>
+    <div style="border:1px solid #e2e8f0;border-radius:8px;padding:12px;">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+        <strong style="font-size:12px;">原视频</strong>
+        <span class="muted-activity" style="font-size:11px;">${tabName}</span>
+      </div>
+      <div class="modal-video-list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;">${videoHtml}</div>
+    </div>
+  `;
+
+  // 达人 radio 事件
+  tabsContent.querySelectorAll('input[name="tab-creator"]').forEach(r => {
+    r.addEventListener("change", async () => {
+      tab.creatorId = r.value;
+      tab.videoIds.clear();
+      // 加载新达人的视频
+      const vids = await request(`/api/remix/creators/${encodeURIComponent(r.value)}/videos`);
+      tab.videos = vids;
+      renderModalTabs();
+      updateModalStartBtn();
+    });
+  });
+
+  // 视频 checkbox 事件
+  tabsContent.querySelectorAll('.modal-video-card input[type=checkbox]').forEach(cb => {
+    cb.addEventListener("change", () => {
+      if (cb.checked) tab.videoIds.add(cb.value);
+      else tab.videoIds.delete(cb.value);
+      cb.closest("label").classList.toggle("checked", cb.checked);
+      updateSelectedVideosSummary();
+      updateModalStartBtn();
+    });
+  });
+
+  // 选择其他达人
+  document.querySelector("#tab-select-other-creator")?.addEventListener("click", () => {
+    openOtherCreatorModal(modalState.activeTabId);
+  });
+
+  updateSelectedVideosSummary();
+}
+
+// 选择其他达人弹窗
+function openOtherCreatorModal(tabId) {
+  const allCreators = modalState.creators;
+  const boundIds = new Set((modalState.tabs[tabId]?.boundCreators || []).map(c => c.id));
+  const unbound = allCreators.filter(c => !boundIds.has(c.id));
+  if (!unbound.length) { showToast("没有其他达人可选", true); return; }
+  // 用 confirm 风格的弹窗
+  const list = unbound.map(c => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)}</option>`).join("");
+  const html = `<div id="other-creator-overlay" class="modal-overlay" style="z-index:10001;">
+    <div class="modal-content" style="max-width:400px;">
+      <div class="modal-header"><h3>选择其他达人</h3><button class="modal-close" onclick="document.getElementById('other-creator-overlay').remove()">×</button></div>
+      <div class="modal-body">
+        <select id="other-creator-select" style="width:100%;padding:8px;">${list}</select>
+        <button id="other-creator-confirm" class="button button-primary" style="margin-top:12px;width:100%;">确认</button>
+      </div>
+    </div>
+  </div>`;
+  document.body.insertAdjacentHTML("beforeend", html);
+  document.querySelector("#other-creator-confirm")?.addEventListener("click", async () => {
+    const cid = document.querySelector("#other-creator-select").value;
+    if (!cid) return;
+    // 添加到绑定列表
+    const creator = modalState.creators.find(c => c.id === cid);
+    if (creator) {
+      if (!modalState.tabs[tabId].boundCreators) modalState.tabs[tabId].boundCreators = [];
+      modalState.tabs[tabId].boundCreators.push(creator);
+    }
+    // 选中
+    modalState.tabs[tabId].creatorId = cid;
+    modalState.tabs[tabId].videoIds.clear();
+    const vids = await request(`/api/remix/creators/${encodeURIComponent(cid)}/videos`);
+    modalState.tabs[tabId].videos = vids;
+    document.querySelector("#other-creator-overlay")?.remove();
+    renderModalTabs();
+    updateModalStartBtn();
+  });
+}
+
+// 更新所选视频汇总
+function updateSelectedVideosSummary() {
+  const summary = document.querySelector("#modal-selected-videos");
+  if (!summary) return;
+  const allVideos = [];
+  for (const mid of modalState.selectedMatrixIds) {
+    const tab = modalState.tabs[mid];
+    if (!tab) continue;
+    const m = modalState.matrices.find(x => x.id === mid);
+    const mName = m ? m.name : mid;
+    for (const vid of tab.videoIds) {
+      const v = (tab.videos || []).find(x => x.id === vid);
+      allVideos.push({ matrix: mName, title: v?.title || vid, creator: tab.creatorId });
+    }
+  }
+  if (!allVideos.length) { summary.textContent = "未选择"; return; }
+  summary.innerHTML = allVideos.map(v => `<div>${escapeHtml(v.matrix)} → ${escapeHtml(v.title)}</div>`).join("");
 }
 
 function renderModalCreators() {
@@ -5203,7 +5415,14 @@ modalEl.viewListBtn?.addEventListener("click", () => {
 });
 
 function updateModalStartBtn() {
-  const baseReady = modalState.selectedMatrixIds.size > 0 && modalState.selectedCreatorId && modalState.selectedVideoIds.size > 0;
+  // 检查每个 tab 是否都有 creator 和至少一个 video
+  let allReady = modalState.selectedMatrixIds.size > 0;
+  for (const mid of modalState.selectedMatrixIds) {
+    const tab = modalState.tabs[mid];
+    if (!tab?.creatorId || tab.videoIds.size === 0) { allReady = false; break; }
+  }
+  // 兼容旧的单选模式
+  const baseReady = allReady || (modalState.selectedMatrixIds.size > 0 && modalState.selectedCreatorId && modalState.selectedVideoIds.size > 0);
   let aiReady = true;
   if (modalState.mode === "ai") {
     aiReady = !!modalEl.cdpInstance.value;
@@ -5977,9 +6196,6 @@ modalEl.cancel?.addEventListener("click", () => modalEl.overlay.classList.add("h
 
 modalEl.start?.addEventListener("click", async () => {
   if (modalEl.start.disabled) return;
-  const matrixIds = [...modalState.selectedMatrixIds];
-  const creatorId = modalState.selectedCreatorId;
-  const videoIds = [...modalState.selectedVideoIds];
   const ratio = modalEl.ratio.value;
   const mode = modalState.mode;
 
@@ -6020,7 +6236,6 @@ modalEl.start?.addEventListener("click", async () => {
         showToast("CDP 守护进程未运行，正在自动启动...");
         try {
           await request(`/api/cdp/instances/${encodeURIComponent(cdpInstanceId)}/daemon-start`, { method: "POST" });
-          // 等待 daemon 启动完成
           let retries = 0;
           while (retries < 10) {
             await new Promise(r => setTimeout(r, 2000));
@@ -6041,17 +6256,27 @@ modalEl.start?.addEventListener("click", async () => {
         }
       }
 
-      const res = await request("/api/remix/ai-remix-task", {
-        method: "POST",
-        body: JSON.stringify({ matrixIds, creatorId, videoIds, cdpInstanceId, ratio, presetId }),
-      });
+      // 循环每个 tab 提交 AI 混剪任务
+      let totalCount = 0;
+      const matrixIds = [...modalState.selectedMatrixIds];
+      for (const matrixId of matrixIds) {
+        const tab = modalState.tabs[matrixId];
+        if (!tab?.creatorId || tab.videoIds.size === 0) continue;
+        const videoIds = [...tab.videoIds];
+        const res = await request("/api/remix/ai-remix-task", {
+          method: "POST",
+          body: JSON.stringify({ matrixIds: [matrixId], creatorId: tab.creatorId, videoIds, cdpInstanceId, ratio, presetId }),
+        });
+        totalCount += res.count || 1;
+        // 多个矩阵间隔1分钟
+        if (matrixId !== matrixIds[matrixIds.length - 1]) {
+          await new Promise(r => setTimeout(r, 60000));
+        }
+      }
       modalEl.overlay.classList.add("hidden");
-      const msg = res.count > 1
-        ? `已创建 ${res.count} 个 AI 混剪任务，最多同时运行 3 个，每个任务间隔 1 分钟启动`
-        : `已创建 1 个 AI 混剪任务，正在处理…`;
-      showToast(msg);
+      showToast(`已创建 ${totalCount} 个 AI 混剪任务`);
     } else {
-      // 素材直接拼接
+      // 素材直接拼接 - 循环每个 tab
       const introId = modalEl.introSelect?.value || "";
       const outroId = modalEl.outroSelect?.value || "";
       const musicId = modalEl.musicSelect?.value || "";
@@ -6062,12 +6287,20 @@ modalEl.start?.addEventListener("click", async () => {
       const outroVolume = parseInt(document.querySelector("#modal-outro-volume")?.value) ?? 100;
       const musicVolume = parseInt(document.querySelector("#modal-music-volume")?.value) ?? 8;
       const dedup = document.querySelector("#modal-dedup")?.checked ?? true;
-      const res = await request("/api/remix/matrix-task", {
-        method: "POST",
-        body: JSON.stringify({ matrixIds, creatorId, videoIds, ratio, introId, outroId, musicId, introEnabled, outroEnabled, musicEnabled, introVolume, outroVolume, musicVolume, dedup }),
-      });
+
+      let totalCount = 0;
+      for (const matrixId of modalState.selectedMatrixIds) {
+        const tab = modalState.tabs[matrixId];
+        if (!tab?.creatorId || tab.videoIds.size === 0) continue;
+        const videoIds = [...tab.videoIds];
+        const res = await request("/api/remix/matrix-task", {
+          method: "POST",
+          body: JSON.stringify({ matrixIds: [matrixId], creatorId: tab.creatorId, videoIds, ratio, introId, outroId, musicId, introEnabled, outroEnabled, musicEnabled, introVolume, outroVolume, musicVolume, dedup }),
+        });
+        totalCount += res.count || 1;
+      }
       modalEl.overlay.classList.add("hidden");
-      showToast(`已创建 ${res.count} 个混剪任务，正在处理…`);
+      showToast(`已创建 ${totalCount} 个拼接混剪任务`);
     }
     await fetchRemixTasks();
     if (remix.selectedCreatorId) {

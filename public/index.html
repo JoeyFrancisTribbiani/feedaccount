@@ -1443,40 +1443,30 @@
             <button id="remix-task-modal-close" class="modal-close" type="button">×</button>
           </div>
           <div class="modal-body">
-            <!-- Step 1: 选择社媒矩阵 -->
+            <!-- Step 1: 选择社媒矩阵（多选） -->
             <div class="modal-step">
               <div class="modal-step-head">
                 <span class="modal-step-num">1</span>
                 <strong>选择社媒矩阵</strong>
-                <span class="muted-activity" style="font-size: 11px;">可选择多个</span>
+                <span class="muted-activity" style="font-size: 11px;">可多选，每个矩阵生成一个 Tab 页</span>
               </div>
               <div id="modal-matrix-list" class="modal-matrix-list"></div>
             </div>
-            <!-- Step 2: 选择达人 -->
+            <!-- Step 2+3: 每个矩阵一个 Tab 页（达人+视频） -->
             <div class="modal-step">
               <div class="modal-step-head">
                 <span class="modal-step-num">2</span>
-                <strong>选择达人</strong>
-                <span class="muted-activity" style="font-size: 11px;">只能选择一个</span>
+                <strong>达人与视频选择</strong>
               </div>
-              <div id="modal-creator-list" class="modal-creator-list"></div>
-            </div>
-            <!-- Step 3: 选择视频 -->
-            <div class="modal-step">
-              <div class="modal-step-head">
-                <span class="modal-step-num">3</span>
-                <strong>选择原视频</strong>
-                <span class="muted-activity" style="font-size: 11px;">可选择多个</span>
-                <div class="modal-view-toggle">
-                  <button id="modal-view-grid" class="remix-view-btn active" type="button" title="网格视图">
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
-                  </button>
-                  <button id="modal-view-list" class="remix-view-btn" type="button" title="列表视图">
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="3.5" cy="6" r="1"/><circle cx="3.5" cy="12" r="1"/><circle cx="3.5" cy="18" r="1"/></svg>
-                  </button>
-                </div>
+              <!-- Tab 页头 -->
+              <div id="modal-tabs-header" style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px;border-bottom:1px solid #e2e8f0;"></div>
+              <!-- Tab 页内容 -->
+              <div id="modal-tabs-content"></div>
+              <!-- 本次所选视频汇总 -->
+              <div id="modal-selected-summary" style="margin-top:12px;padding:8px;border:1px solid #e2e8f0;border-radius:6px;background:#f8fafc;">
+                <strong style="font-size:12px;">本次所选视频</strong>
+                <div id="modal-selected-videos" style="font-size:11px;color:#64748b;margin-top:4px;">未选择</div>
               </div>
-              <div id="modal-video-list" class="modal-video-list"></div>
             </div>
             <!-- Step 4: 输出比例 -->
             <div class="modal-step">
