@@ -6687,6 +6687,8 @@ modalEl.start?.addEventListener("click", async () => {
             return;
           }
           showToast("CDP 守护进程已启动");
+          // 等待2秒让daemon完全就绪
+          await new Promise(r => setTimeout(r, 2000));
         } catch (e) {
           showToast(`CDP 守护进程启动失败: ${e.message}，请到 CDP Tab 手动启动`, true);
           return;
