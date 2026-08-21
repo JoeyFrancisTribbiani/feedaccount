@@ -1,0 +1,93 @@
+{
+  "www.bottegaveneta.com": {
+    "preferred_attributes": [
+      "data-zoom-image",
+      "data-src",
+      "data-original",
+      "data-lazy-src",
+      "srcset",
+      "src"
+    ],
+    "page_rule": "og/twitter meta, JSON image fields, then lazy-load/srcset/src",
+    "last_success_at": "2026-08-21T07:29:14Z",
+    "last_page_url": "https://www.bottegaveneta.com/en-us/medium-indigo-straight-jeans-mid-blue-862816V69P04300.html"
+  },
+  "www.gucci.com": {
+    "preferred_attributes": [
+      "data-zoom-image",
+      "data-src",
+      "data-original",
+      "data-lazy-src",
+      "srcset",
+      "src"
+    ],
+    "page_rule": "og/twitter meta, JSON image fields, then lazy-load/srcset/src",
+    "last_success_at": "2026-08-21T07:27:38Z",
+    "last_page_url": "https://www.gucci.com/us/en/pr/women/ready-to-wear-for-women/coats-and-jackets-for-women/coats-for-women/leather-with-aged-effect-bomber-jacket-p-861125XNBCM2069"
+  },
+  "www.balenciaga.com": {
+    "preferred_attributes": [
+      "data-zoom-image",
+      "data-src",
+      "data-original",
+      "data-lazy-src",
+      "srcset",
+      "src"
+    ],
+    "page_rule": "og/twitter meta, JSON image fields, then lazy-load/srcset/src",
+    "last_success_at": "2026-08-21T07:29:18Z",
+    "last_page_url": "https://www.balenciaga.com/en-en/tracksuit-pants-tango-red-809855174.html"
+  },
+  "www.loewe.com": {
+    "preferred_attributes": [
+      "data-zoom-image",
+      "data-src",
+      "data-original",
+      "data-lazy-src",
+      "srcset",
+      "src"
+    ],
+    "page_rule": "og/twitter meta, JSON image fields, then lazy-load/srcset/src",
+    "last_success_at": "2026-08-21T07:29:10Z",
+    "last_page_url": "https://www.loewe.com/usa/en/hidden_master/anagram-baggy-jeans-in-denim/S359Y11XEV-2100.html"
+  },
+  "us.burberry.com": {
+    "preferred_attributes": [
+      "data-zoom-image",
+      "data-src",
+      "data-original",
+      "data-lazy-src",
+      "srcset",
+      "src"
+    ],
+    "page_rule": "og/twitter meta, JSON image fields, then lazy-load/srcset/src",
+    "last_success_at": "2026-08-21T07:28:13Z",
+    "last_page_url": "https://us.burberry.com/cropped-leather-mayfair-trench-jacket-p81272961"
+  },
+  "www.chanel.com": {
+    "preferred_attributes": [
+      "data-zoom-image",
+      "data-src",
+      "data-original",
+      "data-lazy-src",
+      "srcset",
+      "src"
+    ],
+    "page_rule": "og/twitter meta, JSON image fields, then lazy-load/srcset/src",
+    "last_success_at": "2026-08-21T07:29:36Z",
+    "last_page_url": "https://www.chanel.com/us/fashion/p/AS5293B24748U9397/chanel-25-small-handbag-washed-denim-gold-tone-metal/"
+  },
+  "www.miumiu.com": {
+    "preferred_attributes": [
+      "data-zoom-image",
+      "data-src",
+      "data-original",
+      "data-lazy-src",
+      "srcset",
+      "src"
+    ],
+    "page_rule": "og/twitter meta, JSON image fields, then lazy-load/srcset/src",
+    "last_success_at": "2026-08-21T07:39:59Z",
+    "last_page_url": "https://www.miumiu.com/us/en/p/gymnasium-suede-sneakers/5E428E_8M2_F05Q7_F_DD05"
+  }
+}

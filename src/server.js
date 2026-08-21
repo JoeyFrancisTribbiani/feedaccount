@@ -2043,10 +2043,10 @@ export function createMonitorServer({
 
           const resolveLocal = (url) => {
             if (url.startsWith("/data/remix-videos/")) {
-              return path.resolve(THIS_DIR, "..", "data", "remix-videos", path.basename(url));
+              return path.join(getUploadDir(), path.basename(url));
             }
             if (url.startsWith("/data/remix-output/")) {
-              return path.resolve(THIS_DIR, "..", "data", "remix-output", path.basename(url));
+              return path.join(getOutputDir(), path.basename(url));
             }
             return url;
           };

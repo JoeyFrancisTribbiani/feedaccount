@@ -1237,9 +1237,20 @@ async function extractExtraResources(destDir) {
   const downloaded = []
   for (const res of resources) {
     try {
-      const downloadRes = await fetch(res.url, { redirect: 'follow' })
-      if (!downloadRes.ok) continue
-      const buffer = Buffer.from(await downloadRes.arrayBuffer())
+      // 在浏览器上下文中 fetch（带 cookie）
+      const base64Data = await page.evaluate(async (url) => {
+        const resp = await fetch(url, { redirect: 'follow' })
+        if (!resp.ok) return null
+        const blob = await resp.blob()
+        const reader = new FileReader()
+        return new Promise(resolve => {
+          reader.onloadend = () => resolve(reader.result)
+          reader.onerror = () => resolve(null)
+          reader.readAsDataURL(blob)
+        })
+      }, res.url)
+      if (!base64Data) { log(`资源下载失败: ${res.type} fetch返回空`); continue }
+      const buffer = Buffer.from(base64Data.split(',')[1], 'base64')
       if (buffer.length === 0) continue
       const ext = res.type === 'video' ? 'mp4' : res.type === 'audio' ? 'mp3' : res.type === 'text' ? 'txt' : 'bin'
       const filename = `ai_${res.type}_${Date.now()}_${downloaded.length + 1}.${ext}`
