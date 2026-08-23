@@ -332,8 +332,28 @@ async function concatVideos(inputPaths, outputPath) {
     return;
   }
 
+  // 先归一化所有片段确保有音频流
+  const normPaths = [];
+  for (let i = 0; i < inputPaths.length; i++) {
+    const meta = await probeVideo(inputPaths[i]);
+    const hasAudio = meta?.hasAudio === true;
+    if (hasAudio) {
+      normPaths.push(inputPaths[i]);
+    } else {
+      // 无音频补静音
+      const normPath = path.join(TEMP_DIR, `concat_norm_${Date.now()}_${i}.mp4`);
+      await runFfmpeg([
+        "-err_detect", "ignore_err", "-i", inputPaths[i],
+        "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
+        "-shortest", "-c:v", "copy", "-c:a", "aac", "-b:a", "128k",
+        "-movflags", "+faststart", "-y", normPath,
+      ]);
+      normPaths.push(normPath);
+    }
+  }
+
   const listFile = path.join(TEMP_DIR, `concat-${Date.now()}.txt`);
-  const listContent = inputPaths.map((p) => `file '${p.replace(/'/g, "'\\''")}'`).join("\n");
+  const listContent = normPaths.map((p) => `file '${p.replace(/'/g, "'\\''")}'`).join("\n");
   await writeFile(listFile, listContent, "utf-8");
 
   try {
@@ -349,10 +369,15 @@ async function concatVideos(inputPaths, outputPath) {
       "-i", listFile,
       "-c:v", "libx264", "-crf", "20", "-preset", "veryfast",
       "-c:a", "aac", "-b:a", "128k",
+      "-pix_fmt", "yuv420p", "-movflags", "+faststart",
       "-y", outputPath,
     ]);
   } finally {
     try { await unlink(listFile); } catch {}
+    // 清理归一化临时文件
+    for (const p of normPaths) {
+      if (!inputPaths.includes(p)) { try { await unlink(p); } catch {} }
+    }
   }
 }
 

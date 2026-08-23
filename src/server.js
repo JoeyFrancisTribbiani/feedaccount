@@ -647,7 +647,7 @@ export function createMonitorServer({
   }
 
   // 本地拼接异步执行（不阻塞 AI 队列）
-  async function composeAiRemixVideoAsync(taskId, mainVideoLocalPath, imagePaths, presetId, matrixIds, creatorId, sourceVideoId, videoTitle) {
+  async function composeAiRemixVideoAsync(taskId, mainVideoLocalPath, imagePaths, presetId, matrixIds, creatorId, sourceVideoId, videoTitle, oldOutputUrl = null) {
     try {
       if (imagePaths.length === 0) {
         store.updateRemixTask(taskId, { status: "FAILED", errorMessage: "没有下载到图片", completedAt: nowIso() });
@@ -675,13 +675,29 @@ export function createMonitorServer({
         store.logCdpEvent(null, "info", `AI 混剪成品: ${outputUrl}`, taskId);
         store.updateRemixTask(taskId, { status: "DONE", outputUrl, completedAt: nowIso() });
 
-        // 链接到矩阵
+        // 链接到矩阵（重新剪辑时先删旧的再建新的，避免重复）
         if (matrixIds?.length) {
           // 获取成品视频信息
           const outMeta = await probeVideo(finalOut).catch(() => null);
           const { statSync } = await import('fs');
           const outSize = existsSync(finalOut) ? statSync(finalOut).size : 0;
           for (const matrixId of matrixIds) {
+            // 删除旧的矩阵视频记录（匹配原 outputUrl 的旧记录）
+            try {
+              const oldVideos = store.listMatrixVideos(matrixId);
+              for (const ov of oldVideos) {
+                if (ov.filePath === outputUrl || (oldOutputUrl && ov.filePath === oldOutputUrl)) {
+                  // 删除旧的视频文件
+                  if (ov.filePath) {
+                    const oldFp = ov.filePath.startsWith("/data/remix-output/")
+                      ? path.join(getOutputDir(), ov.filePath.replace("/data/remix-output/", ""))
+                      : ov.filePath;
+                    try { if (existsSync(oldFp)) unlink(oldFp); } catch {}
+                  }
+                  store.deleteMatrixVideo(ov.id);
+                }
+              }
+            } catch {}
             store.createMatrixVideo({ matrixId, sourceVideoId, creatorId, filePath: outputUrl, title: videoTitle || null, duration: outMeta?.duration ?? null, fileSize: outSize });
           }
         }
@@ -2273,7 +2289,7 @@ export function createMonitorServer({
           // 异步重新拼接
           store.updateRemixTask(taskId, { status: "PROCESSING", errorMessage: null });
           store.logCdpEvent(null, "info", `重新剪辑: ${imagePaths.length}张图片`, taskId);
-          composeAiRemixVideoAsync(taskId, mainVideoLocalPath, imagePaths, origTask.presetId, origTask.matrixIds, origTask.creatorId, null, origTask.title);
+          composeAiRemixVideoAsync(taskId, mainVideoLocalPath, imagePaths, origTask.presetId, origTask.matrixIds, origTask.creatorId, null, origTask.title, origTask.outputUrl);
 
           sendJson(response, 200, { ok: true, message: "重新剪辑已开始" });
           return;
