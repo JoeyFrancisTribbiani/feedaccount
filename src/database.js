@@ -461,6 +461,7 @@ export class LocalDatabase {
     `);
     this.#ensureColumn("remix_tasks", "seq_num", "INTEGER");
     this.#ensureColumn("remix_tasks", "resource_types_json", "TEXT");
+    this.#ensureColumn("remix_tasks", "outfit_task_ids_json", "TEXT"); // 远程穿搭指南pick返回的taskId数组
     // AI 生成的多类型资源
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS ai_task_resources (
@@ -1850,7 +1851,7 @@ export class LocalDatabase {
     }
     this.db.prepare(`
       INSERT INTO ai_remix_presets (id, name, prompt, is_default, intro_config_json, outro_config_json, music_config_json, dedup, ref_lang, resource_types_json, outfit_guide, outfit_source, outfit_pick_url, outfit_callback_url, outfit_pick_index, outfit_callback_index, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(id, name, prompt, booleanInt(isDefault),
       introConfig ? JSON.stringify(introConfig) : null,
       outroConfig ? JSON.stringify(outroConfig) : null,
@@ -2050,6 +2051,7 @@ export class LocalDatabase {
       cdpInstanceId: r.cdp_instance_id || null,
       imagePaths: r.image_paths_json ? JSON.parse(r.image_paths_json) : [],
       resourceTypes: r.resource_types_json ? JSON.parse(r.resource_types_json) : [],
+      outfitTaskIds: r.outfit_task_ids_json ? JSON.parse(r.outfit_task_ids_json) : [],
     };
   }
 
@@ -2074,7 +2076,7 @@ export class LocalDatabase {
     return this.db.prepare("DELETE FROM ai_task_resources WHERE task_id = ?").run(taskId).changes;
   }
 
-  updateRemixTask(id, { status = null, outputUrl = null, errorMessage = null, completedAt = null, imagePaths = null, resourceTypes = null }) {
+  updateRemixTask(id, { status = null, outputUrl = null, errorMessage = null, completedAt = null, imagePaths = null, resourceTypes = null, outfitTaskIds = null }) {
     this.db.prepare(`
       UPDATE remix_tasks
       SET status = COALESCE(?, status),
@@ -2082,9 +2084,10 @@ export class LocalDatabase {
           error_message = COALESCE(?, error_message),
           completed_at = COALESCE(?, completed_at),
           image_paths_json = COALESCE(?, image_paths_json),
-          resource_types_json = COALESCE(?, resource_types_json)
+          resource_types_json = COALESCE(?, resource_types_json),
+          outfit_task_ids_json = COALESCE(?, outfit_task_ids_json)
       WHERE id = ?
-    `).run(status, outputUrl, errorMessage, completedAt, imagePaths ? JSON.stringify(imagePaths) : null, resourceTypes ? JSON.stringify(resourceTypes) : null, id);
+    `).run(status, outputUrl, errorMessage, completedAt, imagePaths ? JSON.stringify(imagePaths) : null, resourceTypes ? JSON.stringify(resourceTypes) : null, outfitTaskIds ? JSON.stringify(outfitTaskIds) : null, id);
     return this.getRemixTask(id);
   }
 
