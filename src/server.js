@@ -2174,18 +2174,23 @@ export function createMonitorServer({
           const globalCats = ["_Scene", "_Accessories"];
           // 服装类别映射
           const clothingCats = ["Top", "Bottom", "Outerwear", "Dress", "Knitwear", "Denim", "Pants", "Shorts", "Skirt"];
+          // 配饰类别
+          const accessoryCats = ["Eyewear", "Bag"];
           let count = 0;
           for (const brand of brands) {
             const brandDir = path.join(OUTFIT_DIR, brand);
             const cats = rdSync(brandDir, { withFileTypes: true }).filter(d => d.isDirectory()).map(d => d.name);
             for (const cat of cats) {
-              if (cat === "Bag" || cat === "Eyewear") continue; // 排除 Bag
               const catDir = path.join(brandDir, cat);
-              const files = rdSync(catDir).filter(f => /\.(jpg|jpeg|png|webp)$/i.test(f));
+              const files = rdSync(catDir).filter(f => /\.(jpg|jpeg|png|webp|avif)$/i.test(f));
               for (const file of files) {
                 const filePath = `/data/luxury-image-library/images/${brand}/${cat}/${file}`;
-                // 统一分类：所有服装类归为"衣服"，Shoes归为"鞋子"
-                const unifiedCat = cat === "Shoes" ? "shoes" : clothingCats.includes(cat) ? "clothing" : cat.toLowerCase();
+                // 统一分类
+                let unifiedCat;
+                if (cat === "Shoes") unifiedCat = "shoes";
+                else if (accessoryCats.includes(cat)) unifiedCat = "accessories";
+                else if (clothingCats.includes(cat)) unifiedCat = "clothing";
+                else unifiedCat = cat.toLowerCase();
                 store.indexOutfitLibrary(brand, unifiedCat, filePath, file);
                 count++;
               }
@@ -2195,7 +2200,7 @@ export function createMonitorServer({
           for (const gcat of globalCats) {
             const gdir = path.join(OUTFIT_DIR, gcat);
             if (existsSync(gdir)) {
-              const files = rdSync(gdir).filter(f => /\.(jpg|jpeg|png|webp)$/i.test(f));
+              const files = rdSync(gdir).filter(f => /\.(jpg|jpeg|png|webp|avif)$/i.test(f));
               const unifiedCat = gcat === "_Scene" ? "scene" : "accessories";
               for (const file of files) {
                 const filePath = `/data/luxury-image-library/images/${gcat}/${file}`;
