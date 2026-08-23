@@ -2175,7 +2175,7 @@ export function createMonitorServer({
           // 服装类别映射
           const clothingCats = ["Top", "Bottom", "Outerwear", "Dress", "Knitwear", "Denim", "Pants", "Shorts", "Skirt"];
           // 配饰类别
-          const accessoryCats = ["Eyewear", "Bag"];
+          const accessoryCats = ["Eyewear"];
           let count = 0;
           for (const brand of brands) {
             const brandDir = path.join(OUTFIT_DIR, brand);
