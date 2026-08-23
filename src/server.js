@@ -559,10 +559,11 @@ export function createMonitorServer({
             try {
               const taskInfo = store.getRemixTask(taskId);
               const resourceTypes = taskInfo?.resourceTypes || ["image"];
-              // 如果只选了 image，跳过多类型下载（现有逻辑已处理）
-              if (resourceTypes.length > 1 || !resourceTypes.includes("image")) {
-                store.logCdpEvent(null, "info", `开始下载多类型资源: ${resourceTypes.join(", ")}`, taskId);
-                const allResources = await downloadAllResources(daemonUrl, fileOutputs, resourceTypes, taskId);
+              // 只下载非 image 类型（image 已在前面下载处理过）
+              const nonImageTypes = resourceTypes.filter(t => t !== "image");
+              if (nonImageTypes.length > 0) {
+                store.logCdpEvent(null, "info", `开始下载多类型资源: ${nonImageTypes.join(", ")}`, taskId);
+                const allResources = await downloadAllResources(daemonUrl, fileOutputs, nonImageTypes, taskId);
                 for (const res of allResources) {
                   store.createTaskResource({ taskId, type: res.type, filePath: res.url, filename: res.filename, fileSize: res.size || 0 });
                 }
