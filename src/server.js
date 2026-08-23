@@ -2422,9 +2422,33 @@ export function createMonitorServer({
               } catch (e) { store.logCdpEvent(null, "warning", `重试: 预压缩失败: ${e.message}`, null, newTask.id); }
               const filesToUpload = [retryVideoPath];
 
+              // 记录资源类型到任务
+              if (origTask.presetId) {
+                const preset = store.getAiRemixPreset(origTask.presetId);
+                if (preset?.resourceTypes) {
+                  store.updateRemixTask(newTask.id, { resourceTypes: preset.resourceTypes });
+                }
+                // 穿搭指南：方案开启时随机选鞋子+衣服+场景图片一起上传
+                if (preset?.outfitGuide) {
+                  const outfitCats = ["shoes", "clothing", "scene"];
+                  for (const cat of outfitCats) {
+                    const outfit = store.randomOutfitByCategory(cat);
+                    if (outfit) {
+                      const outfitLocalPath = path.resolve(THIS_DIR, "..", outfit.file_path.replace(/^\//, ""));
+                      if (existsSync(outfitLocalPath)) {
+                        filesToUpload.push(outfitLocalPath);
+                        store.logCdpEvent(null, "info", `穿搭指南[${cat}]: ${outfit.brand} ${outfit.filename}`, null, newTask.id);
+                      }
+                    } else {
+                      store.logCdpEvent(null, "info", `穿搭指南[${cat}]: 无可用图片，跳过`, null, newTask.id);
+                    }
+                  }
+                }
+              }
+
               aiRemixQueue.push({
                 taskId: newTask.id, daemonUrl, filesToUpload,
-                prompt: origTask.prompt || "",
+                prompt: retryPrompt || origTask.prompt || "",
                 matrixIds: origTask.matrixIds || [],
                 creatorId: origTask.creatorId,
                 sourceVideoId: null,
