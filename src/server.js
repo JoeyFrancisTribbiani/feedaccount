@@ -571,6 +571,56 @@ export function createMonitorServer({
               }
             } catch (e) { console.error("[AI混剪] 多类型资源下载失败:", e.message); }
 
+            // ★ 远程穿搭指南回调：将生成的指定图片回传给远程服务
+            try {
+              const preset = presetId ? store.getAiRemixPreset(presetId) : null;
+              if (preset?.outfitGuide && preset.outfitSource === "remote") {
+                const callbackUrl = preset.outfitCallbackUrl || "http://localhost:12999/api/image-washing/queue/callback";
+                const callbackIndices = preset.outfitCallbackIndex || [5];
+                // 从已下载的图片中按回传下标取图（下标从1开始）
+                const items = [];
+                for (const idx of callbackIndices) {
+                  if (idx >= 1 && idx <= imagePaths.length) {
+                    const imgPath = imagePaths[idx - 1]; // 下标从1开始，数组从0开始
+                    try {
+                      const { readFile } = await import("node:fs/promises");
+                      const imgBuffer = await readFile(imgPath);
+                      const base64 = imgBuffer.toString("base64");
+                      // 使用远程取图时保存的 taskId（从日志中获取或用图片顺序映射）
+                      // pick 时返回的 images 数组顺序和 callbackIndices 对应
+                      items.push({ taskId: null, imageBase64: base64 }); // taskId 从 pick 时保存
+                    } catch (e) { store.logCdpEvent(null, "warning", `穿搭指南[远程]回传图片读取失败: index=${idx}`, taskId); }
+                  }
+                }
+                // 从 pick 时获取的 taskId 映射
+                // pick 返回的 images 按 pickIndex 顺序，callback 按 callbackIndex 取生成图片
+                // 需要把 pick 时的 taskId 和 callback 的图片关联起来
+                // 简化处理：按顺序回传
+                if (items.length > 0) {
+                  // 尝试从日志获取 pick 时返回的 taskId
+                  const pickLogs = store.db.prepare("SELECT message FROM cdp_logs WHERE task_id = ? AND message LIKE '%穿搭指南[远程]%' ORDER BY created_at").all(taskId);
+                  const taskIds = pickLogs.map(l => {
+                    const m = l.message.match(/taskId=(\d+)/);
+                    return m ? parseInt(m[1]) : null;
+                  }).filter(Boolean);
+                  // 把 taskId 和 items 按顺序配对
+                  for (let i = 0; i < items.length && i < taskIds.length; i++) {
+                    items[i].taskId = taskIds[i];
+                  }
+                  const cbRes = await fetch(callbackUrl, {
+                    method: "POST", headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ items }),
+                  });
+                  if (cbRes.ok) {
+                    const cbData = await cbRes.json();
+                    store.logCdpEvent(null, "info", `穿搭指南[远程]回传完成: ${cbData.updated || 0}成功 ${cbData.failed || 0}失败`, taskId);
+                  } else {
+                    store.logCdpEvent(null, "warning", `穿搭指南[远程]回传失败: ${cbRes.status}`, taskId);
+                  }
+                }
+              }
+            } catch (e) { store.logCdpEvent(null, "warning", `穿搭指南[远程]回传异常: ${e.message}`, taskId); }
+
             // ★ 图片下载完成，AI 部分结束。提前释放队列，允许下一个 AI 任务开始
             store.logCdpEvent(null, "info", `图片下载完成(${imagePaths.length}张)，开始本地拼接，释放AI队列`, taskId);
             aiRemixActiveCount--;
@@ -1875,21 +1925,57 @@ export function createMonitorServer({
             } catch (e) { store.logCdpEvent(null, "warning", `预压缩失败，使用原文件: ${e.message}`, null, task.id); }
             const filesToUpload = [mainVideoLocalPath];
 
-            // 穿搭指南：方案开启时随机选鞋子+衣服+场景图片一起上传
+            // 穿搭指南：方案开启时根据来源选鞋子+衣服+场景图片一起上传
             if (presetId) {
               const preset = store.getAiRemixPreset(presetId);
               if (preset?.outfitGuide) {
-                const outfitCats = ["shoes", "clothing", "scene"];
-                for (const cat of outfitCats) {
-                  const outfit = store.randomOutfitByCategory(cat);
-                  if (outfit) {
-                    const outfitLocalPath = path.resolve(THIS_DIR, "..", outfit.file_path.replace(/^\//, ""));
-                    if (existsSync(outfitLocalPath)) {
-                      filesToUpload.push(outfitLocalPath);
-                      store.logCdpEvent(null, "info", `穿搭指南[${cat}]: ${outfit.brand} ${outfit.filename}`, null, task.id);
+                if (preset.outfitSource === "remote") {
+                  // 远程取图
+                  try {
+                    const pickUrl = preset.outfitPickUrl || "http://localhost:12999/api/image-washing/queue/pick";
+                    const pickIndices = preset.outfitPickIndex || [1];
+                    const pickRes = await fetch(pickUrl, {
+                      method: "POST", headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ indices: pickIndices }),
+                    });
+                    if (pickRes.ok) {
+                      const pickData = await pickRes.json();
+                      if (pickData.productId && pickData.images?.length) {
+                        // 下载远程图片到本地
+                        for (const img of pickData.images) {
+                          try {
+                            const imgRes = await fetch(img.url);
+                            if (imgRes.ok) {
+                              const buffer = Buffer.from(await imgRes.arrayBuffer());
+                              const outfitFileName = `outfit_remote_${img.taskId}_${Date.now()}.jpg`;
+                              const outfitPath = path.join(getOutputDir(), outfitFileName);
+                              writeFileSync(outfitPath, buffer);
+                              filesToUpload.push(outfitPath);
+                              store.logCdpEvent(null, "info", `穿搭指南[远程]: taskId=${img.taskId} index=${img.index}`, null, task.id);
+                            }
+                          } catch (e) { store.logCdpEvent(null, "warning", `穿搭指南[远程]下载失败: ${e.message}`, null, task.id); }
+                        }
+                      } else {
+                        store.logCdpEvent(null, "info", "穿搭指南[远程]: 无可用产品", null, task.id);
+                      }
+                    } else {
+                      store.logCdpEvent(null, "warning", `穿搭指南[远程]取图失败: ${pickRes.status}`, null, task.id);
                     }
-                  } else {
-                    store.logCdpEvent(null, "info", `穿搭指南[${cat}]: 无可用图片，跳过`, null, task.id);
+                  } catch (e) { store.logCdpEvent(null, "warning", `穿搭指南[远程]取图异常: ${e.message}`, null, task.id); }
+                } else {
+                  // 本地取图
+                  const outfitCats = ["shoes", "clothing", "scene"];
+                  for (const cat of outfitCats) {
+                    const outfit = store.randomOutfitByCategory(cat);
+                    if (outfit) {
+                      const outfitLocalPath = path.resolve(THIS_DIR, "..", outfit.file_path.replace(/^\//, ""));
+                      if (existsSync(outfitLocalPath)) {
+                        filesToUpload.push(outfitLocalPath);
+                        store.logCdpEvent(null, "info", `穿搭指南[${cat}]: ${outfit.brand} ${outfit.filename}`, null, task.id);
+                      }
+                    } else {
+                      store.logCdpEvent(null, "info", `穿搭指南[${cat}]: 无可用图片，跳过`, null, task.id);
+                    }
                   }
                 }
               }
@@ -2449,19 +2535,45 @@ export function createMonitorServer({
                 if (preset?.resourceTypes) {
                   store.updateRemixTask(newTask.id, { resourceTypes: preset.resourceTypes });
                 }
-                // 穿搭指南：方案开启时随机选鞋子+衣服+场景图片一起上传
+                // 穿搭指南：根据来源选择本地或远程取图
                 if (preset?.outfitGuide) {
-                  const outfitCats = ["shoes", "clothing", "scene"];
-                  for (const cat of outfitCats) {
-                    const outfit = store.randomOutfitByCategory(cat);
-                    if (outfit) {
-                      const outfitLocalPath = path.resolve(THIS_DIR, "..", outfit.file_path.replace(/^\//, ""));
-                      if (existsSync(outfitLocalPath)) {
-                        filesToUpload.push(outfitLocalPath);
-                        store.logCdpEvent(null, "info", `穿搭指南[${cat}]: ${outfit.brand} ${outfit.filename}`, null, newTask.id);
+                  if (preset.outfitSource === "remote") {
+                    try {
+                      const pickUrl = preset.outfitPickUrl || "http://localhost:12999/api/image-washing/queue/pick";
+                      const pickIndices = preset.outfitPickIndex || [1];
+                      const pickRes = await fetch(pickUrl, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ indices: pickIndices }) });
+                      if (pickRes.ok) {
+                        const pickData = await pickRes.json();
+                        if (pickData.productId && pickData.images?.length) {
+                          for (const img of pickData.images) {
+                            try {
+                              const imgRes = await fetch(img.url);
+                              if (imgRes.ok) {
+                                const buffer = Buffer.from(await imgRes.arrayBuffer());
+                                const outfitFileName = `outfit_remote_${img.taskId}_${Date.now()}.jpg`;
+                                const outfitPath = path.join(getOutputDir(), outfitFileName);
+                                writeFileSync(outfitPath, buffer);
+                                filesToUpload.push(outfitPath);
+                                store.logCdpEvent(null, "info", `穿搭指南[远程]: taskId=${img.taskId} index=${img.index}`, null, newTask.id);
+                              }
+                            } catch (e) { store.logCdpEvent(null, "warning", `穿搭指南[远程]下载失败: ${e.message}`, null, newTask.id); }
+                          }
+                        } else { store.logCdpEvent(null, "info", "穿搭指南[远程]: 无可用产品", null, newTask.id); }
+                      } else { store.logCdpEvent(null, "warning", `穿搭指南[远程]取图失败: ${pickRes.status}`, null, newTask.id); }
+                    } catch (e) { store.logCdpEvent(null, "warning", `穿搭指南[远程]取图异常: ${e.message}`, null, newTask.id); }
+                  } else {
+                    const outfitCats = ["shoes", "clothing", "scene"];
+                    for (const cat of outfitCats) {
+                      const outfit = store.randomOutfitByCategory(cat);
+                      if (outfit) {
+                        const outfitLocalPath = path.resolve(THIS_DIR, "..", outfit.file_path.replace(/^\//, ""));
+                        if (existsSync(outfitLocalPath)) {
+                          filesToUpload.push(outfitLocalPath);
+                          store.logCdpEvent(null, "info", `穿搭指南[${cat}]: ${outfit.brand} ${outfit.filename}`, null, newTask.id);
+                        }
+                      } else {
+                        store.logCdpEvent(null, "info", `穿搭指南[${cat}]: 无可用图片，跳过`, null, newTask.id);
                       }
-                    } else {
-                      store.logCdpEvent(null, "info", `穿搭指南[${cat}]: 无可用图片，跳过`, null, newTask.id);
                     }
                   }
                 }
@@ -2738,6 +2850,8 @@ export function createMonitorServer({
             name: body.name, prompt: body.prompt, isDefault: body.isDefault || false,
             introConfig: body.introConfig ?? null, outroConfig: body.outroConfig ?? null, musicConfig: body.musicConfig ?? null,
             dedup: body.dedup, refLang: body.refLang, resourceTypes: body.resourceTypes, outfitGuide: body.outfitGuide,
+            outfitSource: body.outfitSource, outfitPickUrl: body.outfitPickUrl, outfitCallbackUrl: body.outfitCallbackUrl,
+            outfitPickIndex: body.outfitPickIndex, outfitCallbackIndex: body.outfitCallbackIndex,
           }));
           return;
         }
@@ -2752,6 +2866,8 @@ export function createMonitorServer({
             name: body.name, prompt: body.prompt, isDefault: body.isDefault,
             introConfig: body.introConfig, outroConfig: body.outroConfig, musicConfig: body.musicConfig,
             dedup: body.dedup, refLang: body.refLang, resourceTypes: body.resourceTypes, outfitGuide: body.outfitGuide,
+            outfitSource: body.outfitSource, outfitPickUrl: body.outfitPickUrl, outfitCallbackUrl: body.outfitCallbackUrl,
+            outfitPickIndex: body.outfitPickIndex, outfitCallbackIndex: body.outfitCallbackIndex,
           });
           if (!updated) { sendJson(response, 404, { error: "方案不存在" }); return; }
           sendJson(response, 200, updated);

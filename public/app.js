@@ -6156,6 +6156,31 @@ function openPresetEditModal(preset) {
             </div>
             <span class="muted-activity" style="font-size:11px;">去重：关闭后原视频不做去重处理，只归一化分辨率。参考语言：开启后在提示词顶部注入社媒账号的语言。穿搭指南：开启后从穿搭图库随机选鞋子+衣服+场景图片一起上传给AI</span>
           </div>
+          <div id="outfit-guide-config" style="display:none;padding:8px;border:1px solid #e2e8f0;border-radius:6px;margin-top:4px;">
+            <div style="font-size:12px;font-weight:bold;margin-bottom:6px;">穿搭指南配置</div>
+            <div style="display:flex;gap:12px;margin-bottom:8px;">
+              <label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;"><input type="radio" name="outfit-source" value="local" checked /> 本地图库</label>
+              <label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;"><input type="radio" name="outfit-source" value="remote" /> 远程取图</label>
+            </div>
+            <div id="outfit-remote-config" style="display:none;flex-direction:column;gap:6px;">
+              <div>
+                <label style="font-size:11px;color:#64748b;">远程取图接口</label>
+                <input type="text" id="outfit-pick-url" style="width:100%;padding:4px;font-size:12px;" value="http://localhost:12999/api/image-washing/queue/pick" />
+              </div>
+              <div>
+                <label style="font-size:11px;color:#64748b;">远程回调接口</label>
+                <input type="text" id="outfit-callback-url" style="width:100%;padding:4px;font-size:12px;" value="http://localhost:12999/api/image-washing/queue/callback" />
+              </div>
+              <div>
+                <label style="font-size:11px;color:#64748b;">取图数组下标（逗号分隔，从1开始）</label>
+                <input type="text" id="outfit-pick-index" style="width:100%;padding:4px;font-size:12px;" value="1" />
+              </div>
+              <div>
+                <label style="font-size:11px;color:#64748b;">回传图数组下标（逗号分隔，从1开始）</label>
+                <input type="text" id="outfit-callback-index" style="width:100%;padding:4px;font-size:12px;" value="5" />
+              </div>
+            </div>
+          </div>
           <div class="preset-form-actions">
             <button id="preset-form-save" class="button button-primary" type="button">${isEdit ? "保存修改" : "创建方案"}</button>
             <button id="preset-form-cancel" class="button button-secondary" type="button">取消</button>
@@ -6300,7 +6325,12 @@ function collectPresetConfig() {
   const resourceTypeCbs = document.querySelectorAll(".preset-resource-type:checked");
   const resourceTypes = Array.from(resourceTypeCbs).map(cb => cb.value);
   const outfitGuide = document.querySelector("#preset-outfit-guide")?.checked ?? false;
-  return { introConfig, outroConfig, musicConfig, dedup: presetModalEl.dedup?.checked ?? true, refLang: presetModalEl.refLang?.checked ?? false, resourceTypes, outfitGuide };
+  const outfitSource = document.querySelector('input[name="outfit-source"]:checked')?.value || "local";
+  const outfitPickUrl = document.querySelector("#outfit-pick-url")?.value || null;
+  const outfitCallbackUrl = document.querySelector("#outfit-callback-url")?.value || null;
+  const outfitPickIndex = (document.querySelector("#outfit-pick-index")?.value || "1").split(",").map(s => parseInt(s.trim())).filter(n => !isNaN(n) && n > 0);
+  const outfitCallbackIndex = (document.querySelector("#outfit-callback-index")?.value || "5").split(",").map(s => parseInt(s.trim())).filter(n => !isNaN(n) && n > 0);
+  return { introConfig, outroConfig, musicConfig, dedup: presetModalEl.dedup?.checked ?? true, refLang: presetModalEl.refLang?.checked ?? false, resourceTypes, outfitGuide, outfitSource, outfitPickUrl, outfitCallbackUrl, outfitPickIndex, outfitCallbackIndex };
 }
 
 function fillPresetConfigForm(preset) {
@@ -6334,6 +6364,30 @@ function fillPresetConfigForm(preset) {
   if (presetModalEl.refLang) presetModalEl.refLang.checked = preset?.refLang === true;
   const outfitGuideCb = document.querySelector("#preset-outfit-guide");
   if (outfitGuideCb) outfitGuideCb.checked = preset?.outfitGuide === true;
+  // 穿搭指南配置区块联动
+  const outfitConfig = document.querySelector("#outfit-guide-config");
+  const outfitRemoteConfig = document.querySelector("#outfit-remote-config");
+  function updateOutfitConfigVisibility() {
+    if (outfitConfig) outfitConfig.style.display = outfitGuideCb?.checked ? "block" : "none";
+    const isRemote = document.querySelector('input[name="outfit-source"]:checked')?.value === "remote";
+    if (outfitRemoteConfig) outfitRemoteConfig.style.display = isRemote ? "flex" : "none";
+  }
+  outfitGuideCb?.addEventListener("change", updateOutfitConfigVisibility);
+  document.querySelectorAll('input[name="outfit-source"]').forEach(r => r.addEventListener("change", updateOutfitConfigVisibility));
+  // 回填远程配置
+  if (preset?.outfitSource === "remote") {
+    const remoteRadio = document.querySelector('input[name="outfit-source"][value="remote"]');
+    if (remoteRadio) { remoteRadio.checked = true; }
+  }
+  const pickUrlInput = document.querySelector("#outfit-pick-url");
+  if (pickUrlInput && preset?.outfitPickUrl) pickUrlInput.value = preset.outfitPickUrl;
+  const callbackUrlInput = document.querySelector("#outfit-callback-url");
+  if (callbackUrlInput && preset?.outfitCallbackUrl) callbackUrlInput.value = preset.outfitCallbackUrl;
+  const pickIndexInput = document.querySelector("#outfit-pick-index");
+  if (pickIndexInput) pickIndexInput.value = (preset?.outfitPickIndex || [1]).join(",");
+  const callbackIndexInput = document.querySelector("#outfit-callback-index");
+  if (callbackIndexInput) callbackIndexInput.value = (preset?.outfitCallbackIndex || [5]).join(",");
+  updateOutfitConfigVisibility();
   // 回填资源类型
   document.querySelectorAll(".preset-resource-type").forEach(cb => {
     const types = preset?.resourceTypes || ["image"];
@@ -6519,7 +6573,7 @@ async function handlePresetAdd() {
     prompt = defaultPreset?.prompt || BUILTIN_DEFAULT_PROMPT;
     showToast("提示词为空，已使用默认提示词");
   }
-  const { introConfig, outroConfig, musicConfig, dedup, refLang, resourceTypes, outfitGuide } = collectPresetConfig();
+  const { introConfig, outroConfig, musicConfig, dedup, refLang, resourceTypes, outfitGuide, outfitSource, outfitPickUrl, outfitCallbackUrl, outfitPickIndex, outfitCallbackIndex } = collectPresetConfig();
   // 校验：图片开始时间+总持续时间不能超过片段时长
   const introTotal = (introConfig.imageInsertStart || 0) + (introConfig.imageCount || 0) * (introConfig.imageDuration || 0);
   const outroTotal = (outroConfig.imageInsertStart || 0) + (outroConfig.imageCount || 0) * (outroConfig.imageDuration || 0);
@@ -6542,7 +6596,7 @@ async function handlePresetAdd() {
   try {
     const created = await request("/api/ai-presets", {
       method: "POST",
-      body: JSON.stringify({ name, prompt, isDefault: presetModalEl.isDefault.checked, introConfig, outroConfig, musicConfig, dedup, refLang, resourceTypes, outfitGuide }),
+      body: JSON.stringify({ name, prompt, isDefault: presetModalEl.isDefault.checked, introConfig, outroConfig, musicConfig, dedup, refLang, resourceTypes, outfitGuide, outfitSource, outfitPickUrl, outfitCallbackUrl, outfitPickIndex, outfitCallbackIndex }),
     });
     // 绑定暂存的变量文件
     if (pendingVarFiles.size > 0) {
@@ -6583,7 +6637,7 @@ async function handlePresetUpdate() {
   const name = presetModalEl.name.value.trim();
   const prompt = presetModalEl.prompt.value.trim();
   if (!currentEditPresetId) { showToast("请先点击方案列表中的「编辑」", true); return; }
-  const { introConfig, outroConfig, musicConfig, dedup, refLang, resourceTypes, outfitGuide } = collectPresetConfig();
+  const { introConfig, outroConfig, musicConfig, dedup, refLang, resourceTypes, outfitGuide, outfitSource, outfitPickUrl, outfitCallbackUrl, outfitPickIndex, outfitCallbackIndex } = collectPresetConfig();
   // 校验：图片开始时间+总持续时间不能超过片段时长
   const introTotal = (introConfig.imageInsertStart || 0) + (introConfig.imageCount || 0) * (introConfig.imageDuration || 0);
   const outroTotal = (outroConfig.imageInsertStart || 0) + (outroConfig.imageCount || 0) * (outroConfig.imageDuration || 0);
@@ -6606,7 +6660,7 @@ async function handlePresetUpdate() {
   try {
     await request(`/api/ai-presets/${encodeURIComponent(currentEditPresetId)}`, {
       method: "PUT",
-      body: JSON.stringify({ name, prompt, isDefault: presetModalEl.isDefault.checked, introConfig, outroConfig, musicConfig, dedup, refLang, resourceTypes, outfitGuide }),
+      body: JSON.stringify({ name, prompt, isDefault: presetModalEl.isDefault.checked, introConfig, outroConfig, musicConfig, dedup, refLang, resourceTypes, outfitGuide, outfitSource, outfitPickUrl, outfitCallbackUrl, outfitPickIndex, outfitCallbackIndex }),
     });
     // 绑定新上传的片头/片尾片段文件
     if (pendingSegmentFiles.intro) {
