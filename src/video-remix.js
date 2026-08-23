@@ -622,7 +622,7 @@ export async function composeAiRemixVideo(mainVideoPath, imagePaths, config = {}
       const introImages = imagePaths.slice(0, introImgCount);
       const introImgDuration = introConfig.imageDuration || 0.7;
 
-      if (introConfig.mode === "image" || (!introConfig.mode && !introConfig.segmentFilePath)) {
+      if (introConfig.mode === "image" || !introConfig.segmentFilePath) {
         // 纯图模式 或 没有视频片段时自动用纯图模式
         const introPath = path.join(TEMP_DIR, `ai_intro_images_${id}.mp4`);
         await imagesToVideo(introImages, introImgDuration, targetW, targetH, mainMeta.fps, introConfig.effect || "none", introPath);
@@ -655,7 +655,7 @@ export async function composeAiRemixVideo(mainVideoPath, imagePaths, config = {}
       const outroImages = imagePaths.slice(introImgCountActual, introImgCountActual + outroImgCount);
       const outroImgDuration = outroConfig.imageDuration || 3;
 
-      if (outroConfig.mode === "image" || (!outroConfig.mode && !outroConfig.segmentFilePath)) {
+      if (outroConfig.mode === "image" || !outroConfig.segmentFilePath) {
         // 纯图模式 或 没有视频片段时自动用纯图模式
         const outroPath = path.join(TEMP_DIR, `ai_outro_images_${id}.mp4`);
         await imagesToVideo(outroImages, outroImgDuration, targetW, targetH, mainMeta.fps, outroConfig.effect || "none", outroPath);
