@@ -6325,11 +6325,11 @@ function collectPresetConfig() {
   const resourceTypeCbs = document.querySelectorAll(".preset-resource-type:checked");
   const resourceTypes = Array.from(resourceTypeCbs).map(cb => cb.value);
   const outfitGuide = document.querySelector("#preset-outfit-guide")?.checked ?? false;
-  const outfitSource = document.querySelector('input[name="outfit-source"]:checked')?.value || "local";
-  const outfitPickUrl = document.querySelector("#outfit-pick-url")?.value || null;
-  const outfitCallbackUrl = document.querySelector("#outfit-callback-url")?.value || null;
-  const outfitPickIndex = (document.querySelector("#outfit-pick-index")?.value || "1").split(",").map(s => parseInt(s.trim())).filter(n => !isNaN(n) && n > 0);
-  const outfitCallbackIndex = (document.querySelector("#outfit-callback-index")?.value || "5").split(",").map(s => parseInt(s.trim())).filter(n => !isNaN(n) && n > 0);
+  const outfitSource = document.querySelector('input[name="outfit-source"]:checked')?.value ?? "local";
+  const outfitPickUrl = document.querySelector("#outfit-pick-url")?.value ?? null;
+  const outfitCallbackUrl = document.querySelector("#outfit-callback-url")?.value ?? null;
+  const outfitPickIndex = (document.querySelector("#outfit-pick-index")?.value || "1").split(",").map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n) && n > 0);
+  const outfitCallbackIndex = (document.querySelector("#outfit-callback-index")?.value || "5").split(",").map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n) && n > 0);
   return { introConfig, outroConfig, musicConfig, dedup: presetModalEl.dedup?.checked ?? true, refLang: presetModalEl.refLang?.checked ?? false, resourceTypes, outfitGuide, outfitSource, outfitPickUrl, outfitCallbackUrl, outfitPickIndex, outfitCallbackIndex };
 }
 
@@ -6378,6 +6378,9 @@ function fillPresetConfigForm(preset) {
   if (preset?.outfitSource === "remote") {
     const remoteRadio = document.querySelector('input[name="outfit-source"][value="remote"]');
     if (remoteRadio) { remoteRadio.checked = true; }
+  } else {
+    const localRadio = document.querySelector('input[name="outfit-source"][value="local"]');
+    if (localRadio) { localRadio.checked = true; }
   }
   const pickUrlInput = document.querySelector("#outfit-pick-url");
   if (pickUrlInput && preset?.outfitPickUrl) pickUrlInput.value = preset.outfitPickUrl;

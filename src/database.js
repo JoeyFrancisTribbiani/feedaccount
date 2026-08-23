@@ -1836,8 +1836,8 @@ export class LocalDatabase {
       resourceTypes: parseJson(r.resource_types_json, null),
       outfitGuide: r.outfit_guide === 1,
       outfitSource: r.outfit_source || "local",
-      outfitPickUrl: r.outfit_pick_url || "http://localhost:12999/api/image-washing/queue/pick",
-      outfitCallbackUrl: r.outfit_callback_url || "http://localhost:12999/api/image-washing/queue/callback",
+      outfitPickUrl: r.outfit_pick_url,
+      outfitCallbackUrl: r.outfit_callback_url,
       outfitPickIndex: parseJson(r.outfit_pick_index, [1]),
       outfitCallbackIndex: parseJson(r.outfit_callback_index, [5]),
     };

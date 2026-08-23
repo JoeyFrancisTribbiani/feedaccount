@@ -575,37 +575,50 @@ export function createMonitorServer({
             try {
               const preset = presetId ? store.getAiRemixPreset(presetId) : null;
               if (preset?.outfitGuide && preset.outfitSource === "remote") {
-                const callbackUrl = preset.outfitCallbackUrl || "http://localhost:12999/api/image-washing/queue/callback";
-                const callbackIndices = preset.outfitCallbackIndex || [5];
                 // 从任务记录读取 pick 时保存的 taskId
                 const taskInfo = store.getRemixTask(taskId);
                 const outfitTaskIds = taskInfo?.outfitTaskIds || [];
-                // 从已下载的图片中按回传下标取图（下标从1开始）
-                const items = [];
-                for (let i = 0; i < callbackIndices.length; i++) {
-                  const idx = callbackIndices[i];
-                  if (idx >= 1 && idx <= imagePaths.length) {
-                    const imgPath = imagePaths[idx - 1];
-                    try {
-                      const { readFile } = await import("node:fs/promises");
-                      const imgBuffer = await readFile(imgPath);
-                      const base64 = imgBuffer.toString("base64");
-                      // 用 pick 时保存的 taskId（按顺序配对）
-                      const taskId = outfitTaskIds[i] || null;
-                      items.push({ taskId, imageBase64: base64 });
-                    } catch (e) { store.logCdpEvent(null, "warning", `穿搭指南[远程]回传图片读取失败: index=${idx}`, taskId); }
+                // pick 失败或无可用产品时 outfitTaskIds 为空，跳过回调
+                if (!outfitTaskIds.length) {
+                  store.logCdpEvent(null, "info", "穿搭指南[远程]: 无pick记录，跳过回调", taskId);
+                } else {
+                  const callbackUrl = preset.outfitCallbackUrl || "http://localhost:12999/api/image-washing/queue/callback";
+                  const callbackIndices = preset.outfitCallbackIndex || [5];
+                  // 从已下载的图片中按回传下标取图（下标从1开始）
+                  const items = [];
+                  for (let i = 0; i < callbackIndices.length; i++) {
+                    const idx = callbackIndices[i];
+                    if (idx >= 1 && idx <= imagePaths.length) {
+                      const imgPath = imagePaths[idx - 1];
+                      try {
+                        const { readFile } = await import("node:fs/promises");
+                        const imgBuffer = await readFile(imgPath);
+                        const base64 = imgBuffer.toString("base64");
+                        // 用 pick 时保存的 taskId（按顺序配对）
+                        const taskId = i < outfitTaskIds.length ? outfitTaskIds[i] : null;
+                        if (taskId) {
+                          items.push({ taskId, imageBase64: base64 });
+                        } else {
+                          store.logCdpEvent(null, "warning", `穿搭指南[远程]回传: 第${i}个taskId缺失，跳过`, taskId);
+                        }
+                      } catch (e) { store.logCdpEvent(null, "warning", `穿搭指南[远程]回传图片读取失败: index=${idx}`, taskId); }
+                    } else {
+                      store.logCdpEvent(null, "warning", `穿搭指南[远程]回传: 下标${idx}超出图片数量${imagePaths.length}`, taskId);
+                    }
                   }
-                }
-                if (items.length > 0) {
-                  const cbRes = await fetch(callbackUrl, {
-                    method: "POST", headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ items }),
-                  });
-                  if (cbRes.ok) {
-                    const cbData = await cbRes.json();
-                    store.logCdpEvent(null, "info", `穿搭指南[远程]回传完成: ${cbData.updated || 0}成功 ${cbData.failed || 0}失败`, taskId);
+                  if (items.length > 0) {
+                    const cbRes = await fetch(callbackUrl, {
+                      method: "POST", headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ items }),
+                    });
+                    if (cbRes.ok) {
+                      const cbData = await cbRes.json();
+                      store.logCdpEvent(null, "info", `穿搭指南[远程]回传完成: ${cbData.updated || 0}成功 ${cbData.failed || 0}失败`, taskId);
+                    } else {
+                      store.logCdpEvent(null, "warning", `穿搭指南[远程]回传失败: ${cbRes.status}`, taskId);
+                    }
                   } else {
-                    store.logCdpEvent(null, "warning", `穿搭指南[远程]回传失败: ${cbRes.status}`, taskId);
+                    store.logCdpEvent(null, "info", "穿搭指南[远程]: 无可回传图片", taskId);
                   }
                 }
               }
@@ -1931,13 +1944,14 @@ export function createMonitorServer({
                     if (pickRes.ok) {
                       const pickData = await pickRes.json();
                       if (pickData.productId && pickData.images?.length) {
-                        // 保存 taskId 到任务记录
-                        const outfitTaskIds = pickData.images.map(img => img.taskId);
-                        store.updateRemixTask(task.id, { outfitTaskIds });
-                        // 下载远程图片到本地
-                        for (const img of pickData.images) {
-                          try {
-                            const imgRes = await fetch(img.url);
+                      // 保存 taskId 到任务记录
+                      const outfitTaskIds = pickData.images.map(img => img.taskId);
+                      store.updateRemixTask(task.id, { outfitTaskIds });
+                      // 下载远程图片到本地
+                      for (const img of pickData.images) {
+                        try {
+                          if (!img.url) { store.logCdpEvent(null, "warning", `穿搭指南[远程]: taskId=${img.taskId} 无URL，跳过`, null, task.id); continue; }
+                          const imgRes = await fetch(img.url);
                             if (imgRes.ok) {
                               const buffer = Buffer.from(await imgRes.arrayBuffer());
                               const outfitFileName = `outfit_remote_${img.taskId}_${Date.now()}.jpg`;
@@ -2543,6 +2557,7 @@ export function createMonitorServer({
                           store.updateRemixTask(newTask.id, { outfitTaskIds });
                           for (const img of pickData.images) {
                             try {
+                              if (!img.url) { store.logCdpEvent(null, "warning", `穿搭指南[远程]: taskId=${img.taskId} 无URL，跳过`, null, newTask.id); continue; }
                               const imgRes = await fetch(img.url);
                               if (imgRes.ok) {
                                 const buffer = Buffer.from(await imgRes.arrayBuffer());
