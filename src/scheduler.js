@@ -5,6 +5,7 @@ export const SCHEDULER_DEFAULTS = Object.freeze({
   maxMinutes: 35,
   extractIp: true,
   proxyRotateUrl: null,
+  skipProxyRotate: false,
   enableReddit: true,
   enableTiktok: true,
   ipMatchMode: "sequential",
@@ -337,7 +338,11 @@ export class RotationScheduler extends EventTarget {
         await new Promise((r) => setTimeout(r, retryIntervalMs));
       }
 
-      await this.#rotateProxy(opts.proxyRotateUrl);
+      if (!opts.skipProxyRotate) {
+        await this.#rotateProxy(opts.proxyRotateUrl);
+      } else {
+        this.#log(`固定代理模式，跳过代理刷新`, "info");
+      }
 
       if (this.state.cancelled) return null;
 
@@ -389,9 +394,9 @@ export class RotationScheduler extends EventTarget {
       return;
     }
 
-    const wantRotate = Boolean(opts.proxyRotateUrl);
+    const wantRotate = Boolean(opts.proxyRotateUrl) && !opts.skipProxyRotate;
     if (!wantRotate) {
-      this.#log(`实例 #${profile.seq} 未配置代理刷新，直接打开浏览器`, "info");
+      this.#log(`实例 #${profile.seq} ${opts.skipProxyRotate ? "固定代理模式，跳过代理刷新" : "未配置代理刷新"}，直接打开浏览器`, "info");
       await this.bitBrowserApi.openProfile(profile.id, { extractIp: opts.extractIp });
       this.#log(`实例 #${profile.seq} 浏览器已打开`, "info");
       return;

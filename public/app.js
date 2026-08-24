@@ -2670,9 +2670,11 @@ function saveSchedToggles() {
   const r = document.querySelector("#sched-enable-reddit");
   const t = document.querySelector("#sched-enable-tiktok");
   const g = document.querySelector("#sched-geo-priority");
+  const f = document.querySelector("#sched-fixed-proxy");
   if (r) localStorage.setItem("sched-enable-reddit", r.checked ? "1" : "0");
   if (t) localStorage.setItem("sched-enable-tiktok", t.checked ? "1" : "0");
   if (g) localStorage.setItem("sched-geo-priority", g.checked ? "1" : "0");
+  if (f) localStorage.setItem("sched-fixed-proxy", f.checked ? "1" : "0");
 }
 
 function getSchedProfileIds() {
@@ -2738,9 +2740,11 @@ function restoreSchedToggles() {
   const r = document.querySelector("#sched-enable-reddit");
   const t = document.querySelector("#sched-enable-tiktok");
   const g = document.querySelector("#sched-geo-priority");
+  const f = document.querySelector("#sched-fixed-proxy");
   if (r) r.checked = localStorage.getItem("sched-enable-reddit") !== "0";
   if (t) t.checked = localStorage.getItem("sched-enable-tiktok") !== "0";
   if (g) g.checked = localStorage.getItem("sched-geo-priority") === "1";
+  if (f) f.checked = localStorage.getItem("sched-fixed-proxy") === "1";
 }
 
 function renderScheduler() {
@@ -2812,6 +2816,10 @@ async function initScheduler() {
       const saved = localStorage.getItem("sched-proxy-url");
       proxyInput.value = saved ?? res.proxyRotateUrl ?? "";
     }
+    const fixedProxyCb = document.querySelector("#sched-fixed-proxy");
+    if (fixedProxyCb) {
+      fixedProxyCb.checked = localStorage.getItem("sched-fixed-proxy") === "1";
+    }
     renderScheduler();
   } catch (e) {
     showToast("调度器初始化失败：" + e.message, true);
@@ -2821,6 +2829,7 @@ async function initScheduler() {
 document.querySelector("#sched-enable-reddit")?.addEventListener("change", () => { saveSchedToggles(); renderScheduler(); });
 document.querySelector("#sched-enable-tiktok")?.addEventListener("change", () => { saveSchedToggles(); renderScheduler(); });
 document.querySelector("#sched-geo-priority")?.addEventListener("change", () => { saveSchedToggles(); renderScheduler(); });
+document.querySelector("#sched-fixed-proxy")?.addEventListener("change", () => { saveSchedToggles(); renderScheduler(); });
 document.querySelector("#sched-proxy-url")?.addEventListener("input", () => {
   localStorage.setItem("sched-proxy-url", document.querySelector("#sched-proxy-url").value);
 });
@@ -2882,7 +2891,8 @@ sched.startBtn.addEventListener("click", async () => {
     const enableTiktok = document.querySelector("#sched-enable-tiktok")?.checked ?? true;
     const profileIds = [...document.querySelectorAll("#sched-profile-list input[type=checkbox]:checked")].map((cb) => cb.value);
     const ipMatchMode = document.querySelector("#sched-geo-priority")?.checked ? "geo_priority" : "sequential";
-    const options = { enableReddit, enableTiktok, profileIds, ipMatchMode };
+    const skipProxyRotate = document.querySelector("#sched-fixed-proxy")?.checked ?? false;
+    const options = { enableReddit, enableTiktok, profileIds, ipMatchMode, skipProxyRotate };
     if (proxyRotateUrl) options.proxyRotateUrl = proxyRotateUrl;
     const res = await request("/api/scheduler/start", { method: "POST", body: JSON.stringify({ options }) });
     state.scheduler = res.status;

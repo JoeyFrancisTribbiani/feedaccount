@@ -132,6 +132,14 @@
           <span>代理刷新 API 地址 (gridpanel reboot，留空则自动提取 API IP)</span>
           <input id="sched-proxy-url" type="text" placeholder="https://gridpanel.net/api/reboot?token=..." />
         </label>
+        <label class="switch-row" id="sched-fixed-proxy-row" title="开启后：使用固定代理，不再每次刷新代理地址，直接打开浏览器执行养号任务。">
+          <input id="sched-fixed-proxy" type="checkbox" />
+          <span class="switch" aria-hidden="true"></span>
+          <span>
+            <strong>固定代理（不刷新IP）</strong>
+            <small>适用于固定代理地址，跳过每次切换实例时的代理刷新和IP检测流程</small>
+          </span>
+        </label>
         <div class="sched-proxy-check">
           <select id="sched-check-profile" class="sched-check-select"></select>
           <button id="sched-check-ip" class="button button-secondary" type="button">检测代理IP</button>
