@@ -6786,6 +6786,8 @@ modalEl.start?.addEventListener("click", async () => {
       const introVolume = parseInt(document.querySelector("#modal-intro-volume")?.value, 10) || 100;
       const outroVolume = parseInt(document.querySelector("#modal-outro-volume")?.value, 10) || 100;
       const musicVolume = parseInt(document.querySelector("#modal-music-volume")?.value, 10) || 8;
+      const musicScope = document.querySelector("#modal-music-scope")?.value || "original";
+      const musicLoop = document.querySelector("#modal-music-loop")?.checked ?? true;
       const dedup = document.querySelector("#modal-dedup")?.checked ?? true;
 
       let totalCount = 0;
@@ -6795,7 +6797,7 @@ modalEl.start?.addEventListener("click", async () => {
         const videoIds = [...tab.videoIds];
         const res = await request("/api/remix/matrix-task", {
           method: "POST",
-          body: JSON.stringify({ matrixIds: [matrixId], creatorId: tab.creatorId, videoIds, ratio, introId, outroId, musicId, introEnabled, outroEnabled, musicEnabled, introVolume, outroVolume, musicVolume, dedup }),
+          body: JSON.stringify({ matrixIds: [matrixId], creatorId: tab.creatorId, videoIds, ratio, introId, outroId, musicId, introEnabled, outroEnabled, musicEnabled, introVolume, outroVolume, musicVolume, musicScope, musicLoop, dedup }),
         });
         totalCount += res.count || 1;
       }

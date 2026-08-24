@@ -1505,6 +1505,17 @@
                   <span>背景音乐 <label style="font-size:11px;display:inline-flex;align-items:center;gap:2px;"><input type="checkbox" id="modal-music-enabled" checked style="width:12px;height:12px;" />启用</label></span>
                   <select id="modal-music-select" class="sched-check-select"><option value="">随机</option><option value="none">不加</option></select>
                   <label style="font-size:11px;margin-top:4px;">音量 <input type="number" id="modal-music-volume" min="0" max="100" value="8" style="width:45px;display:inline-block;" /><span style="margin-left:2px;">%</span></label>
+                  <label style="font-size:11px;margin-top:4px;">范围
+                    <select id="modal-music-scope" style="font-size:11px;">
+                      <option value="full">整个成品</option>
+                      <option value="original" selected>仅原视频</option>
+                      <option value="intro">仅片头</option>
+                      <option value="outro">仅片尾</option>
+                      <option value="intro_outro">片头+片尾</option>
+                      <option value="none">不加</option>
+                    </select>
+                  </label>
+                  <label style="font-size:11px;display:inline-flex;align-items:center;gap:2px;margin-top:4px;"><input type="checkbox" id="modal-music-loop" checked style="width:12px;height:12px;" />循环</label>
                 </label>
               </div>
             </div>

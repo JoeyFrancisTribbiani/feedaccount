@@ -433,7 +433,7 @@ export async function stitchVideos(inputPaths, ratio = null, options = {}) {
  * @returns {Promise<string>} 输出文件路径
  */
 export async function remixVideoWithResources(inputPath, resources = {}, ratio = null, options = {}) {
-  const { introPath = null, outroPath = null, musicPath = null, introVolume = 100, outroVolume = 100, musicVolume = 8 } = resources;
+  const { introPath = null, outroPath = null, musicPath = null, introVolume = 100, outroVolume = 100, musicVolume = 8, musicScope = "full", musicLoop = true } = resources;
   const id = genId();
   const tempPaths = [];
 
@@ -461,22 +461,26 @@ export async function remixVideoWithResources(inputPath, resources = {}, ratio =
 
     // 2. 收集需要拼接的片段（intro + 去重视频 + outro）
     const segments = [];
+    const segmentRoles = [];
     if (introPath && existsSync(introPath)) {
       const introMeta = await probeVideo(introPath);
       if (introMeta) {
         const introNorm = path.join(TEMP_DIR, `remix_intro_${id}.mp4`);
         await normalizeSegment(introPath, introNorm, meta, ratio, introVolume);
         segments.push(introNorm);
+        segmentRoles.push("intro");
         tempPaths.push(introNorm);
       }
     }
     segments.push(dedupedPath);
+    segmentRoles.push("main");
     if (outroPath && existsSync(outroPath)) {
       const outroMeta = await probeVideo(outroPath);
       if (outroMeta) {
         const outroNorm = path.join(TEMP_DIR, `remix_outro_${id}.mp4`);
         await normalizeSegment(outroPath, outroNorm, meta, ratio, outroVolume);
         segments.push(outroNorm);
+        segmentRoles.push("outro");
         tempPaths.push(outroNorm);
       }
     }
@@ -496,8 +500,16 @@ export async function remixVideoWithResources(inputPath, resources = {}, ratio =
     const cleanName = baseName.startsWith("remix_") ? baseName.slice(6) : baseName;
     const outputPath = path.join(getOutputDir(), `remix_${cleanName}_${id}.mp4`);
 
-    if (musicPath && existsSync(musicPath)) {
-      await mixBackgroundMusic(concatenatedPath, musicPath, outputPath, musicVolume);
+    if (musicPath && existsSync(musicPath) && musicScope !== "none") {
+      // 计算各段时间轴（普通混剪无转场，overlap 全为 false）
+      const tl = await buildSegmentTimeline(
+        segments.map((p, i) => ({ path: p, role: segmentRoles[i] })),
+        segmentRoles.slice(0, -1).map(() => false)
+      );
+      const spans = musicSpansForScope(musicScope, tl);
+      await mixBackgroundMusic(concatenatedPath, musicPath, outputPath, musicVolume, {
+        scope: musicScope, loop: musicLoop, spans,
+      });
     } else {
       const { copyFile } = await import("node:fs/promises");
       await copyFile(concatenatedPath, outputPath);
@@ -537,36 +549,113 @@ async function normalizeSegment(inputPath, outputPath, mainVideoMeta, ratio = nu
 }
 
 /** 将背景音乐混入视频 */
-async function mixBackgroundMusic(videoPath, musicPath, outputPath, volumePercent = 8) {
+/**
+ * 计算各片段在成品视频时间轴上的位置（考虑转场重叠 0.5s）
+ * @param {Array<{path: string, role: "intro"|"main"|"outro"}>} entries
+ * @param {boolean[]} transOverlapFlags - 每个边界是否有转场（长度 = entries.length - 1）
+ * @returns {Promise<{intro: {start,end}|null, main: {start,end}|null, outro: {start,end}|null, total: number}>}
+ */
+async function buildSegmentTimeline(entries, transOverlapFlags = []) {
+  const TRANSITION_DURATION = 0.5;
+  const tl = { intro: null, main: null, outro: null, total: 0 };
+  let acc = 0;
+  for (let i = 0; i < entries.length; i++) {
+    const meta = await probeVideo(entries[i].path);
+    const dur = meta?.duration || 0;
+    tl[entries[i].role] = { start: acc, end: acc + dur };
+    const overlap = i < entries.length - 1 && transOverlapFlags[i] ? TRANSITION_DURATION : 0;
+    acc = acc + dur - overlap;
+  }
+  tl.total = acc;
+  return tl;
+}
+
+/**
+ * 按背景音乐 scope 计算混入区间
+ * original=仅主视频 / full=整个成品 / intro=仅片头 / outro=仅片尾 / intro_outro=片头+片尾 / none=不加
+ */
+function musicSpansForScope(scope, tl) {
+  switch (scope) {
+    case "none": return [];
+    case "intro": return tl.intro ? [{ start: tl.intro.start, end: tl.intro.end }] : [];
+    case "outro": return tl.outro ? [{ start: tl.outro.start, end: tl.outro.end }] : [];
+    case "intro_outro": {
+      const spans = [];
+      if (tl.intro) spans.push({ start: tl.intro.start, end: tl.intro.end });
+      if (tl.outro) spans.push({ start: tl.outro.start, end: tl.outro.end });
+      return spans;
+    }
+    case "full": return [{ start: 0, end: tl.total }];
+    case "original":
+    default:
+      return tl.main ? [{ start: tl.main.start, end: tl.main.end }] : [{ start: 0, end: tl.total }];
+  }
+}
+
+/**
+ * 混入背景音乐：支持 scope 区间定位与循环
+ * @param {object} options - { scope, loop, spans }
+ *   spans: [{start,end}] 秒区间数组（由调用方按时间轴算好）；为空数组时不混入音乐直接复制
+ */
+async function mixBackgroundMusic(videoPath, musicPath, outputPath, volumePercent = 8, options = {}) {
+  const { scope = "full", loop = true, spans = null } = options;
   const videoMeta = await probeVideo(videoPath);
-  const musicMeta = await probeVideo(musicPath);
   const duration = videoMeta?.duration || 0;
   const hasVideoAudio = videoMeta?.hasAudio;
   const musicVol = (volumePercent / 100).toFixed(2);
 
-  const args = [
-    "-err_detect", "ignore_err",
-    "-i", videoPath,
-    "-i", musicPath,
-  ];
+  // 计算音乐区间：优先用调用方传入的 spans，否则按 scope 整段
+  let regions = Array.isArray(spans) ? spans : (scope === "none" ? [] : [{ start: 0, end: duration }]);
+  regions = regions
+    .map((r) => ({ start: Math.max(0, r.start || 0), end: Math.min(duration, r.end || 0) }))
+    .filter((r) => r.end - r.start > 0.05);
 
-  // 如果视频有原声音轨，保留原声 + 叠加背景音乐
-  if (hasVideoAudio) {
-    args.push(
-      "-filter_complex",
-      `[0:a]volume=1.0[a0];[1:a]volume=${musicVol},atrim=duration=${duration.toFixed(3)}[a1];[a0][a1]amix=inputs=2:duration=first:dropout_transition=0[aout]`,
-      "-map", "0:v", "-map", "[aout]",
-    );
+  if (!regions.length) {
+    // 没有可混入的音乐区间（如 scope=仅片尾但片尾未启用），直接复制视频
+    const { copyFile } = await import("node:fs/promises");
+    await copyFile(videoPath, outputPath);
+    return outputPath;
+  }
+
+  const args = ["-err_detect", "ignore_err", "-i", videoPath];
+  if (loop) args.push("-stream_loop", "-1"); // 音乐不够长时循环
+  args.push("-i", musicPath);
+
+  // 构建音乐链：每段区间 adelay 定位起点 + atrim 截到区间终点
+  const filterParts = [];
+  let musicOut;
+  if (regions.length === 1) {
+    const r = regions[0];
+    const f = [`volume=${musicVol}`];
+    if (r.start > 0) f.push(`adelay=${Math.round(r.start * 1000)}:all=1`);
+    f.push(`atrim=end=${r.end.toFixed(3)}`);
+    filterParts.push(`[1:a]${f.join(",")}[mc0]`);
+    musicOut = "mc0";
   } else {
-    // 视频没有原声音轨，只有背景音乐
-    args.push(
-      "-filter_complex",
-      `[1:a]volume=${musicVol},atrim=duration=${duration.toFixed(3)}[aout]`,
-      "-map", "0:v", "-map", "[aout]",
-    );
+    // 多段区间（片头+片尾）：asplit 分流后各自定位，再 amix 合并（normalize=0 保持音量）
+    const srcLabels = regions.map((_, i) => `[src${i}]`).join("");
+    filterParts.push(`[1:a]volume=${musicVol},asplit=${regions.length}${srcLabels}`);
+    regions.forEach((r, i) => {
+      const f = [];
+      if (r.start > 0) f.push(`adelay=${Math.round(r.start * 1000)}:all=1`);
+      f.push(`atrim=end=${r.end.toFixed(3)}`);
+      filterParts.push(`[src${i}]${f.join(",")}[mc${i}]`);
+    });
+    filterParts.push(`${regions.map((_, i) => `[mc${i}]`).join("")}amix=inputs=${regions.length}:duration=longest:dropout_transition=0:normalize=0[music]`);
+    musicOut = "music";
+  }
+
+  if (hasVideoAudio) {
+    // 视频有原声音轨：保留原声 + 叠加背景音乐
+    filterParts.push(`[0:a]volume=1.0[a0];[a0][${musicOut}]amix=inputs=2:duration=first:dropout_transition=0[aout]`);
+  } else {
+    // 视频没有原声音轨：只有背景音乐，不足处补静音到视频时长
+    filterParts.push(`[${musicOut}]apad=whole_dur=${duration.toFixed(3)}[aout]`);
   }
 
   args.push(
+    "-filter_complex", filterParts.join(";"),
+    "-map", "0:v", "-map", "[aout]",
     "-c:v", "copy",
     "-movflags", "+faststart",
     "-c:a", "aac", "-b:a", "128k",
@@ -615,11 +704,19 @@ export async function composeAiRemixVideo(mainVideoPath, imagePaths, config = {}
     tempPaths.push(normalizedMain);
 
     const segments = [];
+    // 记录每个 segment 的 role 用于后续时间轴计算
+    const segmentRoles = [];
+
+    // 取图逻辑：片头取前 n 张，片尾从后往前取 n 张，互不干扰
+    // 片头未启用时 n=0；张数不够就全部取
+    const introImgCount = (introConfig.enabled !== false) ? Math.min(introConfig.imageCount || 6, imagePaths.length) : 0;
+    const outroImgCount = (outroConfig.enabled !== false) ? Math.min(outroConfig.imageCount || 4, imagePaths.length) : 0;
+    // 片头取前 introImgCount 张，片尾取后 outroImgCount 张
+    const introImages = imagePaths.slice(0, introImgCount);
+    const outroImages = imagePaths.slice(Math.max(0, imagePaths.length - outroImgCount));
 
     // 处理片头
-    if (introConfig.enabled !== false && imagePaths.length > 0) {
-      const introImgCount = Math.min(introConfig.imageCount || 6, imagePaths.length);
-      const introImages = imagePaths.slice(0, introImgCount);
+    if (introConfig.enabled !== false && introImages.length > 0) {
       const introImgDuration = introConfig.imageDuration || 0.7;
 
       if (introConfig.mode === "image" || !introConfig.segmentFilePath) {
@@ -628,6 +725,7 @@ export async function composeAiRemixVideo(mainVideoPath, imagePaths, config = {}
         await imagesToVideo(introImages, introImgDuration, targetW, targetH, mainMeta.fps, introConfig.effect || "none", introPath);
         tempPaths.push(introPath);
         segments.push(introPath);
+        segmentRoles.push("intro");
       } else {
         // 视频模式：图片覆盖到片头视频上
         if (introConfig.segmentFilePath) {
@@ -639,6 +737,7 @@ export async function composeAiRemixVideo(mainVideoPath, imagePaths, config = {}
               targetW, targetH, mainMeta.fps, id, "intro", tempPaths, introConfig.effect || "none", introConfig.volumePercent ?? 100
             );
             segments.push(introProcessed);
+            segmentRoles.push("intro");
           }
         }
       }
@@ -646,13 +745,10 @@ export async function composeAiRemixVideo(mainVideoPath, imagePaths, config = {}
 
     // 主视频
     segments.push(normalizedMain);
+    segmentRoles.push("main");
 
     // 处理片尾
-    // 片头未启用时不减去片头的图片数量，全部图片给片尾
-    const introImgCountActual = (introConfig.enabled !== false) ? (introConfig.imageCount || 6) : 0;
-    const outroImgCount = Math.min(outroConfig.imageCount || 4, Math.max(0, imagePaths.length - introImgCountActual));
-    if (outroConfig.enabled !== false && outroImgCount > 0) {
-      const outroImages = imagePaths.slice(introImgCountActual, introImgCountActual + outroImgCount);
+    if (outroConfig.enabled !== false && outroImages.length > 0) {
       const outroImgDuration = outroConfig.imageDuration || 3;
 
       if (outroConfig.mode === "image" || !outroConfig.segmentFilePath) {
@@ -661,6 +757,7 @@ export async function composeAiRemixVideo(mainVideoPath, imagePaths, config = {}
         await imagesToVideo(outroImages, outroImgDuration, targetW, targetH, mainMeta.fps, outroConfig.effect || "none", outroPath);
         tempPaths.push(outroPath);
         segments.push(outroPath);
+        segmentRoles.push("outro");
       } else {
         // 视频模式
         if (outroConfig.segmentFilePath) {
@@ -672,6 +769,7 @@ export async function composeAiRemixVideo(mainVideoPath, imagePaths, config = {}
               targetW, targetH, mainMeta.fps, id, "outro", tempPaths, outroConfig.effect || "none", outroConfig.volumePercent ?? 100
             );
             segments.push(outroProcessed);
+            segmentRoles.push("outro");
           }
         }
       }
@@ -711,7 +809,23 @@ export async function composeAiRemixVideo(mainVideoPath, imagePaths, config = {}
     const musicPath = musicConfig.segmentFilePath ? resolveLocal(musicConfig.segmentFilePath) : null;
 
     if (musicConfig.enabled !== false && musicPath && existsSync(musicPath) && musicConfig.scope !== "none") {
-      await mixBackgroundMusic(concatenatedPath, musicPath, outputPath, musicConfig.volumePercent ?? 8);
+      // 计算各段在成品时间轴上的位置（考虑转场重叠 0.5s）
+      const transOverlapFlags = [];
+      for (let i = 0; i < segmentRoles.length - 1; i++) {
+        if (segmentRoles[i] === "intro") transOverlapFlags.push(introConfig.transition && introConfig.transition !== "none");
+        else if (segmentRoles[i] === "main") transOverlapFlags.push(outroConfig.transition && outroConfig.transition !== "none");
+        else transOverlapFlags.push(false);
+      }
+      const tl = await buildSegmentTimeline(
+        segments.map((p, i) => ({ path: p, role: segmentRoles[i] })),
+        transOverlapFlags
+      );
+      const spans = musicSpansForScope(musicConfig.scope || "original", tl);
+      await mixBackgroundMusic(concatenatedPath, musicPath, outputPath, musicConfig.volumePercent ?? 8, {
+        scope: musicConfig.scope || "original",
+        loop: musicConfig.loop !== false,
+        spans,
+      });
     } else {
       const { copyFile } = await import("node:fs/promises");
       await copyFile(concatenatedPath, outputPath);
