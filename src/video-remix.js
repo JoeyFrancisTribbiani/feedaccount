@@ -1133,9 +1133,9 @@ async function imagesToVideo(imagePaths, imgDuration, targetW, targetH, fps, eff
     filters.push(f);
   }
 
-  // concat 所有图片
+  // concat 所有图片，统一帧率确保和其他片段一致
   const concatInputs = labels.map(l => `${l}`).join("");
-  filters.push(`${concatInputs}concat=n=${imagePaths.length}:v=1:a=0[vout]`);
+  filters.push(`${concatInputs}concat=n=${imagePaths.length}:v=1:a=0,fps=${Math.round(fps)}[vout]`);
 
   await runFfmpeg([
     ...inputs,
