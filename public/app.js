@@ -6300,7 +6300,7 @@ function collectPresetConfig() {
     imageDuration: timecodeToSeconds(presetModalEl.introDuration?.value),
     effect: presetModalEl.introEffect?.value || "none",
     transition: presetModalEl.introTransition?.value || "none",
-    volumePercent: parseInt(presetModalEl.introVolume?.value) ?? 100,
+    volumePercent: parseInt(presetModalEl.introVolume?.value) || 100,
     segmentFilePath: pendingSegmentFiles.intro ? pendingSegmentFiles.intro.filePath : null,
   };
   const outroConfig = {
@@ -6311,7 +6311,7 @@ function collectPresetConfig() {
     imageDuration: timecodeToSeconds(presetModalEl.outroDuration?.value),
     effect: presetModalEl.outroEffect?.value || "none",
     transition: presetModalEl.outroTransition?.value || "none",
-    volumePercent: parseInt(presetModalEl.outroVolume?.value) ?? 100,
+    volumePercent: parseInt(presetModalEl.outroVolume?.value) || 100,
     segmentFilePath: pendingSegmentFiles.outro ? pendingSegmentFiles.outro.filePath : null,
   };
   const musicConfig = {
@@ -6783,9 +6783,9 @@ modalEl.start?.addEventListener("click", async () => {
       const introEnabled = document.querySelector("#modal-intro-enabled")?.checked ?? true;
       const outroEnabled = document.querySelector("#modal-outro-enabled")?.checked ?? true;
       const musicEnabled = document.querySelector("#modal-music-enabled")?.checked ?? true;
-      const introVolume = parseInt(document.querySelector("#modal-intro-volume")?.value) ?? 100;
-      const outroVolume = parseInt(document.querySelector("#modal-outro-volume")?.value) ?? 100;
-      const musicVolume = parseInt(document.querySelector("#modal-music-volume")?.value) ?? 8;
+      const introVolume = parseInt(document.querySelector("#modal-intro-volume")?.value) || 100;
+      const outroVolume = parseInt(document.querySelector("#modal-outro-volume")?.value) || 100;
+      const musicVolume = parseInt(document.querySelector("#modal-music-volume")?.value) || 8;
       const dedup = document.querySelector("#modal-dedup")?.checked ?? true;
 
       let totalCount = 0;

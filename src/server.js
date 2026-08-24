@@ -595,13 +595,13 @@ export function createMonitorServer({
                         const imgBuffer = await readFile(imgPath);
                         const base64 = imgBuffer.toString("base64");
                         // 用 pick 时保存的 taskId（按顺序配对）
-                        const taskId = i < outfitTaskIds.length ? outfitTaskIds[i] : null;
-                        if (taskId) {
-                          items.push({ taskId, imageBase64: base64 });
+                        const outfitTaskId = i < outfitTaskIds.length ? outfitTaskIds[i] : null;
+                        if (outfitTaskId) {
+                          items.push({ taskId: outfitTaskId, imageBase64: base64 });
                         } else {
-                          store.logCdpEvent(null, "warning", `穿搭指南[远程]回传: 第${i}个taskId缺失，跳过`, taskId);
+                          store.logCdpEvent(null, "warning", `穿搭指南[远程]回传: 第${i}个taskId缺失，跳过`, null, taskId);
                         }
-                      } catch (e) { store.logCdpEvent(null, "warning", `穿搭指南[远程]回传图片读取失败: index=${idx}`, taskId); }
+                      } catch (e) { store.logCdpEvent(null, "warning", `穿搭指南[远程]回传图片读取失败: index=${idx}`, null, taskId); }
                     } else {
                       store.logCdpEvent(null, "warning", `穿搭指南[远程]回传: 下标${idx}超出图片数量${imagePaths.length}`, taskId);
                     }
@@ -1959,6 +1959,8 @@ export function createMonitorServer({
                               writeFileSync(outfitPath, buffer);
                               filesToUpload.push(outfitPath);
                               store.logCdpEvent(null, "info", `穿搭指南[远程]: taskId=${img.taskId} index=${img.index}`, null, task.id);
+                            } else {
+                              store.logCdpEvent(null, "warning", `穿搭指南[远程]下载失败: taskId=${img.taskId} status=${imgRes.status}`, null, task.id);
                             }
                           } catch (e) { store.logCdpEvent(null, "warning", `穿搭指南[远程]下载失败: ${e.message}`, null, task.id); }
                         }
@@ -2566,6 +2568,8 @@ export function createMonitorServer({
                                 writeFileSync(outfitPath, buffer);
                                 filesToUpload.push(outfitPath);
                                 store.logCdpEvent(null, "info", `穿搭指南[远程]: taskId=${img.taskId} index=${img.index}`, null, newTask.id);
+                              } else {
+                                store.logCdpEvent(null, "warning", `穿搭指南[远程]下载失败: taskId=${img.taskId} status=${imgRes.status}`, null, newTask.id);
                               }
                             } catch (e) { store.logCdpEvent(null, "warning", `穿搭指南[远程]下载失败: ${e.message}`, null, newTask.id); }
                           }
