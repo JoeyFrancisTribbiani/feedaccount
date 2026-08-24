@@ -370,6 +370,7 @@ async function concatVideos(inputPaths, outputPath) {
       "-c:v", "libx264", "-crf", "20", "-preset", "veryfast",
       "-c:a", "aac", "-b:a", "128k",
       "-pix_fmt", "yuv420p", "-movflags", "+faststart",
+      "-shortest",
       "-y", outputPath,
     ]);
   } finally {
@@ -698,6 +699,7 @@ export async function composeAiRemixVideo(mainVideoPath, imagePaths, config = {}
         "-c:v", "libx264", "-crf", "23", "-preset", "veryfast",
         "-c:a", "aac", "-b:a", "128k",
         "-pix_fmt", "yuv420p", "-movflags", "+faststart",
+        "-shortest",
         "-y", normalizedMain,
       ]);
     }
@@ -862,6 +864,7 @@ async function overlayImagesOnVideo(videoPath, imagePaths, insertStart, imgDurat
     "-c:v", "libx264", "-crf", "23", "-preset", "veryfast",
     "-c:a", "aac", "-b:a", "128k",
     "-pix_fmt", "yuv420p", "-movflags", "+faststart",
+    "-shortest",
     "-y", normalizedPath,
   ]);
   tempPaths.push(normalizedPath);
@@ -991,6 +994,7 @@ async function concatWithTransition(segments, transitions, outputPath, targetW, 
       "-vf", `scale=${targetW}:${targetH}:flags=bicubic,format=yuv420p,fps=${Math.round(fps)}`,
       "-c:v", "libx264", "-crf", "23", "-preset", "veryfast",
       "-pix_fmt", "yuv420p", "-movflags", "+faststart",
+      "-shortest",
       "-y", normPath,
     ]);
     normalizedPaths.push(normPath);
