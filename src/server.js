@@ -580,7 +580,7 @@ export function createMonitorServer({
                 const outfitTaskIds = taskInfo?.outfitTaskIds || [];
                 // pick 失败或无可用产品时 outfitTaskIds 为空，跳过回调
                 if (!outfitTaskIds.length) {
-                  store.logCdpEvent(null, "info", "穿搭指南[远程]: 无pick记录，跳过回调", taskId);
+                  store.logCdpEvent(null, "info", "穿搭指南[远程]: 无pick记录，跳过回调", null, taskId);
                 } else {
                   const callbackUrl = preset.outfitCallbackUrl || "http://localhost:12999/api/image-washing/queue/callback";
                   const callbackIndices = preset.outfitCallbackIndex || [5];
@@ -603,7 +603,7 @@ export function createMonitorServer({
                         }
                       } catch (e) { store.logCdpEvent(null, "warning", `穿搭指南[远程]回传图片读取失败: index=${idx}`, null, taskId); }
                     } else {
-                      store.logCdpEvent(null, "warning", `穿搭指南[远程]回传: 下标${idx}超出图片数量${imagePaths.length}`, taskId);
+                      store.logCdpEvent(null, "warning", `穿搭指南[远程]回传: 下标${idx}超出图片数量${imagePaths.length}`, null, taskId);
                     }
                   }
                   if (items.length > 0) {
@@ -613,16 +613,16 @@ export function createMonitorServer({
                     });
                     if (cbRes.ok) {
                       const cbData = await cbRes.json();
-                      store.logCdpEvent(null, "info", `穿搭指南[远程]回传完成: ${cbData.updated || 0}成功 ${cbData.failed || 0}失败`, taskId);
+                      store.logCdpEvent(null, "info", `穿搭指南[远程]回传完成: ${cbData.updated || 0}成功 ${cbData.failed || 0}失败`, null, taskId);
                     } else {
-                      store.logCdpEvent(null, "warning", `穿搭指南[远程]回传失败: ${cbRes.status}`, taskId);
+                      store.logCdpEvent(null, "warning", `穿搭指南[远程]回传失败: ${cbRes.status}`, null, taskId);
                     }
                   } else {
-                    store.logCdpEvent(null, "info", "穿搭指南[远程]: 无可回传图片", taskId);
+                    store.logCdpEvent(null, "info", "穿搭指南[远程]: 无可回传图片", null, taskId);
                   }
                 }
               }
-            } catch (e) { store.logCdpEvent(null, "warning", `穿搭指南[远程]回传异常: ${e.message}`, taskId); }
+            } catch (e) { store.logCdpEvent(null, "warning", `穿搭指南[远程]回传异常: ${e.message}`, null, taskId); }
 
             // ★ 图片下载完成，AI 部分结束。提前释放队列，允许下一个 AI 任务开始
             store.logCdpEvent(null, "info", `图片下载完成(${imagePaths.length}张)，开始本地拼接，释放AI队列`, taskId);
