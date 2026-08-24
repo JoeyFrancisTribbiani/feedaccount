@@ -511,8 +511,8 @@ export function createMonitorServer({
           const taskSeq = task?.seqNum || taskId.replace(/[^0-9]/g, "").slice(-6) || taskId;
           const taskDir = path.join(getOutputDir(), "tasks", String(taskSeq));
           mkdirSync(taskDir, { recursive: true });
-          store.logCdpEvent(null, "info", `任务专属目录: tasks/${taskSeq}`, taskId)
-          store.logCdpEvent(null, "info", "AI 返回图片，开始下载图片...", taskId)
+          store.logCdpEvent(null, "info", `任务专属目录: tasks/${taskSeq}`, null, taskId)
+          store.logCdpEvent(null, "info", "AI 返回图片，开始下载图片...", null, taskId)
             const imagePaths = [];
             for (const imgOutput of fileOutputs) {
               try {
@@ -527,9 +527,9 @@ export function createMonitorServer({
                   try {
                     await antiAiProcessImage(rawPath, processedPath);
                     imagePaths.push(processedPath);
-                    store.logCdpEvent(null, "info", `图片反AI处理完成: ${imagePaths.length}/${fileOutputs.length}`, taskId);
+                    store.logCdpEvent(null, "info", `图片反AI处理完成: ${imagePaths.length}/${fileOutputs.length}`, null, taskId);
                   } catch (e) {
-                    store.logCdpEvent(null, "warning", `图片反AI处理失败，使用原图: ${e.message}`, taskId);
+                    store.logCdpEvent(null, "warning", `图片反AI处理失败，使用原图: ${e.message}`, null, taskId);
                     // 原图重命名为最终文件
                     writeFileSync(processedPath, buffer);
                     imagePaths.push(processedPath);
@@ -537,7 +537,7 @@ export function createMonitorServer({
                   // 删除raw文件
                   try { unlinkSync(rawPath); } catch {}
                 }
-              } catch (e) { store.logCdpEvent(null, "warning", `下载图片失败: ${e.message}`, taskId); }
+              } catch (e) { store.logCdpEvent(null, "warning", `下载图片失败: ${e.message}`, null, taskId); }
             }
 
             // 记录图片路径到数据库（用任务目录的相对URL）
@@ -552,7 +552,7 @@ export function createMonitorServer({
                 const imgUrl = `/data/remix-output/tasks/${taskSeq}/${path.basename(imgPath)}`;
                 store.createTkMaterial({ title: path.basename(imgPath), filePath: imgUrl, category: "image", hashtags: [] });
               }
-              store.logCdpEvent(null, "info", `已将 ${imagePaths.length} 张图片存入图片素材库`, taskId);
+              store.logCdpEvent(null, "info", `已将 ${imagePaths.length} 张图片存入图片素材库`, null, taskId);
             } catch (e) { console.error("[AI混剪] 存入图片素材库失败:", e.message); }
 
             // ★ 多类型资源下载（不影响现有图片逻辑）
@@ -562,12 +562,12 @@ export function createMonitorServer({
               // 只下载非 image 类型（image 已在前面下载处理过）
               const nonImageTypes = resourceTypes.filter(t => t !== "image");
               if (nonImageTypes.length > 0) {
-                store.logCdpEvent(null, "info", `开始下载多类型资源: ${nonImageTypes.join(", ")}`, taskId);
+                store.logCdpEvent(null, "info", `开始下载多类型资源: ${nonImageTypes.join(", ")}`, null, taskId);
                 const allResources = await downloadAllResources(daemonUrl, fileOutputs, nonImageTypes, taskId);
                 for (const res of allResources) {
                   store.createTaskResource({ taskId, type: res.type, filePath: res.url, filename: res.filename, fileSize: res.size || 0 });
                 }
-                store.logCdpEvent(null, "info", `多类型资源下载完成: ${allResources.length}个`, taskId);
+                store.logCdpEvent(null, "info", `多类型资源下载完成: ${allResources.length}个`, null, taskId);
               }
             } catch (e) { console.error("[AI混剪] 多类型资源下载失败:", e.message); }
 
@@ -625,7 +625,7 @@ export function createMonitorServer({
             } catch (e) { store.logCdpEvent(null, "warning", `穿搭指南[远程]回传异常: ${e.message}`, null, taskId); }
 
             // ★ 图片下载完成，AI 部分结束。提前释放队列，允许下一个 AI 任务开始
-            store.logCdpEvent(null, "info", `图片下载完成(${imagePaths.length}张)，开始本地拼接，释放AI队列`, taskId);
+            store.logCdpEvent(null, "info", `图片下载完成(${imagePaths.length}张)，开始本地拼接，释放AI队列`, null, taskId);
             aiRemixActiveCount--;
             processAiRemixQueue();
 
@@ -692,9 +692,9 @@ export function createMonitorServer({
           const filePath = path.join(getOutputDir(), fileName);
           writeFileSync(filePath, buffer);
           results.push({ type: matchedType, url: `/data/remix-output/${fileName}`, filename: fileName, size: buffer.length });
-          store.logCdpEvent(null, "info", `资源下载: ${matchedType} ${fileName} (${buffer.length} bytes)`, taskId);
+          store.logCdpEvent(null, "info", `资源下载: ${matchedType} ${fileName} (${buffer.length} bytes)`, null, taskId);
         }
-      } catch (e) { store.logCdpEvent(null, "warning", `资源下载失败: ${e.message}`, taskId); }
+      } catch (e) { store.logCdpEvent(null, "warning", `资源下载失败: ${e.message}`, null, taskId); }
     }
     return results;
   }
@@ -720,12 +720,12 @@ export function createMonitorServer({
       if (!outroConfig.segmentFilePath) outroConfig.segmentFilePath = findFile("_outro_segment");
       if (!musicConfig.segmentFilePath) musicConfig.segmentFilePath = findFile("_music_segment");
 
-      store.logCdpEvent(null, "info", `AI混剪合成: ${imagePaths.length}张图片, 方案=${preset?.name || "默认"}, 片头=${introConfig.segmentFilePath ? "有" : "无"}, 片尾=${outroConfig.segmentFilePath ? "有" : "无"}, 音乐=${musicConfig.segmentFilePath ? "有" : "无"}`, taskId);
+      store.logCdpEvent(null, "info", `AI混剪合成: ${imagePaths.length}张图片, 方案=${preset?.name || "默认"}, 片头=${introConfig.segmentFilePath ? "有" : "无"}, 片尾=${outroConfig.segmentFilePath ? "有" : "无"}, 音乐=${musicConfig.segmentFilePath ? "有" : "无"}`, null, taskId);
 
       if (mainVideoLocalPath && existsSync(mainVideoLocalPath)) {
         const finalOut = await composeAiRemixVideo(mainVideoLocalPath, imagePaths, { introConfig, outroConfig, musicConfig, dedup: preset?.dedup !== false, videoTitle: videoTitle || null }, "9:16");
         const outputUrl = `/data/remix-output/${path.basename(finalOut)}`;
-        store.logCdpEvent(null, "info", `AI 混剪成品: ${outputUrl}`, taskId);
+        store.logCdpEvent(null, "info", `AI 混剪成品: ${outputUrl}`, null, taskId);
         store.updateRemixTask(taskId, { status: "DONE", outputUrl, completedAt: nowIso() });
 
         // 链接到矩阵（重新剪辑时先删旧的再建新的，避免重复）
@@ -755,7 +755,7 @@ export function createMonitorServer({
           }
         }
       } else {
-        store.logCdpEvent(null, "error", "找不到原视频文件，无法合成", taskId);
+        store.logCdpEvent(null, "error", "找不到原视频文件，无法合成", null, taskId);
         store.updateRemixTask(taskId, { status: "FAILED", errorMessage: "找不到原视频文件", completedAt: nowIso() });
       }
     } catch (e) {
@@ -2383,7 +2383,7 @@ export function createMonitorServer({
 
           // 异步重新拼接
           store.updateRemixTask(taskId, { status: "PROCESSING", errorMessage: null });
-          store.logCdpEvent(null, "info", `重新剪辑: ${imagePaths.length}张图片`, taskId);
+          store.logCdpEvent(null, "info", `重新剪辑: ${imagePaths.length}张图片`, null, taskId);
           composeAiRemixVideoAsync(taskId, mainVideoLocalPath, imagePaths, origTask.presetId, origTask.matrixIds, origTask.creatorId, null, origTask.title, origTask.outputUrl);
 
           sendJson(response, 200, { ok: true, message: "重新剪辑已开始" });

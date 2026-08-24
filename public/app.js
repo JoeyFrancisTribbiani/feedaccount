@@ -6277,7 +6277,7 @@ function timecodeToSeconds(tc) {
   const m = tc.match(/^(\d{2}):(\d{2}):(\d{2}):(\d{2})$/);
   if (!m) { const n = parseFloat(tc); return isNaN(n) ? 0 : n; }
   const [, h, mi, s, f] = m;
-  return (parseInt(h) * 3600 + parseInt(mi) * 60 + parseInt(s) + parseInt(f) / 30);
+  return (parseInt(h, 10) * 3600 + parseInt(mi, 10) * 60 + parseInt(s, 10) + parseInt(f, 10) / 30);
 }
 
 // 秒 → 时间码 HH:MM:SS:FF (30fps)
