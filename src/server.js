@@ -666,22 +666,30 @@ export function createMonitorServer({
             composeAiRemixVideoAsync(taskId, mainVideoLocalPath, imagePaths, presetId, matrixIds, creatorId, sourceVideoId, videoTitle);
             return; // processSingleAiRemixTask 到此结束，finally 中不再减 aiRemixActiveCount（已提前减了）
         } else if (hasVideos) {
-          // 视频输出：直接下载
+          // 视频输出：下载后走本地拼接流程（去重/片头片尾/背景音乐）
           const fileOutput = fileOutputs.find((o) => o.type === "file");
           const downloadRes = await fetch(`${daemonUrl}${fileOutput.url}`);
           if (downloadRes.ok) {
             const buffer = Buffer.from(await downloadRes.arrayBuffer());
-            const outputFileName = `ai_remix_${Date.now()}_${path.basename(fileOutput.filename)}`;
-            const outputPath = path.join(getOutputDir(), outputFileName);
-            writeFileSync(outputPath, buffer);
-            outputUrl = `/data/remix-output/${outputFileName}`;
+            const aiVideoFileName = `ai_returned_${Date.now()}_${path.basename(fileOutput.filename)}`;
+            const aiVideoPath = path.join(getOutputDir(), aiVideoFileName);
+            writeFileSync(aiVideoPath, buffer);
+            store.logCdpEvent(null, "info", `AI 返回视频已下载: ${aiVideoFileName}`, null, taskId);
+
+            // AI 返回的视频作为主视频走本地拼接（去重/片头片尾/音乐）
+            store.logCdpEvent(null, "info", `AI 返回视频，开始本地拼接`, null, taskId);
+            // 提前释放 AI 队列
+            aiRemixActiveCount--;
+            processAiRemixQueue();
+            composeAiRemixVideoAsync(taskId, aiVideoPath, [], presetId, matrixIds, creatorId, sourceVideoId, videoTitle);
+            return;
           }
         }
 
+        // 走到这里说明既没有图片也没有视频
         store.updateRemixTask(taskId, {
-          status: outputUrl ? "DONE" : "FAILED",
-          outputUrl,
-          errorMessage: outputUrl ? null : "AI 混剪完成但未获取到视频文件",
+          status: "FAILED",
+          errorMessage: "AI 未返回任何可用的图片或视频",
           completedAt: nowIso(),
         });
 
@@ -735,10 +743,7 @@ export function createMonitorServer({
   // 本地拼接异步执行（不阻塞 AI 队列）
   async function composeAiRemixVideoAsync(taskId, mainVideoLocalPath, imagePaths, presetId, matrixIds, creatorId, sourceVideoId, videoTitle, oldOutputUrl = null) {
     try {
-      if (imagePaths.length === 0) {
-        store.updateRemixTask(taskId, { status: "FAILED", errorMessage: "没有下载到图片", completedAt: nowIso() });
-        return;
-      }
+      // imagePaths 为空时仍可继续（AI 返回视频模式，只做去重/片头片尾/音乐）
 
       const preset = presetId ? store.getAiRemixPreset(presetId) : null;
       const presetFiles = presetId ? store.getPresetFiles(presetId) : [];
@@ -753,7 +758,7 @@ export function createMonitorServer({
       if (!outroConfig.segmentFilePath) outroConfig.segmentFilePath = findFile("_outro_segment");
       if (!musicConfig.segmentFilePath) musicConfig.segmentFilePath = findFile("_music_segment");
 
-      store.logCdpEvent(null, "info", `AI混剪合成: ${imagePaths.length}张图片, 方案=${preset?.name || "默认"}, 片头=${introConfig.segmentFilePath ? "有" : "无"}, 片尾=${outroConfig.segmentFilePath ? "有" : "无"}, 音乐=${musicConfig.segmentFilePath ? "有" : "无"}`, null, taskId);
+      store.logCdpEvent(null, "info", `AI混剪合成: ${imagePaths.length}张图片, 方案=${preset?.name || "默认"}, 片头=${introConfig.segmentFilePath ? "有" : "无"}, 片尾=${outroConfig.segmentFilePath ? "有" : "无"}, 音乐=${musicConfig.segmentFilePath ? "有" : "无"}, 去重=${preset?.dedup !== false ? "是" : "否"}`, null, taskId);
 
       if (mainVideoLocalPath && existsSync(mainVideoLocalPath)) {
         const finalOut = await composeAiRemixVideo(mainVideoLocalPath, imagePaths, { introConfig, outroConfig, musicConfig, dedup: preset?.dedup !== false, videoTitle: videoTitle || null }, "9:16");
