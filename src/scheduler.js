@@ -1,4 +1,10 @@
 import { checkIpViaSocks5, checkIpGeoViaSocks5 } from "./socks5-check.js";
+import { generatePrompt, getNegativePrompt } from "./image-gen-prompts.js";
+import { ImageGenTaskManager } from "./image-gen-task-manager.js";
+import { TiktokPublisher } from "./tiktok/tiktok-publisher.js";
+import { readFile, writeFile, mkdirSync } from "node:fs";
+import path from "node:path";
+import crypto from "node:crypto";
 
 export const SCHEDULER_DEFAULTS = Object.freeze({
   minMinutes: 23,
@@ -8,10 +14,18 @@ export const SCHEDULER_DEFAULTS = Object.freeze({
   skipProxyRotate: false,
   enableReddit: true,
   enableTiktok: true,
+  enableImageGen: false,
+  imageGenCategory: "jesus",
   ipMatchMode: "sequential",
   geoMaxRetries: 15,
   geoRetryIntervalSec: 60,
 });
+
+const COMFYUI_HOST = "http://127.0.0.1:8189";
+const COMFYUI_WORKFLOW_PATH = "F:/Comfy-Desktop/api/bg_generator_9x16.json";
+const IMAGE_GEN_OUTPUT_DIR = path.resolve(process.cwd(), "data", "image-gen");
+const COMFYUI_POLL_INTERVAL_MS = 2000;
+const COMFYUI_POLL_TIMEOUT_MS = 300_000;
 
 function nowIso() {
   return new Date().toISOString();
@@ -34,6 +48,7 @@ export class RotationScheduler extends EventTarget {
     this.tiktokJobs = tiktokJobs;
     this.persistence = persistence;
     this.defaultProxyRotateUrl = proxyRotateUrl;
+    this.imageGenManager = new ImageGenTaskManager({ bitBrowserApi, persistence });
     this.state = {
       running: false,
       cancelled: false,
@@ -48,6 +63,7 @@ export class RotationScheduler extends EventTarget {
       lastIp: null,
       ipChange: null,
       currentProfileId: null,
+      imageGenTaskId: null,
     };
   }
 
@@ -63,7 +79,7 @@ export class RotationScheduler extends EventTarget {
   }
 
   status() {
-    return { ...this.state, log: this.state.log.slice(-50) };
+    return { ...this.state, imageGen: this.imageGenManager?.getSummary() || null, log: this.state.log.slice(-50) };
   }
 
   async start(options = {}) {
@@ -215,6 +231,24 @@ export class RotationScheduler extends EventTarget {
           .catch((e) => this.#log(`实例 #${profile.seq} TikTok 启动失败：${e.message}`, "warning"));
       }
 
+      // 生图并上传到 TikTok（异步并行，不阻塞养号计时）
+            if (opts.enableImageGen) {
+              this.state.phase = "image-gen";
+              this.#emit();
+              const taskId = this.imageGenManager.createTask(profile, opts, (task) => {
+                // 进度回调
+                if (task.status === "done") {
+                  this.#log(`实例 #${profile.seq} 生图上传完成（${task.elapsedMs / 1000 | 0}秒）`, "info", { taskId: task.id, category: task.category });
+                } else if (task.status === "error") {
+                  this.#log(`实例 #${profile.seq} 生图上传失败：${task.error}`, "warning", { taskId: task.id });
+                }
+                this.#emit();
+              });
+              this.state.imageGenTaskId = taskId;
+              this.#log(`实例 #${profile.seq} 生图任务已提交（异步执行，不阻塞养号）`, "info", { taskId, category: opts.imageGenCategory });
+              this.#emit();
+            }
+
       // 跑随机时长
       const minutes = randomInt(opts.minMinutes, opts.maxMinutes);
       const totalMs = minutes * 60_000;
@@ -245,6 +279,11 @@ export class RotationScheduler extends EventTarget {
       this.#emit();
       await this.redditJobs.stop(profile.id).catch((e) => this.#log(`实例 #${profile.seq} 停止 Reddit 任务时出错：${e.message}`, "warning"));
       await this.tiktokJobs.stop(profile.id).catch((e) => this.#log(`实例 #${profile.seq} 停止 TikTok 任务时出错：${e.message}`, "warning"));
+      // 取消未完成的生图任务
+      if (this.state.imageGenTaskId) {
+        this.imageGenManager.cancelTask(this.state.imageGenTaskId);
+        this.state.imageGenTaskId = null;
+      }
       this.#log(`实例 #${profile.seq} 任务已全部停止`, "info");
       prevId = profile.id;
     }
@@ -269,6 +308,122 @@ export class RotationScheduler extends EventTarget {
     this.state.remainingMs = 0;
     this.#log(this.state.cancelled ? "轮换调度已停止" : "轮换调度全部完成", "info");
     this.#emit();
+  }
+
+  async #generateAndUploadImage(profile, opts) {
+    const category = opts.imageGenCategory || "jesus";
+    const prompt = generatePrompt(category);
+    const negativePrompt = getNegativePrompt(category);
+    const seed = Math.floor(Math.random() * 0xffffffff);
+
+    this.#log(`实例 #${profile.seq} 生图开始（类别=${category}），提示词：${prompt.slice(0, 120)}...`, "info", { category, seed });
+    this.#emit();
+
+    // 1. 读取工作流模板并注入提示词/负面/seed
+    const workflowRaw = await readFile(COMFYUI_WORKFLOW_PATH, "utf8");
+    const workflow = JSON.parse(workflowRaw);
+    // 节点 76 = 正面提示词, 77 = 负面提示词, 3 = seed
+    if (workflow["76"]) workflow["76"].inputs.prompt = prompt;
+    if (workflow["77"]) workflow["77"].inputs.prompt = negativePrompt;
+    if (workflow["3"]) workflow["3"].inputs.seed = seed;
+
+    // 2. 提交工作流到 ComfyUI /prompt
+    this.#log(`实例 #${profile.seq} 正在提交 ComfyUI 工作流...`, "info");
+    const submitRes = await fetch(`${COMFYUI_HOST}/prompt`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt: workflow, client_id: `feedaccount-sched-${profile.id}` }),
+    });
+    if (!submitRes.ok) {
+      const text = await submitRes.text().catch(() => "");
+      throw new Error(`ComfyUI 提交工作流失败 (HTTP ${submitRes.status})：${text.slice(0, 300)}`);
+    }
+    const submitData = await submitRes.json();
+    if (submitData.node_errors && Object.keys(submitData.node_errors).length > 0) {
+      throw new Error(`ComfyUI 工作流验证失败：${JSON.stringify(submitData.node_errors).slice(0, 500)}`);
+    }
+    const promptId = submitData.prompt_id;
+    this.#log(`实例 #${profile.seq} ComfyUI 已接受任务，prompt_id=${promptId}，轮询等待结果...`, "info", { promptId });
+    this.#emit();
+
+    // 3. 轮询 /history 等待结果
+    let imageInfo = null;
+    const pollStart = Date.now();
+    while (Date.now() - pollStart < COMFYUI_POLL_TIMEOUT_MS) {
+      if (this.state.cancelled) {
+        this.#log(`实例 #${profile.seq} 生图阶段收到停止指令，中止等待`, "warning");
+        return;
+      }
+      const histRes = await fetch(`${COMFYUI_HOST}/history/${promptId}`).catch(() => null);
+      if (histRes && histRes.ok) {
+        const histData = await histRes.json();
+        const entry = histData[promptId];
+        if (entry) {
+          if (entry.status?.status_str === "error") {
+            const errMsg = (entry.status.messages || [])
+              .filter((m) => m[0] === "execution_error")
+              .map((m) => m[1]?.exception_message || "")
+              .join("; ");
+            throw new Error(`ComfyUI 执行错误：${errMsg || "execution_error"}`);
+          }
+          const outputs = entry.outputs || {};
+          for (const nodeId of Object.keys(outputs)) {
+            const nodeOutput = outputs[nodeId];
+            if (nodeOutput.images && nodeOutput.images.length > 0) {
+              imageInfo = nodeOutput.images[0];
+              break;
+            }
+          }
+          if (imageInfo) break;
+        }
+      }
+      await new Promise((r) => setTimeout(r, COMFYUI_POLL_INTERVAL_MS));
+    }
+    if (!imageInfo) {
+      throw new Error("ComfyUI 生图超时（5分钟内未返回结果）");
+    }
+
+    // 4. 下载结果图片到本地
+    const params = new URLSearchParams({
+      filename: imageInfo.filename,
+      subfolder: imageInfo.subfolder || "",
+      type: imageInfo.type || "output",
+    });
+    const dlRes = await fetch(`${COMFYUI_HOST}/view?${params}`);
+    if (!dlRes.ok) throw new Error(`下载 ComfyUI 结果图片失败 (HTTP ${dlRes.status})`);
+    const imgBuffer = Buffer.from(await dlRes.arrayBuffer());
+
+    mkdirSync(IMAGE_GEN_OUTPUT_DIR, { recursive: true });
+    const localPath = path.join(
+      IMAGE_GEN_OUTPUT_DIR,
+      `gen_${category}_${Date.now()}_${crypto.randomBytes(4).toString("hex")}.png`
+    );
+    await writeFile(localPath, imgBuffer);
+    this.#log(`实例 #${profile.seq} 生图完成，已保存到 ${localPath}`, "info", { localPath, filename: imageInfo.filename });
+    this.#emit();
+
+    // 5. 连接 BitBrowser CDP 并上传图片到 TikTok
+    this.#log(`实例 #${profile.seq} 正在连接 BitBrowser CDP 上传图片到 TikTok...`, "info");
+    const conn = await this.bitBrowserApi.openProfile(profile.id, { extractIp: false });
+    if (!conn || !conn.wsUrl) {
+      throw new Error(`BitBrowser 实例 #${profile.seq} 未返回可用的 CDP WebSocket 地址`);
+    }
+    const publisher = new TiktokPublisher();
+    try {
+      await publisher.connect(conn.wsUrl);
+      const hashtags = category === "jesus"
+        ? ["jesus", "faith", "christian", "blessed", "god"]
+        : ["beautiful", "aesthetic", "photo", "trending", "viral"];
+      const result = await publisher.uploadPhoto({
+        filePath: localPath,
+        title: category === "jesus" ? "Divine moments ✨" : "Daily aesthetic ✨",
+        hashtags,
+        privacyLevel: "public",
+      });
+      this.#log(`实例 #${profile.seq} 图片上传 TikTok 完成：${result.message}${result.publishedVideoId ? `（视频ID=${result.publishedVideoId}）` : ""}`, result.ok ? "info" : "warning", result);
+    } finally {
+      await publisher.close().catch(() => {});
+    }
   }
 
   async #rotateProxy(url) {

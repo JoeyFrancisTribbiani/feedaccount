@@ -2655,6 +2655,7 @@ function formatRemaining(ms) {
 const PHASE_LABELS = {
   idle: "空闲", starting: "启动中", switching: "切换实例", opening: "打开浏览器",
   running: "养号中", stopping: "停止任务", finishing: "收尾", completed: "已完成", stopped: "已停止", error: "出错",
+  "image-gen": "生图中",
 };
 
 function schedPlatformHint() {
@@ -2671,10 +2672,14 @@ function saveSchedToggles() {
   const t = document.querySelector("#sched-enable-tiktok");
   const g = document.querySelector("#sched-geo-priority");
   const f = document.querySelector("#sched-fixed-proxy");
+  const ig = document.querySelector("#sched-enable-image-gen");
+  const igc = document.querySelector("#sched-image-gen-category");
   if (r) localStorage.setItem("sched-enable-reddit", r.checked ? "1" : "0");
   if (t) localStorage.setItem("sched-enable-tiktok", t.checked ? "1" : "0");
   if (g) localStorage.setItem("sched-geo-priority", g.checked ? "1" : "0");
   if (f) localStorage.setItem("sched-fixed-proxy", f.checked ? "1" : "0");
+  if (ig) localStorage.setItem("sched-enable-image-gen", ig.checked ? "1" : "0");
+  if (igc) localStorage.setItem("sched-image-gen-category", igc.value || "jesus");
 }
 
 function getSchedProfileIds() {
@@ -2741,10 +2746,17 @@ function restoreSchedToggles() {
   const t = document.querySelector("#sched-enable-tiktok");
   const g = document.querySelector("#sched-geo-priority");
   const f = document.querySelector("#sched-fixed-proxy");
+  const ig = document.querySelector("#sched-enable-image-gen");
+  const igc = document.querySelector("#sched-image-gen-category");
   if (r) r.checked = localStorage.getItem("sched-enable-reddit") !== "0";
   if (t) t.checked = localStorage.getItem("sched-enable-tiktok") !== "0";
   if (g) g.checked = localStorage.getItem("sched-geo-priority") === "1";
   if (f) f.checked = localStorage.getItem("sched-fixed-proxy") === "1";
+  if (ig) ig.checked = localStorage.getItem("sched-enable-image-gen") === "1";
+  if (igc) igc.value = localStorage.getItem("sched-image-gen-category") || "jesus";
+  // 同步显示/隐藏生图类别行
+  const catRow = document.querySelector("#sched-image-gen-category-row");
+  if (catRow) catRow.style.display = (ig && ig.checked) ? "" : "none";
 }
 
 function renderScheduler() {
@@ -2794,6 +2806,20 @@ function renderScheduler() {
     jobDetails = `<div class="sched-job-details">${sections.join("")}</div>`;
   }
 
+  const igTasks = s.imageGen?.tasks || [];
+  const igActive = s.imageGen?.active || 0;
+  const igDone = s.imageGen?.done || 0;
+  const igFailed = s.imageGen?.failed || 0;
+  const igHtml = igTasks.length > 0 ? `
+    <div class="sched-job-details">
+      <div class="sched-job-section">
+        <div class="sched-job-head"><span class="sched-job-tag tag-tiktok">生图任务</span>活跃 ${igActive} · 完成 ${igDone} · 失败 ${igFailed}</div>
+        <div class="sched-job-sub">
+          ${igTasks.slice(0, 5).map((t) => `<div style="padding:2px 0;font-size:12px;">#${t.profileSeq} ${t.category} — <strong>${t.statusLabel}</strong> ${t.elapsedMs ? `(${(t.elapsedMs/1000)|0}s)` : ""} ${t.error ? `<span style="color:#e74c3c">${escapeHtml(t.error.slice(0,80))}</span>` : ""}</div>`).join("")}
+        </div>
+      </div>
+    </div>` : "";
+
   sched.status.innerHTML = `
     <div class="sched-grid">
       <div class="sched-stat"><span>进度</span><strong>${progress}</strong></div>
@@ -2803,7 +2829,8 @@ function renderScheduler() {
     </div>
     ${ipChange}
     ${logs ? `<ol class="database-log-list sched-log">${logs}</ol>` : ""}
-    ${jobDetails}`;
+    ${jobDetails}
+    ${igHtml}`;
 }
 
 async function initScheduler() {
@@ -2830,6 +2857,14 @@ document.querySelector("#sched-enable-reddit")?.addEventListener("change", () =>
 document.querySelector("#sched-enable-tiktok")?.addEventListener("change", () => { saveSchedToggles(); renderScheduler(); });
 document.querySelector("#sched-geo-priority")?.addEventListener("change", () => { saveSchedToggles(); renderScheduler(); });
 document.querySelector("#sched-fixed-proxy")?.addEventListener("change", () => { saveSchedToggles(); renderScheduler(); });
+document.querySelector("#sched-enable-image-gen")?.addEventListener("change", () => {
+  const catRow = document.querySelector("#sched-image-gen-category-row");
+  const ig = document.querySelector("#sched-enable-image-gen");
+  if (catRow) catRow.style.display = (ig && ig.checked) ? "" : "none";
+  saveSchedToggles();
+  renderScheduler();
+});
+document.querySelector("#sched-image-gen-category")?.addEventListener("change", () => { saveSchedToggles(); });
 document.querySelector("#sched-proxy-url")?.addEventListener("input", () => {
   localStorage.setItem("sched-proxy-url", document.querySelector("#sched-proxy-url").value);
 });
@@ -2889,10 +2924,12 @@ sched.startBtn.addEventListener("click", async () => {
     const proxyRotateUrl = document.querySelector("#sched-proxy-url")?.value.trim() || "";
     const enableReddit = document.querySelector("#sched-enable-reddit")?.checked ?? true;
     const enableTiktok = document.querySelector("#sched-enable-tiktok")?.checked ?? true;
+    const enableImageGen = document.querySelector("#sched-enable-image-gen")?.checked ?? false;
+    const imageGenCategory = document.querySelector("#sched-image-gen-category")?.value || "jesus";
     const profileIds = [...document.querySelectorAll("#sched-profile-list input[type=checkbox]:checked")].map((cb) => cb.value);
     const ipMatchMode = document.querySelector("#sched-geo-priority")?.checked ? "geo_priority" : "sequential";
     const skipProxyRotate = document.querySelector("#sched-fixed-proxy")?.checked ?? false;
-    const options = { enableReddit, enableTiktok, profileIds, ipMatchMode, skipProxyRotate };
+    const options = { enableReddit, enableTiktok, enableImageGen, imageGenCategory, profileIds, ipMatchMode, skipProxyRotate };
     if (proxyRotateUrl) options.proxyRotateUrl = proxyRotateUrl;
     const res = await request("/api/scheduler/start", { method: "POST", body: JSON.stringify({ options }) });
     state.scheduler = res.status;
@@ -3848,6 +3885,39 @@ async function loadPathConfig() {
   } catch {}
 }
 loadPathConfig();
+
+// ── ComfyUI 网关配置 ──────────────────────────────────
+async function loadComfyuiConfig() {
+  try {
+    const cfg = await request("/api/comfyui/config");
+    const dirEl = document.querySelector("#comfyui-workflow-dir");
+    const hostEl = document.querySelector("#comfyui-host");
+    if (dirEl) dirEl.value = cfg.workflowDir || "";
+    if (hostEl) hostEl.value = cfg.comfyuiHost || "";
+  } catch {}
+}
+loadComfyuiConfig();
+
+document.querySelector("#comfyui-config-save")?.addEventListener("click", async () => {
+  const dirEl = document.querySelector("#comfyui-workflow-dir");
+  const hostEl = document.querySelector("#comfyui-host");
+  const resultEl = document.querySelector("#comfyui-config-result");
+  try {
+    await request("/api/comfyui/config", {
+      method: "POST",
+      body: JSON.stringify({
+        workflowDir: dirEl?.value.trim() || "",
+        comfyuiHost: hostEl?.value.trim() || "",
+      }),
+    });
+    if (resultEl) {
+      resultEl.textContent = "✅ 已保存";
+      setTimeout(() => { if (resultEl) resultEl.textContent = ""; }, 3000);
+    }
+  } catch (e) {
+    if (resultEl) resultEl.textContent = `❌ ${e.message}`;
+  }
+});
 
 document.querySelector("#path-config-save")?.addEventListener("click", async () => {
   const uploadEl = document.querySelector("#path-config-upload");

@@ -830,6 +830,20 @@ export class LocalDatabase {
     return config;
   }
 
+  getComfyuiConfig() {
+    const row = this.db.prepare("SELECT value_json FROM app_settings WHERE key = 'comfyui_config'").get();
+    return parseJson(row?.value_json, { workflowDir: "F:/Comfy-Desktop/api", comfyuiHost: "http://127.0.0.1:8189" });
+  }
+
+  saveComfyuiConfig(config) {
+    this.db.prepare(`
+      INSERT INTO app_settings (key, value_json, updated_at)
+      VALUES ('comfyui_config', ?, ?)
+      ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at
+    `).run(JSON.stringify(config), nowIso());
+    return config;
+  }
+
   saveTiktokOptions(profileId, options) {
     const key = profileId ? `tiktok_options:${profileId}` : "tiktok_options";
     this.db
