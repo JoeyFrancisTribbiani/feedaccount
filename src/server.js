@@ -20,6 +20,7 @@ import { TiktokPublishManager } from "./tiktok/tiktok-publish-manager.js";
 import { RotationScheduler, SCHEDULER_DEFAULTS } from "./scheduler.js";
 import { checkIpGeoViaSocks5 } from "./socks5-check.js";
 import { DEDUP_PRESETS, dedupVideo, stitchVideos, probeVideo, remixVideoWithResources, composeAiRemixVideo, antiAiProcessImage, setOutputDir, setUploadDir, getOutputDir, getUploadDir, OUTPUT_DIR as REMIX_OUTPUT_DIR } from "./video-remix.js";
+import { handleComfyuiEdit, updateComfyuiConfig } from "./comfyui-gateway.js";
 
 const THIS_DIR = path.dirname(fileURLToPath(import.meta.url));
 const CDP_DAEMON_DIR = path.resolve(THIS_DIR, "chrome-cdp-daemon");
@@ -357,6 +358,9 @@ export function createMonitorServer({
   const pathCfg = store.getPathConfig();
   if (pathCfg.outputPath) setOutputDir(pathCfg.outputPath);
   if (pathCfg.videoUploadPath) setUploadDir(pathCfg.videoUploadPath);
+  // 应用 ComfyUI 网关配置
+  const comfyuiCfg = store.getComfyuiConfig();
+  updateComfyuiConfig(comfyuiCfg);
   ngrokStore = store;
   globalThis.__ngrokDb = store.db;
   const jobs = jobManager || new JobManager({ bitBrowserApi: api, persistence: store });
@@ -788,6 +792,12 @@ export function createMonitorServer({
     const { pathname } = url;
 
     try {
+      // ComfyUI 图片编辑网关（允许局域网访问，不走 assertLocalWriteRequest）
+      if (request.method === "POST" && pathname === "/api/comfyui/edit") {
+        await handleComfyuiEdit(request, response);
+        return;
+      }
+
       if (
         pathname.startsWith("/api/") &&
         ["POST", "PUT", "PATCH", "DELETE"].includes(request.method)
@@ -822,6 +832,22 @@ export function createMonitorServer({
         // 实时应用路径
         setOutputDir(config.outputPath || null);
         setUploadDir(config.videoUploadPath || null);
+        sendJson(response, 200, config);
+        return;
+      }
+
+      // ComfyUI 网关配置
+      if (request.method === "GET" && pathname === "/api/comfyui/config") {
+        sendJson(response, 200, store.getComfyuiConfig());
+        return;
+      }
+      if (request.method === "POST" && pathname === "/api/comfyui/config") {
+        const body = await readJson(request);
+        const config = store.saveComfyuiConfig({
+          workflowDir: body.workflowDir || "",
+          comfyuiHost: body.comfyuiHost || "",
+        });
+        updateComfyuiConfig(config);
         sendJson(response, 200, config);
         return;
       }
@@ -3103,7 +3129,7 @@ function openDashboard(url) {
 const isMain = process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href;
 if (isMain) {
   const port = Number(process.env.PORT || DEFAULT_SERVER_PORT);
-  const host = "127.0.0.1";
+  const host = process.env.HOST || "0.0.0.0";
   const bitBrowserApiUrl = process.env.BITBROWSER_API_URL || DEFAULT_BITBROWSER_API;
   const databasePath = process.env.DATABASE_PATH
     ? path.resolve(process.env.DATABASE_PATH)

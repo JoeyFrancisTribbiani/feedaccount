@@ -267,6 +267,183 @@ export class TiktokPublisher {
     };
   }
 
+  /**
+   * 上传图片（照片）到 TikTok
+   * 流程与 uploadVideo 类似，但图片不需要等待视频预处理，轮询时间更短。
+   * 同样导航至 /tiktokstudio/upload，file input 用 DOM.setFileInputFiles 设置图片。
+   */
+  async uploadPhoto({ filePath, title, hashtags = [], privacyLevel = "public" }) {
+    if (!filePath) throw new Error("缺失图片文件路径");
+
+    // 1. 查找页面中的 file input 节点
+    const doc = await this.client.call("DOM.getDocument", { depth: -1 }, this.sessionId);
+    const fileInput = await this.client.call("DOM.querySelector", {
+      nodeId: doc.root.nodeId,
+      selector: 'input[type="file"]'
+    }, this.sessionId).catch(() => null);
+
+    if (!fileInput || !fileInput.nodeId) {
+      throw new Error("未在 TikTok Studio 上传页面找到 <input type='file'> 元素（请确认已登录账号）");
+    }
+
+    // 2. 使用 CDP DOM.setFileInputFiles 命令直接设置图片文件
+    await this.client.call("DOM.setFileInputFiles", {
+      files: [filePath],
+      nodeId: fileInput.nodeId
+    }, this.sessionId);
+
+    // 3. 等待图片上传并进入编辑界面（图片无需视频预处理，轮询次数少一些）
+    let editorReady = false;
+    for (let i = 0; i < 20; i++) {
+      await new Promise((r) => setTimeout(r, 1000));
+      const res = await this.client.call(
+        "Runtime.evaluate",
+        {
+          expression: `(() => {
+            const editor = document.querySelector('.public-DraftEditor-content')
+              || document.querySelector('[contenteditable="true"]')
+              || document.querySelector('div[data-e2e="caption-input"]')
+              || document.querySelector('textarea');
+            const postBtn = ${FIND_POST_BTN_EXPR};
+            return JSON.stringify({
+              hasEditor: !!editor,
+              hasPostBtn: !!postBtn,
+              postDisabled: postBtn ? (postBtn.disabled || postBtn.getAttribute('aria-disabled') === 'true') : true
+            });
+          })()`,
+          returnByValue: true
+        },
+        this.sessionId
+      );
+      const status = JSON.parse(valueOf(res) || "{}");
+      if (status.hasEditor && status.hasPostBtn) {
+        editorReady = true;
+        break;
+      }
+    }
+
+    if (!editorReady) {
+      throw new Error("图片上传超时，元数据编辑器未在预期时间内就绪");
+    }
+
+    // 4. 填写 Title 与 #Hashtags
+    const fullCaption = `${title || ''} ${hashtags.map(t => t.startsWith('#') ? t : `#${t}`).join(' ')}`.trim();
+    if (fullCaption) {
+      await this.client.call(
+        "Runtime.evaluate",
+        {
+          expression: `(() => {
+            const editor = document.querySelector('.public-DraftEditor-content')
+              || document.querySelector('[contenteditable="true"]')
+              || document.querySelector('div[data-e2e="caption-input"]')
+              || document.querySelector('textarea');
+            if (editor) {
+              editor.focus();
+              return true;
+            }
+            return false;
+          })()`,
+          returnByValue: true
+        },
+        this.sessionId
+      );
+      await new Promise((r) => setTimeout(r, 500));
+      await this.client.call("Input.insertText", { text: fullCaption }, this.sessionId);
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+
+    // 5. 等待"发布"按钮进入可用状态（图片上传通常很快）
+    let canPost = false;
+    for (let i = 0; i < 30; i++) {
+      const res = await this.client.call(
+        "Runtime.evaluate",
+        {
+          expression: `(() => {
+            const postBtn = ${FIND_POST_BTN_EXPR};
+            if (!postBtn) return false;
+            return !(postBtn.disabled || postBtn.getAttribute('aria-disabled') === 'true' || postBtn.classList.contains('disabled'));
+          })()`,
+          returnByValue: true
+        },
+        this.sessionId
+      );
+      canPost = valueOf(res);
+      if (canPost) break;
+      await new Promise((r) => setTimeout(r, 1500));
+    }
+
+    if (!canPost) {
+      throw new Error("图片上传完成但发布按钮未解锁");
+    }
+
+    // 6. 点击"Post / 发布"按钮
+    const clickRes = await this.client.call(
+      "Runtime.evaluate",
+      {
+        expression: `(() => {
+          const postBtn = ${FIND_POST_BTN_EXPR};
+          if (!postBtn) return false;
+          postBtn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+          postBtn.dispatchEvent(new MouseEvent('mouseup',   { bubbles: true, cancelable: true }));
+          postBtn.dispatchEvent(new MouseEvent('click',     { bubbles: true, cancelable: true }));
+          return postBtn.innerText.trim() || 'clicked';
+        })()`,
+        returnByValue: true
+      },
+      this.sessionId
+    );
+
+    if (!valueOf(clickRes)) throw new Error("无法触发发布按钮点击");
+
+    // 7. 等待发布成功反馈
+    let success = false;
+    let publishedPhotoUrl = "";
+    let publishedPhotoId = "";
+
+    for (let i = 0; i < 20; i++) {
+      await new Promise((r) => setTimeout(r, 1000));
+      const res = await this.client.call(
+        "Runtime.evaluate",
+        {
+          expression: `(() => {
+            const bodyText = document.body.innerText || '';
+            const isDone = bodyText.includes('Your photo is being uploaded to TikTok') ||
+                           bodyText.includes('Manage your posts') ||
+                           bodyText.includes('Upload another photo') ||
+                           bodyText.includes('Upload another video') ||
+                           bodyText.includes('你的图片正在上传') ||
+                           bodyText.includes('你的视频正在上传') ||
+                           bodyText.includes('管理你的作品');
+            const linkEl = document.querySelector('a[href*="/photo/"]') || document.querySelector('a[href*="/video/"]');
+            return JSON.stringify({
+              isDone,
+              photoUrl: linkEl ? linkEl.href : ''
+            });
+          })()`,
+          returnByValue: true
+        },
+        this.sessionId
+      );
+      const ret = JSON.parse(valueOf(res) || "{}");
+      if (ret.isDone || ret.photoUrl) {
+        success = true;
+        publishedPhotoUrl = ret.photoUrl;
+        if (publishedPhotoUrl) {
+          const match = publishedPhotoUrl.match(/\/(photo|video)\/(\d+)/);
+          if (match) publishedPhotoId = match[2];
+        }
+        break;
+      }
+    }
+
+    return {
+      ok: success,
+      publishedVideoId: publishedPhotoId,
+      publishedVideoUrl: publishedPhotoUrl,
+      message: success ? "图片发布成功" : "图片已提交发布，最终状态请在账号发布历史中确认"
+    };
+  }
+
   async close() {
     try {
       await this.client.close();

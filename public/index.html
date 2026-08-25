@@ -164,6 +164,21 @@
               <small>在 BitBrowser 备注中填写目标城市名或邮编（如 90001 或 Los Angeles），切换IP后自动匹配</small>
             </span>
           </label>
+          <label class="switch-row">
+            <input id="sched-enable-image-gen" type="checkbox" />
+            <span class="switch" aria-hidden="true"></span>
+            <span>
+              <strong>生图并上传</strong>
+              <small>养号时自动生图并上传到 TikTok</small>
+            </span>
+          </label>
+          <label class="wide-input" id="sched-image-gen-category-row" style="display:none;">
+            <span>生图内容</span>
+            <select id="sched-image-gen-category">
+              <option value="jesus">耶稣圣像</option>
+              <option value="beauty">美女图</option>
+            </select>
+          </label>
         </div>
         <div class="sched-profile-select">
           <div class="sched-profile-select-header">
@@ -1351,6 +1366,40 @@
           <ol id="cdp-logs-list" class="cdp-logs-list" style="padding: 0 24px 24px;">
             <li class="muted-activity">操作后显示日志。</li>
           </ol>
+        </article>
+
+        <!-- ComfyUI 网关配置 -->
+        <article class="panel">
+          <div class="panel-heading">
+            <div>
+              <p class="section-kicker">AI 图片编辑</p>
+              <h2>ComfyUI 网关配置</h2>
+            </div>
+          </div>
+          <div style="padding: 0 24px 24px;">
+            <p class="muted-activity" style="margin-bottom:16px;font-size:12px;line-height:1.6;">
+              将工作流 JSON 文件保存在下方目录中，然后在 ComfyUI UI 里 Ctrl+S 保存或导出 API 格式到该目录即可。<br>
+              调用方通过 <code>POST /api/comfyui/edit</code> 传 <code>workflow=工作流名称</code> + <code>image=图片</code> + <code>instruction=指令</code>，直接拿回编辑后的图片。
+            </p>
+            <div style="display:flex;flex-direction:column;gap:12px;max-width:600px;">
+              <label class="wide-input">
+                <span>工作流存放目录</span>
+                <input id="comfyui-workflow-dir" type="text" style="flex:1;min-width:300px;font-size:12px;" placeholder="F:/Comfy-Desktop/api" />
+              </label>
+              <label class="wide-input">
+                <span>ComfyUI 服务地址</span>
+                <input id="comfyui-host" type="text" style="flex:1;min-width:200px;font-size:12px;" placeholder="http://127.0.0.1:8189" />
+              </label>
+              <div style="display:flex;gap:8px;align-items:center;">
+                <button id="comfyui-config-save" class="button button-secondary" type="button" style="font-size:12px;padding:4px 12px;">保存配置</button>
+                <span id="comfyui-config-result" style="font-size:12px;color:var(--text-muted);"></span>
+              </div>
+            </div>
+            <div style="margin-top:16px;padding:12px 16px;border-radius:8px;background:var(--bg-secondary);font-size:12px;line-height:1.8;">
+              <strong>调用示例：</strong><br>
+              <code style="word-break:break-all;">curl -X POST http://本机IP:39210/api/comfyui/edit -F "image=@商品图.png" -F "instruction=把背景换成纯白" -F "workflow=qwen_edit_2511_api" -o result.png</code>
+            </div>
+          </div>
         </article>
       </section>
 
