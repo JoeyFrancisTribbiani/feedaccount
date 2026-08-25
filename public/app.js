@@ -2655,6 +2655,7 @@ function formatRemaining(ms) {
 const PHASE_LABELS = {
   idle: "空闲", starting: "启动中", switching: "切换实例", opening: "打开浏览器",
   running: "养号中", stopping: "停止任务", finishing: "收尾", completed: "已完成", stopped: "已停止", error: "出错",
+  "image-gen": "生图中",
 };
 
 function schedPlatformHint() {
@@ -2805,6 +2806,20 @@ function renderScheduler() {
     jobDetails = `<div class="sched-job-details">${sections.join("")}</div>`;
   }
 
+  const igTasks = s.imageGen?.tasks || [];
+  const igActive = s.imageGen?.active || 0;
+  const igDone = s.imageGen?.done || 0;
+  const igFailed = s.imageGen?.failed || 0;
+  const igHtml = igTasks.length > 0 ? `
+    <div class="sched-job-details">
+      <div class="sched-job-section">
+        <div class="sched-job-head"><span class="sched-job-tag tag-tiktok">生图任务</span>活跃 ${igActive} · 完成 ${igDone} · 失败 ${igFailed}</div>
+        <div class="sched-job-sub">
+          ${igTasks.slice(0, 5).map((t) => `<div style="padding:2px 0;font-size:12px;">#${t.profileSeq} ${t.category} — <strong>${t.statusLabel}</strong> ${t.elapsedMs ? `(${(t.elapsedMs/1000)|0}s)` : ""} ${t.error ? `<span style="color:#e74c3c">${escapeHtml(t.error.slice(0,80))}</span>` : ""}</div>`).join("")}
+        </div>
+      </div>
+    </div>` : "";
+
   sched.status.innerHTML = `
     <div class="sched-grid">
       <div class="sched-stat"><span>进度</span><strong>${progress}</strong></div>
@@ -2814,7 +2829,8 @@ function renderScheduler() {
     </div>
     ${ipChange}
     ${logs ? `<ol class="database-log-list sched-log">${logs}</ol>` : ""}
-    ${jobDetails}`;
+    ${jobDetails}
+    ${igHtml}`;
 }
 
 async function initScheduler() {

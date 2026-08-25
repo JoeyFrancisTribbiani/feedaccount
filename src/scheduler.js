@@ -1,5 +1,6 @@
 import { checkIpViaSocks5, checkIpGeoViaSocks5 } from "./socks5-check.js";
 import { generatePrompt, getNegativePrompt } from "./image-gen-prompts.js";
+import { ImageGenTaskManager } from "./image-gen-task-manager.js";
 import { TiktokPublisher } from "./tiktok/tiktok-publisher.js";
 import { readFile, writeFile, mkdirSync } from "node:fs";
 import path from "node:path";
@@ -47,6 +48,7 @@ export class RotationScheduler extends EventTarget {
     this.tiktokJobs = tiktokJobs;
     this.persistence = persistence;
     this.defaultProxyRotateUrl = proxyRotateUrl;
+    this.imageGenManager = new ImageGenTaskManager({ bitBrowserApi, persistence });
     this.state = {
       running: false,
       cancelled: false,
@@ -61,6 +63,7 @@ export class RotationScheduler extends EventTarget {
       lastIp: null,
       ipChange: null,
       currentProfileId: null,
+      imageGenTaskId: null,
     };
   }
 
@@ -76,7 +79,7 @@ export class RotationScheduler extends EventTarget {
   }
 
   status() {
-    return { ...this.state, log: this.state.log.slice(-50) };
+    return { ...this.state, imageGen: this.imageGenManager?.getSummary() || null, log: this.state.log.slice(-50) };
   }
 
   async start(options = {}) {
@@ -228,18 +231,23 @@ export class RotationScheduler extends EventTarget {
           .catch((e) => this.#log(`实例 #${profile.seq} TikTok 启动失败：${e.message}`, "warning"));
       }
 
-      // 生图并上传到 TikTok（养号时自动发图）
-      if (opts.enableImageGen) {
-        this.state.phase = "image-gen";
-        this.#emit();
-        try {
-          await this.#generateAndUploadImage(profile, opts);
-        } catch (e) {
-          this.#log(`实例 #${profile.seq} 生图上传失败：${e.message}`, "warning");
-        }
-        this.state.phase = "running";
-        this.#emit();
-      }
+      // 生图并上传到 TikTok（异步并行，不阻塞养号计时）
+            if (opts.enableImageGen) {
+              this.state.phase = "image-gen";
+              this.#emit();
+              const taskId = this.imageGenManager.createTask(profile, opts, (task) => {
+                // 进度回调
+                if (task.status === "done") {
+                  this.#log(`实例 #${profile.seq} 生图上传完成（${task.elapsedMs / 1000 | 0}秒）`, "info", { taskId: task.id, category: task.category });
+                } else if (task.status === "error") {
+                  this.#log(`实例 #${profile.seq} 生图上传失败：${task.error}`, "warning", { taskId: task.id });
+                }
+                this.#emit();
+              });
+              this.state.imageGenTaskId = taskId;
+              this.#log(`实例 #${profile.seq} 生图任务已提交（异步执行，不阻塞养号）`, "info", { taskId, category: opts.imageGenCategory });
+              this.#emit();
+            }
 
       // 跑随机时长
       const minutes = randomInt(opts.minMinutes, opts.maxMinutes);
@@ -271,6 +279,11 @@ export class RotationScheduler extends EventTarget {
       this.#emit();
       await this.redditJobs.stop(profile.id).catch((e) => this.#log(`实例 #${profile.seq} 停止 Reddit 任务时出错：${e.message}`, "warning"));
       await this.tiktokJobs.stop(profile.id).catch((e) => this.#log(`实例 #${profile.seq} 停止 TikTok 任务时出错：${e.message}`, "warning"));
+      // 取消未完成的生图任务
+      if (this.state.imageGenTaskId) {
+        this.imageGenManager.cancelTask(this.state.imageGenTaskId);
+        this.state.imageGenTaskId = null;
+      }
       this.#log(`实例 #${profile.seq} 任务已全部停止`, "info");
       prevId = profile.id;
     }

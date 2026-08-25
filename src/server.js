@@ -841,6 +841,11 @@ export function createMonitorServer({
         sendJson(response, 200, store.getComfyuiConfig());
         return;
       }
+      // 生图任务状态
+      if (request.method === "GET" && pathname === "/api/scheduler/image-gen-tasks") {
+        sendJson(response, 200, scheduler.imageGenManager?.getSummary() || { total: 0, active: 0, tasks: [] });
+        return;
+      }
       if (request.method === "POST" && pathname === "/api/comfyui/config") {
         const body = await readJson(request);
         const config = store.saveComfyuiConfig({
