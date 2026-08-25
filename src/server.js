@@ -3197,7 +3197,7 @@ if (isMain) {
   process.on("SIGINT", () => { killAllDaemons(); process.exit(0); });
   process.on("SIGTERM", () => { killAllDaemons(); process.exit(0); });
   process.on("exit", killAllDaemons);
-    const url = `http://${host}:${port}`;
+    const url = `http://127.0.0.1:${port}`;
     console.log(`BitBrowser Reddit 监控面板已启动：${url}`);
     console.log(`BitBrowser Local API：${bitBrowserApiUrl}`);
     console.log(`本地数据库：${databasePath}`);
