@@ -505,7 +505,36 @@ export function createMonitorServer({
         const fileOutputs = (daemonTask.outputs || []).filter((o) => o.type === "file" || o.type === "image");
         let outputUrl = null;
 
-        if (fileOutputs.length > 0 && fileOutputs[0].type === "image") {
+        // 资源类型校验：根据方案配置的 resourceTypes 检查 AI 是否返回了对应类型的资源
+        const taskInfo = store.getRemixTask(taskId);
+        const expectedTypes = taskInfo?.resourceTypes || ["image"];
+        const hasImages = fileOutputs.some((o) => o.type === "image");
+        const hasVideos = fileOutputs.some((o) => o.type === "file");
+        const expectImage = expectedTypes.includes("image");
+        const expectVideo = expectedTypes.includes("video");
+        if (expectImage && !hasImages && !hasVideos) {
+          // 方案要求图片但 AI 没返回任何图片/视频
+          store.updateRemixTask(taskId, { status: "FAILED", errorMessage: "方案要求返回图片，但 AI 未返回任何图片", completedAt: nowIso() });
+          store.logCdpEvent(null, "error", "资源类型校验失败：方案要求图片但 AI 未返回图片", null, taskId);
+          return;
+        }
+        if (expectImage && expectVideo && (!hasImages || !hasVideos)) {
+          // 方案要求图片+视频但缺少其中一种
+          const missing = [];
+          if (!hasImages) missing.push("图片");
+          if (!hasVideos) missing.push("视频");
+          store.updateRemixTask(taskId, { status: "FAILED", errorMessage: `方案要求图片+视频，但 AI 未返回${missing.join("和")}`, completedAt: nowIso() });
+          store.logCdpEvent(null, "error", `资源类型校验失败：缺少${missing.join("和")}`, null, taskId);
+          return;
+        }
+        if (!expectImage && expectVideo && !hasVideos) {
+          // 方案只要求视频但 AI 没返回视频
+          store.updateRemixTask(taskId, { status: "FAILED", errorMessage: "方案要求返回视频，但 AI 未返回任何视频", completedAt: nowIso() });
+          store.logCdpEvent(null, "error", "资源类型校验失败：方案要求视频但 AI 未返回视频", null, taskId);
+          return;
+        }
+
+        if (hasImages) {
           // 图片输出：下载图片到任务专属目录，按序号命名
           const task = store.getRemixTask(taskId);
           const taskSeq = task?.seqNum || taskId.replace(/[^0-9]/g, "").slice(-6) || taskId;
@@ -632,9 +661,9 @@ export function createMonitorServer({
             // 本地拼接在后台异步执行（不阻塞 AI 队列）
             composeAiRemixVideoAsync(taskId, mainVideoLocalPath, imagePaths, presetId, matrixIds, creatorId, sourceVideoId, videoTitle);
             return; // processSingleAiRemixTask 到此结束，finally 中不再减 aiRemixActiveCount（已提前减了）
-        } else if (fileOutputs.length > 0) {
+        } else if (hasVideos) {
           // 视频输出：直接下载
-          const fileOutput = fileOutputs[0];
+          const fileOutput = fileOutputs.find((o) => o.type === "file");
           const downloadRes = await fetch(`${daemonUrl}${fileOutput.url}`);
           if (downloadRes.ok) {
             const buffer = Buffer.from(await downloadRes.arrayBuffer());
