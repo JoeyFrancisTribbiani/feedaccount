@@ -1105,9 +1105,9 @@ async function handleChatGptAiRemix(taskNo, params) {
     log('未找到视频下载链接，尝试下载图片...')
     // 下载 ChatGPT 生成的图片
     const images = await downloadGeneratedImages(OUTPUTS_DIR)
+    // 无论有没有图片，都尝试提取额外资源（JSON/视频/音频等文件）
+    const extraResources = await extractExtraResources(OUTPUTS_DIR)
     if (images.length > 0) {
-      // 额外提取非图片类型资源（视频/音频/文本/其他文件）
-      const extraResources = await extractExtraResources(OUTPUTS_DIR)
       const outputs = [
         { type: 'text', content: response.text },
         ...images.map(img => ({ type: 'image', filename: img.filename, url: img.downloadUrl || `/outputs/${img.filename}` })),
@@ -1117,11 +1117,25 @@ async function handleChatGptAiRemix(taskNo, params) {
         status: 'completed', outputs, error: null, progress: '100%',
         startedAt: taskStore.get(taskNo).startedAt, completedAt: Date.now(),
       })
-      log(`=== AI 混剪完成，下载了 ${images.length} 张图片 ===`)
+      log(`=== AI 混剪完成，下载了 ${images.length} 张图片, ${extraResources.length} 个额外资源 ===`)
       return
     }
 
-    log('未找到视频链接或图片，保存回复文本')
+    // 没有图片但有额外资源（如分段脚本 JSON）
+    if (extraResources.length > 0) {
+      const outputs = [
+        { type: 'text', content: response.text },
+        ...extraResources,
+      ]
+      taskStore.set(taskNo, {
+        status: 'completed', outputs, error: null, progress: '100%',
+        startedAt: taskStore.get(taskNo).startedAt, completedAt: Date.now(),
+      })
+      log(`=== AI 完成，下载了 ${extraResources.length} 个资源（无图片）===`)
+      return
+    }
+
+    log('未找到视频链接或图片或文件，保存回复文本')
     taskStore.set(taskNo, {
       status: 'completed', outputs: [{ type: 'text', content: response.text }],
       error: null, progress: '100%',
@@ -1235,24 +1249,88 @@ async function extractExtraResources(destDir) {
 
     // 3. 查找回复中的文件下载链接（sandbox/file 下载）
     const turns = document.querySelectorAll('[data-testid^="conversation-turn-"]')
+    // 找最后一个 AI 回复 turn（不限图片，也可能只有文件）
     let lastTurn = null
     for (let i = turns.length - 1; i >= 0; i--) {
-      if (turns[i].querySelectorAll('img[src*="estuary/content"]').length > 0) { lastTurn = turns[i]; break }
+      const turn = turns[i]
+      // 判断是否是 AI 回复（有 markdown 内容或文件链接）
+      if (turn.querySelector('[data-message-author-role="assistant"], .markdown, a[href]')) {
+        lastTurn = turn
+        break
+      }
+    }
+    // 兼容旧逻辑：如果上面没找到，回退找含 estuary 图片的 turn
+    if (!lastTurn) {
+      for (let i = turns.length - 1; i >= 0; i--) {
+        if (turns[i].querySelectorAll('img[src*="estuary/content"]').length > 0) { lastTurn = turns[i]; break }
+      }
     }
     if (lastTurn) {
+      // 先找 <a href> 链接（旧格式）
       lastTurn.querySelectorAll('a[href]').forEach(a => {
         const href = a.href
-        const text = a.textContent || ''
+        const text = (a.textContent || '').trim()
         if (!href || href.includes('javascript:')) return
-        // 排除导航链接
-        if (href.includes('chatgpt.com') && !href.includes('/backend-api/')) return
-        // 判断文件类型
-        const ext = href.split('.').pop()?.toLowerCase().split('?')[0] || ''
-        if (['mp4', 'mov', 'avi', 'webm', 'mkv'].includes(ext)) results.push({ type: 'video', url: href })
+        if (href.includes('chatgpt.com') && !href.includes('/backend-api/') && !href.includes('/sandbox/')) return
+
+        const textLower = text.toLowerCase()
+        const urlExt = (href.split('.').pop()?.toLowerCase().split('?')[0] || '')
+        const fromText = textLower.split('.').pop() || ''
+        const ext = ['json', 'mp4', 'mov', 'avi', 'webm', 'mkv', 'mp3', 'wav', 'aac', 'ogg', 'm4a', 'flac', 'txt', 'md', 'pdf', 'doc', 'docx', 'csv', 'srt'].includes(urlExt) ? urlExt
+          : ['json', 'mp4', 'mov', 'avi', 'webm', 'mkv', 'mp3', 'wav', 'aac', 'ogg', 'm4a', 'flac', 'txt', 'md', 'pdf', 'doc', 'docx', 'csv', 'srt'].includes(fromText) ? fromText : ''
+
+        if (ext === 'json' || textLower.endsWith('_segments.json') || textLower.includes('segment')) {
+          results.push({ type: 'segment_script', url: href, filename: text })
+        }
+        else if (['mp4', 'mov', 'avi', 'webm', 'mkv'].includes(ext)) results.push({ type: 'video', url: href })
         else if (['mp3', 'wav', 'aac', 'ogg', 'm4a', 'flac'].includes(ext)) results.push({ type: 'audio', url: href })
-        else if (ext === 'json') results.push({ type: 'segment_script', url: href })
         else if (['txt', 'md', 'pdf', 'doc', 'docx', 'csv', 'srt'].includes(ext)) results.push({ type: 'text', url: href })
-        else if (!text.includes('查看') && !text.includes('登录')) results.push({ type: 'other', url: href, filename: text })
+        else if (text && !text.includes('查看') && !text.includes('登录') && !text.includes('赞') && !text.includes('踩')) results.push({ type: 'other', url: href, filename: text })
+      })
+
+      // 再找 ChatGPT 新格式的文件按钮（button[aria-label] + sandbox 路径）
+      // ChatGPT 的新文件呈现用 <button> 而不是 <a>，文件路径在 React fiber 的 href prop 中
+      lastTurn.querySelectorAll('button[aria-label]').forEach(btn => {
+        const ariaLabel = (btn.getAttribute('aria-label') || '').trim()
+        if (!ariaLabel) return
+        // 从 aria-label 判断文件类型
+        const ext = ariaLabel.split('.').pop()?.toLowerCase() || ''
+        const knownExts = ['json', 'mp4', 'mov', 'avi', 'webm', 'mkv', 'mp3', 'wav', 'aac', 'ogg', 'm4a', 'flac', 'txt', 'md', 'pdf', 'doc', 'docx', 'csv', 'srt']
+        if (!knownExts.includes(ext)) return
+
+        // 从 React fiber 获取 sandbox: 路径
+        let sandboxPath = ''
+        const reactKey = Object.keys(btn).find(k => k.startsWith('__reactFiber'))
+        if (reactKey) {
+          let f = btn[reactKey]
+          for (let i = 0; i < 15; i++) {
+            if (!f) break
+            if (f.memoizedProps && f.memoizedProps.href && typeof f.memoizedProps.href === 'string' && f.memoizedProps.href.startsWith('sandbox:')) {
+              sandboxPath = f.memoizedProps.href
+              break
+            }
+            f = f.return
+          }
+        }
+
+        // 如果没找到 sandbox 路径，用 aria-label 文件名构造
+        if (!sandboxPath) sandboxPath = `sandbox:/mnt/data/${ariaLabel}`
+
+        // 构造下载 URL：sandbox 路径需要通过 backend-api 下载
+        // sandbox:/mnt/data/filename.json → https://chatgpt.com/backend-api/sandbox/... (需要 cookie)
+        // 但也可以直接用文件名作为标识
+        if (ext === 'json' || ariaLabel.toLowerCase().includes('segment')) {
+          // 避免重复
+          if (!results.some(r => r.filename === ariaLabel || r.url === sandboxPath)) {
+            results.push({ type: 'segment_script', url: sandboxPath, filename: ariaLabel })
+          }
+        } else if (['mp4', 'mov', 'avi', 'webm', 'mkv'].includes(ext)) {
+          if (!results.some(r => r.url === sandboxPath)) results.push({ type: 'video', url: sandboxPath, filename: ariaLabel })
+        } else if (['mp3', 'wav', 'aac', 'ogg', 'm4a', 'flac'].includes(ext)) {
+          if (!results.some(r => r.url === sandboxPath)) results.push({ type: 'audio', url: sandboxPath, filename: ariaLabel })
+        } else {
+          if (!results.some(r => r.url === sandboxPath)) results.push({ type: 'text', url: sandboxPath, filename: ariaLabel })
+        }
       })
     }
 
@@ -1262,9 +1340,61 @@ async function extractExtraResources(destDir) {
   const downloaded = []
   for (const res of resources) {
     try {
+      let url = res.url
+
+      // sandbox: 路径需要通过点击按钮触发下载，拦截 fetch 获取真实 URL
+      if (url.startsWith('sandbox:') || url.startsWith('/mnt/data/')) {
+        const fileName = res.filename || url.split('/').pop()
+        // 在浏览器中点击文件按钮并拦截网络请求获取真实下载 URL
+        const realUrl = await page.evaluate(async (fname) => {
+          // 找到 aria-label 匹配文件名的按钮
+          const btn = document.querySelector(`button[aria-label="${CSS.escape(fname)}"]`)
+          if (!btn) return null
+
+          // 拦截 fetch 获取下载 URL
+          let capturedUrl = null
+          const origFetch = window.fetch
+          window.fetch = function(...args) {
+            const u = typeof args[0] === 'string' ? args[0] : (args[0]?.url || '')
+            if (u.includes('/backend-api/files/') || u.includes('/sandbox/')) {
+              capturedUrl = u
+            }
+            return origFetch.apply(this, args)
+          }
+
+          // 也拦截 PerformanceObserver
+          const entries = []
+          const observer = new PerformanceObserver(list => {
+            for (const entry of list.getEntries()) {
+              if (entry.name.includes('/backend-api/files/')) {
+                entries.push(entry.name)
+              }
+            }
+          })
+          observer.observe({ entryTypes: ['resource'] })
+
+          // 点击按钮
+          btn.click()
+          await new Promise(r => setTimeout(r, 2000))
+
+          // 恢复
+          window.fetch = origFetch
+          observer.disconnect()
+
+          return capturedUrl || entries[0] || null
+        }, fileName)
+
+        if (realUrl) {
+          log(`文件下载URL已截获: ${realUrl.substring(0, 80)}`)
+          url = realUrl
+        } else {
+          log(`无法获取 sandbox 文件下载URL，尝试直接 fetch sandbox 路径`)
+        }
+      }
+
       // 在浏览器上下文中 fetch（带 cookie）
-      const base64Data = await page.evaluate(async (url) => {
-        const resp = await fetch(url, { redirect: 'follow' })
+      const base64Data = await page.evaluate(async (fetchUrl) => {
+        const resp = await fetch(fetchUrl, { redirect: 'follow' })
         if (!resp.ok) return null
         const blob = await resp.blob()
         const reader = new FileReader()
@@ -1273,7 +1403,7 @@ async function extractExtraResources(destDir) {
           reader.onerror = () => resolve(null)
           reader.readAsDataURL(blob)
         })
-      }, res.url)
+      }, url)
       if (!base64Data) { log(`资源下载失败: ${res.type} fetch返回空`); continue }
       const buffer = Buffer.from(base64Data.split(',')[1], 'base64')
       if (buffer.length === 0) continue
