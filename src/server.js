@@ -20,7 +20,7 @@ import { TiktokPublishManager } from "./tiktok/tiktok-publish-manager.js";
 import { RotationScheduler, SCHEDULER_DEFAULTS } from "./scheduler.js";
 import { checkIpGeoViaSocks5 } from "./socks5-check.js";
 import { DEDUP_PRESETS, dedupVideo, stitchVideos, probeVideo, remixVideoWithResources, composeAiRemixVideo, antiAiProcessImage, setOutputDir, setUploadDir, getOutputDir, getUploadDir, OUTPUT_DIR as REMIX_OUTPUT_DIR } from "./video-remix.js";
-import { handleComfyuiEdit, updateComfyuiConfig } from "./comfyui-gateway.js";
+import { handleComfyuiEdit, updateComfyuiConfig, handleV1Models, handleV1ImagesGenerations, handleV1ChatCompletions } from "./comfyui-gateway.js";
 import { ImageGenTaskManager } from "./image-gen-task-manager.js";
 
 const THIS_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -1080,6 +1080,39 @@ export function createMonitorServer({
         ["POST", "PUT", "PATCH", "DELETE"].includes(request.method)
       ) {
         assertLocalWriteRequest(request);
+      }
+
+      // ── OpenAI 兼容路由（给 new-api 做模型提供者）──────────────
+      // GET /v1/models → 模型列表
+      if (request.method === "GET" && pathname === "/v1/models") {
+        handleV1Models(request, response);
+        return;
+      }
+
+      // POST /v1/images/generations → 图片生成/编辑
+      if (request.method === "POST" && pathname === "/v1/images/generations") {
+        let body;
+        try {
+          body = await readJson(request);
+        } catch (e) {
+          sendJson(response, 400, { error: { message: "无效的 JSON 请求体", type: "invalid_request_error" } });
+          return;
+        }
+        await handleV1ImagesGenerations(request, response, body);
+        return;
+      }
+
+      // POST /v1/chat/completions → 对话兼容（包装图片编辑）
+      if (request.method === "POST" && pathname === "/v1/chat/completions") {
+        let body;
+        try {
+          body = await readJson(request);
+        } catch (e) {
+          sendJson(response, 400, { error: { message: "无效的 JSON 请求体", type: "invalid_request_error" } });
+          return;
+        }
+        await handleV1ChatCompletions(request, response, body);
+        return;
       }
 
       if (request.method === "GET" && pathname === "/api/config") {

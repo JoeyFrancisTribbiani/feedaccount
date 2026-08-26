@@ -498,3 +498,199 @@ function sendJsonResponse(response, statusCode, payload) {
   });
   response.end(JSON.stringify(payload));
 }
+
+// ── OpenAI 兼容接口 ──────────────────────────────────
+// 让 new-api 等平台可以把 ComfyUI 当作模型提供者
+
+/**
+ * GET /v1/models → 返回可用模型列表
+ */
+export function handleV1Models(request, response) {
+  sendJsonResponse(response, 200, {
+    object: "list",
+    data: [
+      { id: "comfyui-qwen-edit", object: "model", created: Date.now(), owned_by: "comfyui" },
+      { id: "comfyui-qwen-edit-mega", object: "model", created: Date.now(), owned_by: "comfyui" },
+    ],
+  });
+}
+
+/**
+ * POST /v1/images/generations → OpenAI 图片生成/编辑兼容接口
+ * 
+ * 请求体（OpenAI 格式）:
+ * {
+ *   "model": "comfyui-qwen-edit",
+ *   "prompt": "编辑指令",
+ *   "image": "base64或URL（图片编辑模式）",
+ *   "n": 1,
+ *   "size": "1024x1024",
+ *   "response_format": "b64_json" 或 "url"
+ * }
+ * 
+ * 响应体（OpenAI 格式）:
+ * {
+ *   "created": 1234567890,
+ *   "data": [{ "b64_json": "..." }] 或 [{ "url": "http://..." }]
+ * }
+ */
+export async function handleV1ImagesGenerations(request, response, body) {
+  try {
+    const model = body.model || "comfyui-qwen-edit";
+    const instruction = body.prompt || "";
+    if (!instruction) {
+      sendJsonResponse(response, 400, { error: { message: "prompt (编辑指令) 不能为空", type: "invalid_request_error" } });
+      return;
+    }
+
+    // 解析 size → megapixels
+    let megapixels = 1.0;
+    if (body.size) {
+      const m = body.size.match(/(\d+)x(\d+)/);
+      if (m) {
+        const w = parseInt(m[1], 10);
+        const h = parseInt(m[2], 10);
+        megapixels = (w * h) / 1_000_000;
+      }
+    }
+    // 模型名后缀 -mega → 强制 2.0 megapixels
+    if (model.includes("mega")) megapixels = 2.0;
+
+    // 获取输入图片
+    let imageBuffer = null;
+    let imageName = "input.png";
+
+    if (body.image) {
+      // 图片编辑模式：image 字段可以是 base64 或 URL
+      if (body.image.startsWith("http")) {
+        // 从 URL 下载
+        const imgRes = await fetch(body.image);
+        if (!imgRes.ok) throw new Error(`下载输入图片失败: ${imgRes.status}`);
+        imageBuffer = Buffer.from(await imgRes.arrayBuffer());
+        const ct = imgRes.headers.get("content-type") || "";
+        const ext = ct.includes("png") ? "png" : ct.includes("webp") ? "webp" : "jpg";
+        imageName = `input.${ext}`;
+      } else {
+        // base64（去掉 data:image/xxx;base64, 前缀）
+        const b64 = body.image.replace(/^data:image\/\w+;base64,/, "");
+        imageBuffer = Buffer.from(b64, "base64");
+      }
+    }
+
+    if (!imageBuffer) {
+      sendJsonResponse(response, 400, { error: { message: "image 字段不能为空（需要 base64 或 URL）", type: "invalid_request_error" } });
+      return;
+    }
+
+    // 工作流名称
+    const workflowName = model.includes("mega") ? "qwen_edit_2511_api" : (body.workflow || "qwen_edit_2511_api");
+
+    // 1. 上传图片到 ComfyUI
+    const uploadedImageName = await uploadImage(imageBuffer, imageName);
+
+    // 2. 构建工作流
+    const workflow = await buildWorkflow(workflowName, uploadedImageName, instruction, megapixels);
+
+    // 3. 提交工作流
+    const promptId = await submitWorkflow(workflow);
+
+    // 4. 轮询等待结果
+    const imageInfo = await pollResult(promptId);
+
+    // 5. 下载结果
+    const resultBuffer = await downloadResult(imageInfo);
+
+    // 6. 按响应格式返回
+    const responseFormat = body.response_format || "b64_json";
+    if (responseFormat === "url") {
+      // 返回 URL 格式（需要服务端提供文件访问）
+      const resultFileName = `openai_result_${Date.now()}.png`;
+      const resultPath = path.join(getOutputDir?.() || path.resolve(process.cwd(), "data", "remix-output"), resultFileName);
+      const { writeFileSync: writeSync } = await import("fs");
+      writeSync(resultPath, resultBuffer);
+      sendJsonResponse(response, 200, {
+        created: Math.floor(Date.now() / 1000),
+        data: [{ url: `/data/remix-output/${resultFileName}` }],
+      });
+    } else {
+      // 默认返回 base64
+      const b64 = resultBuffer.toString("base64");
+      sendJsonResponse(response, 200, {
+        created: Math.floor(Date.now() / 1000),
+        data: [{ b64_json: b64 }],
+      });
+    }
+  } catch (err) {
+    console.error("[comfyui-gateway] v1/images/generations 错误:", err.message);
+    sendJsonResponse(response, 500, { error: { message: err.message, type: "server_error" } });
+  }
+}
+
+/**
+ * POST /v1/chat/completions → OpenAI 对话兼容接口（简单包装图片编辑为对话）
+ * 
+ * 请求体:
+ * {
+ *   "model": "comfyui-qwen-edit",
+ *   "messages": [
+ *     { "role": "user", "content": "编辑指令" }
+ *   ],
+ *   "image": "base64或URL"  // 额外字段，或放在 messages 的 image_url 中
+ * }
+ * 
+ * 响应体:
+ * {
+ *   "id": "chatcmpl-xxx",
+ *   "object": "chat.completion",
+ *   "created": 1234567890,
+ *   "model": "comfyui-qwen-edit",
+ *   "choices": [{
+ *     "index": 0,
+ *     "message": { "role": "assistant", "content": "![image](/data/remix-output/xxx.png)" },
+ *     "finish_reason": "stop"
+ *   }],
+ *   "usage": { "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0 }
+ * }
+ */
+export async function handleV1ChatCompletions(request, response, body) {
+  try {
+    const model = body.model || "comfyui-qwen-edit";
+    
+    // 从 messages 中提取编辑指令和图片
+    let instruction = "";
+    let imageUrl = "";
+
+    for (const msg of body.messages || []) {
+      if (msg.role === "user") {
+        if (typeof msg.content === "string") {
+          instruction = msg.content;
+        } else if (Array.isArray(msg.content)) {
+          // OpenAI vision 格式：[{type:"text", text:"..."}, {type:"image_url", image_url:{url:"..."}}]
+          for (const part of msg.content) {
+            if (part.type === "text") instruction += part.text;
+            else if (part.type === "image_url" && part.image_url?.url) imageUrl = part.image_url.url;
+          }
+        }
+      }
+    }
+
+    // 也支持顶层 image 字段
+    if (!imageUrl && body.image) imageUrl = body.image;
+
+    if (!instruction) {
+      sendJsonResponse(response, 400, { error: { message: "未找到编辑指令（messages 中的 text）", type: "invalid_request_error" } });
+      return;
+    }
+
+    // 构造 images/generations 请求并复用
+    await handleV1ImagesGenerations(request, response, {
+      model,
+      prompt: instruction,
+      image: imageUrl,
+      response_format: "url",
+    });
+  } catch (err) {
+    console.error("[comfyui-gateway] v1/chat/completions 错误:", err.message);
+    sendJsonResponse(response, 500, { error: { message: err.message, type: "server_error" } });
+  }
+}
