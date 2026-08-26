@@ -1098,44 +1098,58 @@ async function handleChatGptAiRemix(taskNo, params) {
 
   checkAbort('Step 4')
   // Step 4: 从回复中提取视频下载链接
-  log('Step 4: 提取视频下载链接...')
+  log('Step 4: 提取资源下载链接...')
+  const expectImage = expectedResourceTypes.includes('image')
+  const expectVideo = expectedResourceTypes.includes('video')
+  const expectOther = expectedResourceTypes.some(t => ['segment_script', 'text', 'audio', 'other'].includes(t))
+  log(`期望资源类型: ${expectedResourceTypes.join(', ')}`)
+
   const videoLinks = extractVideoLinks(response.text)
 
-  if (!videoLinks.length) {
-    log('未找到视频下载链接，尝试下载图片...')
-    // 下载 ChatGPT 生成的图片
-    const images = await downloadGeneratedImages(OUTPUTS_DIR)
-    // 无论有没有图片，都尝试提取额外资源（JSON/视频/音频等文件）
-    const extraResources = await extractExtraResources(OUTPUTS_DIR)
-    if (images.length > 0) {
-      const outputs = [
-        { type: 'text', content: response.text },
-        ...images.map(img => ({ type: 'image', filename: img.filename, url: img.downloadUrl || `/outputs/${img.filename}` })),
-        ...extraResources,
-      ]
+  if (!videoLinks.length || !expectVideo) {
+    // 没有视频链接，或不期望视频，按需下载其他资源
+    const outputs = [{ type: 'text', content: response.text }]
+    let downloadedCount = 0
+
+    // 按需下载图片
+    if (expectImage) {
+      log('下载图片...')
+      const images = await downloadGeneratedImages(OUTPUTS_DIR)
+      if (images.length > 0) {
+        outputs.push(...images.map(img => ({ type: 'image', filename: img.filename, url: img.downloadUrl || `/outputs/${img.filename}` })))
+        downloadedCount += images.length
+      }
+    }
+
+    // 按需下载额外资源（JSON/视频/音频/文本/其他文件）
+    if (expectOther) {
+      log('提取额外资源文件...')
+      const extraResources = await extractExtraResources(OUTPUTS_DIR)
+      // 只保留期望的类型
+      const filtered = extraResources.filter(r => {
+        if (r.type === 'segment_script' && expectedResourceTypes.includes('segment_script')) return true
+        if (r.type === 'video' && expectVideo) return true
+        if (r.type === 'audio' && expectedResourceTypes.includes('audio')) return true
+        if (r.type === 'text' && expectedResourceTypes.includes('text')) return true
+        if (r.type === 'other' && expectedResourceTypes.includes('other')) return true
+        return false
+      })
+      if (filtered.length > 0) {
+        outputs.push(...filtered)
+        downloadedCount += filtered.length
+      }
+    }
+
+    if (downloadedCount > 0) {
       taskStore.set(taskNo, {
         status: 'completed', outputs, error: null, progress: '100%',
         startedAt: taskStore.get(taskNo).startedAt, completedAt: Date.now(),
       })
-      log(`=== AI 混剪完成，下载了 ${images.length} 张图片, ${extraResources.length} 个额外资源 ===`)
+      log(`=== AI 完成，下载了 ${downloadedCount} 个资源 ===`)
       return
     }
 
-    // 没有图片但有额外资源（如分段脚本 JSON）
-    if (extraResources.length > 0) {
-      const outputs = [
-        { type: 'text', content: response.text },
-        ...extraResources,
-      ]
-      taskStore.set(taskNo, {
-        status: 'completed', outputs, error: null, progress: '100%',
-        startedAt: taskStore.get(taskNo).startedAt, completedAt: Date.now(),
-      })
-      log(`=== AI 完成，下载了 ${extraResources.length} 个资源（无图片）===`)
-      return
-    }
-
-    log('未找到视频链接或图片或文件，保存回复文本')
+    log('未找到任何期望的资源，保存回复文本')
     taskStore.set(taskNo, {
       status: 'completed', outputs: [{ type: 'text', content: response.text }],
       error: null, progress: '100%',
