@@ -842,83 +842,116 @@ export function createMonitorServer({
               if (scriptPath && existsSync(scriptPath)) {
                 const { readFileSync } = await import("fs");
                 const scriptData = JSON.parse(readFileSync(scriptPath, "utf-8"));
-                const segments = scriptData.segments || scriptData || [];
-                if (Array.isArray(segments) && segments.length >= 3) {
-                  // 解析每段的起止帧
-                  const parsedSegs = segments.map((s, i) => ({
-                    index: i,
-                    startFrame: s.startFrame ?? s.start_frame ?? s.start,
-                    endFrame: s.endFrame ?? s.end_frame ?? s.end,
-                    subtitle: s.subtitle ?? s.text ?? "",
-                  })).filter(s => typeof s.startFrame === "number" && typeof s.endFrame === "number");
 
-                  if (parsedSegs.length >= 3) {
-                    store.logCdpEvent(null, "info", `分段脚本: ${parsedSegs.length}段, 打乱中间段顺序`, null, taskId);
-
-                    // 保留第一段和最后一段，打乱中间段
-                    const firstSeg = parsedSegs[0];
-                    const lastSeg = parsedSegs[parsedSegs.length - 1];
-                    const middleSegs = parsedSegs.slice(1, -1);
-                    // Fisher-Yates 洗牌
-                    for (let i = middleSegs.length - 1; i > 0; i--) {
-                      const j = Math.floor(Math.random() * (i + 1));
-                      [middleSegs[i], middleSegs[j]] = [middleSegs[j], middleSegs[i]];
-                    }
-                    const shuffledSegs = [firstSeg, ...middleSegs, lastSeg];
-
-                    // 记录打乱后的顺序
-                    store.logCdpEvent(null, "info", `分段打乱: ${shuffledSegs.map(s => s.index).join("→")}`, null, taskId);
-
-                    // 用 FFmpeg 按帧范围切割并重新拼接
-                    const { probeVideo } = await import("./video-remix.js");
-                    const videoMeta = await probeVideo(mainVideoLocalPath);
-                    const fps = videoMeta?.fps || 30;
-                    const shuffledPath = path.join(getOutputDir(), `shuffled_${Date.now()}.mp4`);
-
-                    // 切割每段
-                    const segFiles = [];
-                    for (let i = 0; i < shuffledSegs.length; i++) {
-                      const seg = shuffledSegs[i];
-                      const segPath = path.join(getOutputDir(), `seg_${i}_${Date.now()}.mp4`);
-                      const startTime = (seg.startFrame / fps).toFixed(3);
-                      const endTime = (seg.endFrame / fps).toFixed(3);
-                      const { execFileSync } = await import("child_process");
-                      execFileSync("ffmpeg", [
-                        "-err_detect", "ignore_err", "-y",
-                        "-i", mainVideoLocalPath,
-                        "-ss", startTime, "-to", endTime,
-                        "-c:v", "libx264", "-crf", "23", "-preset", "veryfast",
-                        "-c:a", "aac", "-b:a", "128k",
-                        "-pix_fmt", "yuv420p", "-movflags", "+faststart",
-                        segPath,
-                      ], { stdio: "pipe", timeout: 300000 });
-                      segFiles.push(segPath);
-                    }
-
-                    // 拼接所有段
-                    const listFile = path.join(getOutputDir(), `concat_list_${Date.now()}.txt`);
-                    const { writeFileSync: writeSync } = await import("fs");
-                    writeSync(listFile, segFiles.map(f => `file '${f.replace(/'/g, "'\\''")}'`).join("\n"), "utf-8");
-                    const { execFileSync } = await import("child_process");
-                    execFileSync("ffmpeg", [
-                      "-err_detect", "ignore_err", "-y",
-                      "-f", "concat", "-safe", "0",
-                      "-i", listFile,
-                      "-c", "copy",
-                      "-movflags", "+faststart",
-                      shuffledPath,
-                    ], { stdio: "pipe", timeout: 300000 });
-
-                    // 清理临时文件
-                    try { for (const f of segFiles) unlinkSync(f); unlinkSync(listFile); } catch {}
-
-                    store.logCdpEvent(null, "info", `分段打乱完成: ${shuffledPath}`, null, taskId);
-                    videoForRemix = shuffledPath;
-                  } else {
-                    store.logCdpEvent(null, "warning", "分段脚本段数不足(<3)，跳过打乱", null, taskId);
-                  }
+                // 检查 status
+                if (scriptData.status === "failed") {
+                  const errMsg = scriptData.errors?.map(e => e.message).join("; ") || "分段脚本分析失败";
+                  store.logCdpEvent(null, "warning", `分段脚本状态: failed — ${errMsg}`, null, taskId);
                 } else {
-                  store.logCdpEvent(null, "warning", "分段脚本格式无效或段数不足", null, taskId);
+                  const segments = scriptData.segments || [];
+                  if (Array.isArray(segments) && segments.length >= 3) {
+                    // 解析每段：字段名为 start_frame / end_frame（snake_case），reorderable 为布尔值
+                    const parsedSegs = segments.map((s, i) => ({
+                      index: i,
+                      originalOrder: s.original_order ?? (i + 1),
+                      segmentId: s.segment_id ?? `seg_${String(i + 1).padStart(3, "0")}`,
+                      segmentType: s.segment_type ?? "other",
+                      startFrame: s.start_frame ?? s.startFrame ?? s.start,
+                      endFrame: s.end_frame ?? s.endFrame ?? s.end,
+                      reorderable: s.reorderable === true,
+                      contentSummary: s.content_summary ?? s.topic_point ?? "",
+                      dependencyNote: s.dependency_note ?? "",
+                    })).filter(s => typeof s.startFrame === "number" && typeof s.endFrame === "number");
+
+                    if (parsedSegs.length >= 3) {
+                      // 按提示词规则打乱：只打乱 reorderable=true 的段，false 的保持原位
+                      const trueIndices = parsedSegs.map((s, i) => s.reorderable ? i : -1).filter(i => i >= 0);
+                      const falseIndices = parsedSegs.map((s, i) => !s.reorderable ? i : -1).filter(i => i >= 0);
+
+                      if (trueIndices.length >= 2) {
+                        // 提取 true 段
+                        const trueSegs = trueIndices.map(i => parsedSegs[i]);
+
+                        // Fisher-Yates 洗牌，确保结果与原顺序不同
+                        let shuffled;
+                        let attempts = 0;
+                        do {
+                          shuffled = [...trueSegs];
+                          for (let i = shuffled.length - 1; i > 0; i--) {
+                            const j = Math.floor(Math.random() * (i + 1));
+                            [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+                          }
+                          attempts++;
+                        } while (shuffled.every((s, i) => s.index === trueSegs[i].index) && attempts < 10);
+
+                        // 将打乱后的 true 段放回原槽位
+                        const result = [...parsedSegs];
+                        for (let i = 0; i < trueIndices.length; i++) {
+                          result[trueIndices[i]] = shuffled[i];
+                        }
+
+                        store.logCdpEvent(null, "info", `分段脚本: ${parsedSegs.length}段, reorderable=true: ${trueIndices.length}个, 打乱顺序`, null, taskId);
+                        store.logCdpEvent(null, "info", `打乱前: ${parsedSegs.map(s => s.index + (s.reorderable ? "(T)" : "(F)")).join(" ")}`, null, taskId);
+                        store.logCdpEvent(null, "info", `打乱后: ${result.map(s => s.index).join("→")}`, null, taskId);
+
+                        // 用 FFmpeg 按帧范围切割并重新拼接
+                        const { probeVideo } = await import("./video-remix.js");
+                        const videoMeta = await probeVideo(mainVideoLocalPath);
+                        const fps = videoMeta?.fps || 30;
+                        const shuffledPath = path.join(getOutputDir(), `shuffled_${Date.now()}.mp4`);
+
+                        // 切割每段（按打乱后的顺序）
+                        const segFiles = [];
+                        for (let i = 0; i < result.length; i++) {
+                          const seg = result[i];
+                          const segPath = path.join(getOutputDir(), `seg_${i}_${Date.now()}.mp4`);
+                          // start_frame 和 end_frame 都是包含端点的帧号
+                          // 转为时间：帧号 / fps
+                          const startTime = (seg.startFrame / fps).toFixed(3);
+                          // end_frame 是包含的最后一帧，+1 得到切出时间（左闭右开）
+                          const endTime = ((seg.endFrame + 1) / fps).toFixed(3);
+                          const { execFileSync } = await import("child_process");
+                          execFileSync("ffmpeg", [
+                            "-err_detect", "ignore_err", "-y",
+                            "-i", mainVideoLocalPath,
+                            "-ss", startTime, "-to", endTime,
+                            "-c:v", "libx264", "-crf", "23", "-preset", "veryfast",
+                            "-c:a", "aac", "-b:a", "128k",
+                            "-pix_fmt", "yuv420p", "-movflags", "+faststart",
+                            "-shortest",
+                            segPath,
+                          ], { stdio: "pipe", timeout: 300000 });
+                          segFiles.push(segPath);
+                        }
+
+                        // 拼接所有段
+                        const listFile = path.join(getOutputDir(), `concat_list_${Date.now()}.txt`);
+                        const { writeFileSync: writeSync } = await import("fs");
+                        writeSync(listFile, segFiles.map(f => `file '${f.replace(/'/g, "'\\''")}'`).join("\n"), "utf-8");
+                        const { execFileSync } = await import("child_process");
+                        execFileSync("ffmpeg", [
+                          "-err_detect", "ignore_err", "-y",
+                          "-f", "concat", "-safe", "0",
+                          "-i", listFile,
+                          "-c", "copy",
+                          "-movflags", "+faststart",
+                          shuffledPath,
+                        ], { stdio: "pipe", timeout: 300000 });
+
+                        // 清理临时文件
+                        try { for (const f of segFiles) unlinkSync(f); unlinkSync(listFile); } catch {}
+
+                        store.logCdpEvent(null, "info", `分段打乱完成: ${shuffledPath}`, null, taskId);
+                        videoForRemix = shuffledPath;
+                      } else {
+                        store.logCdpEvent(null, "info", `reorderable=true 的段不足2个(${trueIndices.length}个)，不执行打乱`, null, taskId);
+                      }
+                    } else {
+                      store.logCdpEvent(null, "warning", "分段脚本有效段数不足(<3)，跳过打乱", null, taskId);
+                    }
+                  } else {
+                    store.logCdpEvent(null, "warning", "分段脚本格式无效或段数不足", null, taskId);
+                  }
                 }
               } else {
                 store.logCdpEvent(null, "warning", "分段脚本文件不存在", null, taskId);
