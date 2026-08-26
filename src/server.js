@@ -570,8 +570,8 @@ export function createMonitorServer({
           return;
         }
 
-        // Step 4: 从 daemon 输出中找到文件（视频或图片）并下载到本地
-        const fileOutputs = (daemonTask.outputs || []).filter((o) => o.type === "file" || o.type === "image");
+        // Step 4: 从 daemon 输出中找到文件（视频或图片或分段脚本）并下载到本地
+        const fileOutputs = (daemonTask.outputs || []).filter((o) => o.type === "file" || o.type === "image" || o.type === "segment_script");
         let outputUrl = null;
 
         // 资源类型校验：根据方案配置的 resourceTypes 检查 AI 是否返回了对应类型的资源
@@ -579,8 +579,17 @@ export function createMonitorServer({
         const expectedTypes = taskInfo?.resourceTypes || ["image"];
         const hasImages = fileOutputs.some((o) => o.type === "image");
         const hasVideos = fileOutputs.some((o) => o.type === "file");
+        const hasSegmentScripts = fileOutputs.some((o) => o.type === "segment_script");
         const expectImage = expectedTypes.includes("image");
         const expectVideo = expectedTypes.includes("video");
+        const expectSegmentScript = expectedTypes.includes("segment_script");
+
+        // 分段脚本校验
+        if (expectSegmentScript && !hasSegmentScripts) {
+          store.updateRemixTask(taskId, { status: "FAILED", errorMessage: "方案要求返回分段脚本，但 AI 未返回任何分段脚本 JSON", completedAt: nowIso() });
+          store.logCdpEvent(null, "error", "资源类型校验失败：方案要求分段脚本但 AI 未返回", null, taskId);
+          return;
+        }
         if (expectImage && !hasImages && !hasVideos) {
           // 方案要求图片但 AI 没返回任何图片/视频
           store.updateRemixTask(taskId, { status: "FAILED", errorMessage: "方案要求返回图片，但 AI 未返回任何图片", completedAt: nowIso() });
@@ -751,7 +760,38 @@ export function createMonitorServer({
           }
         }
 
-        // 走到这里说明既没有图片也没有视频
+        // 分段脚本输出：下载 JSON 到本地，然后走本地拼接（去重+分段打乱+片头片尾+音乐）
+        if (hasSegmentScripts) {
+          const scriptOutput = fileOutputs.find((o) => o.type === "segment_script");
+          if (scriptOutput) {
+            try {
+              const scriptDownloadRes = await fetch(`${daemonUrl}${scriptOutput.url}`);
+              if (scriptDownloadRes.ok) {
+                const buffer = Buffer.from(await scriptDownloadRes.arrayBuffer());
+                const scriptFileName = `ai_segment_script_${Date.now()}.json`;
+                const scriptPath = path.join(getOutputDir(), scriptFileName);
+                writeFileSync(scriptPath, buffer);
+                store.logCdpEvent(null, "info", `分段脚本已下载: ${scriptFileName} (${buffer.length} bytes)`, null, taskId);
+
+                // 记录到任务资源表
+                store.createTaskResource({ taskId, type: "segment_script", filePath: `/data/remix-output/${scriptFileName}`, filename: scriptFileName, fileSize: buffer.length });
+
+                // 走本地拼接（分段打乱+去重+片头片尾+音乐）
+                store.logCdpEvent(null, "info", `分段脚本模式，开始本地拼接`, null, taskId);
+                aiRemixActiveCount--;
+                processAiRemixQueue();
+                composeAiRemixVideoAsync(taskId, mainVideoLocalPath, [], presetId, matrixIds, creatorId, sourceVideoId, videoTitle);
+                return;
+              } else {
+                store.logCdpEvent(null, "error", `分段脚本下载失败: ${scriptDownloadRes.status}`, null, taskId);
+              }
+            } catch (e) {
+              store.logCdpEvent(null, "error", `分段脚本下载异常: ${e.message}`, null, taskId);
+            }
+          }
+        }
+
+        // 走到这里说明既没有图片也没有视频也没有分段脚本
         store.updateRemixTask(taskId, {
           status: "FAILED",
           errorMessage: "AI 未返回任何可用的图片或视频",

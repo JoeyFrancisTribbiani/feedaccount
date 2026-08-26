@@ -1118,6 +1118,64 @@ async function handleChatGptAiRemix(taskNo, params) {
     const outputs = [{ type: 'text', content: response.text }]
     let downloadedCount = 0
 
+    // 分段脚本：直接从回复文本中提取 JSON（不依赖文件下载）
+    if (expectedResourceTypes.includes('segment_script')) {
+      log('提取分段脚本 JSON...')
+      // 尝试从回复文本中提取 JSON 对象
+      const text = response.text || ''
+      // 匹配 { 开头到 } 结尾的 JSON 块（支持 markdown 代码块内或裸 JSON）
+      let jsonStr = null
+      // 先尝试从 markdown 代码块中提取
+      const codeBlockMatch = text.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/)
+      if (codeBlockMatch) {
+        jsonStr = codeBlockMatch[1].trim()
+      } else if (text.trim().startsWith('{')) {
+        // 整个回复就是 JSON
+        jsonStr = text.trim()
+      } else {
+        // 找第一个 { 到最后一个 } 的内容
+        const firstBrace = text.indexOf('{')
+        const lastBrace = text.lastIndexOf('}')
+        if (firstBrace >= 0 && lastBrace > firstBrace) {
+          jsonStr = text.substring(firstBrace, lastBrace + 1)
+        }
+      }
+
+      if (jsonStr) {
+        // 验证是否为有效 JSON
+        try {
+          const parsed = JSON.parse(jsonStr)
+          const jsonBuffer = Buffer.from(jsonStr, 'utf-8')
+          const filename = `ai_segment_script_${Date.now()}_1.json`
+          const filepath = join(OUTPUTS_DIR, filename)
+          await writeFile(filepath, jsonBuffer)
+          outputs.push({ type: 'segment_script', filename, url: `/outputs/${filename}` })
+          downloadedCount++
+          log(`分段脚本 JSON 已提取: ${filename} (${jsonBuffer.length} bytes, segments: ${parsed.segment_count || parsed.segments?.length || '?'})`)
+        } catch (e) {
+          log(`回复文本中的 JSON 解析失败: ${e.message}`)
+          // 解析失败，尝试文件下载作为回退
+          log('回退到文件下载方式...')
+          const extraResources = await extractExtraResources(OUTPUTS_DIR)
+          const filtered = extraResources.filter(r => r.type === 'segment_script')
+          if (filtered.length > 0) {
+            outputs.push(...filtered)
+            downloadedCount += filtered.length
+          }
+        }
+      } else {
+        log('回复文本中未找到 JSON 内容')
+        // 回退到文件下载
+        log('回退到文件下载方式...')
+        const extraResources = await extractExtraResources(OUTPUTS_DIR)
+        const filtered = extraResources.filter(r => r.type === 'segment_script')
+        if (filtered.length > 0) {
+          outputs.push(...filtered)
+          downloadedCount += filtered.length
+        }
+      }
+    }
+
     // 按需下载图片
     if (expectImage) {
       log('下载图片...')
