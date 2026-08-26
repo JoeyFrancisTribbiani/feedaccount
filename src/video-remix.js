@@ -263,7 +263,7 @@ async function processSingleVideo(inputPath, outputPath, meta, options = {}) {
   }
 
   // 特效参数：正片叠底混合 + 69%透明度 + 两个素材反向旋转
-  const EFFECT_OPACITY = 0.69;
+  const EFFECT_OPACITY = 0.01;
   const rotateSpeed1 = (1.5 + Math.random() * 1.5); // 顺时针 1.5-3 弧度/秒
   const rotateSpeed2 = -rotateSpeed1 - (Math.random() * 0.5 - 0.25); // 反向，略不同速
 
