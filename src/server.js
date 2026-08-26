@@ -519,9 +519,83 @@ export function createMonitorServer({
     store.updateRemixTask(taskId, { status: "PROCESSING" });
     store.logCdpEvent(null, "info", `AI混剪任务开始: ${taskId}`, null, taskId);
     try {
+        // Step 0: 预压缩和穿搭取图（异步处理，不阻塞提交）
+        let uploadFiles = [...filesToUpload];
+        let uploadMainVideoPath = mainVideoLocalPath;
+
+        // 预压缩：文件超过50MB先压缩
+        if (uploadMainVideoPath && existsSync(uploadMainVideoPath)) {
+          try {
+            const { statSync } = await import('fs');
+            const fileSize = statSync(uploadMainVideoPath).size;
+            if (fileSize > 50 * 1024 * 1024) {
+              store.logCdpEvent(null, "info", `原视频 ${Math.round(fileSize / 1024 / 1024)}MB 超过50MB，预压缩...`, null, taskId);
+              const { execFileSync } = await import('child_process');
+              const compressedPath = path.join(path.dirname(getOutputDir()), 'remix-tmp', `precompressed_${Date.now()}.mp4`);
+              const compress = (input, output, crf, scale) => {
+                execFileSync('ffmpeg', ['-err_detect', 'ignore_err', '-y', '-i', input, '-c:v', 'libx264', '-crf', String(crf), '-preset', 'fast', '-vf', `scale=${scale}`, '-c:a', 'aac', '-b:a', '96k', '-movflags', '+faststart', output], { stdio: 'pipe', timeout: 300000 });
+              };
+              compress(uploadMainVideoPath, compressedPath, 28, '-2:1920');
+              let compressedSize = statSync(compressedPath).size;
+              if (compressedSize > 50 * 1024 * 1024) {
+                const tmpPath = compressedPath.replace('.mp4', '_2.mp4');
+                compress(compressedPath, tmpPath, 32, '-2:1280');
+                const { renameSync } = await import('fs');
+                renameSync(tmpPath, compressedPath);
+                compressedSize = statSync(compressedPath).size;
+              }
+              store.logCdpEvent(null, "info", `预压缩完成: ${Math.round(compressedSize / 1024 / 1024)}MB`, null, taskId);
+              uploadMainVideoPath = compressedPath;
+              uploadFiles = [compressedPath];
+            }
+          } catch (e) { store.logCdpEvent(null, "warning", `预压缩失败，使用原文件: ${e.message}`, null, taskId); }
+        }
+
+        // 穿搭指南取图
+        if (presetId) {
+          const preset = store.getAiRemixPreset(presetId);
+          if (preset?.outfitGuide) {
+            if (preset.outfitSource === "remote") {
+              try {
+                const pickUrl = preset.outfitPickUrl || "http://localhost:12999/api/image-washing/queue/pick";
+                const pickIndices = preset.outfitPickIndex || [1];
+                const pickRes = await fetch(pickUrl, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ indices: pickIndices }) });
+                if (pickRes.ok) {
+                  const pickData = await pickRes.json();
+                  if (pickData.productId && pickData.images?.length) {
+                    const outfitTaskIds = pickData.images.map(img => img.taskId);
+                    store.updateRemixTask(taskId, { outfitTaskIds });
+                    for (const img of pickData.images) {
+                      try {
+                        if (!img.url) continue;
+                        const imgRes = await fetch(img.url);
+                        if (imgRes.ok) {
+                          const buffer = Buffer.from(await imgRes.arrayBuffer());
+                          const fileName = `outfit_remote_${img.taskId}_${Date.now()}.jpg`;
+                          writeFileSync(path.join(getOutputDir(), fileName), buffer);
+                          uploadFiles.push(path.join(getOutputDir(), fileName));
+                        }
+                      } catch (e) { store.logCdpEvent(null, "warning", `穿搭指南[远程]下载失败: ${e.message}`, null, taskId); }
+                    }
+                  }
+                }
+              } catch (e) { store.logCdpEvent(null, "warning", `穿搭指南[远程]取图异常: ${e.message}`, null, taskId); }
+            } else {
+              const outfitCats = ["shoes", "clothing", "scene"];
+              for (const cat of outfitCats) {
+                const outfit = store.randomOutfitByCategory(cat);
+                if (outfit) {
+                  const p = path.resolve(THIS_DIR, "..", outfit.file_path.replace(/^\//, ""));
+                  if (existsSync(p)) { uploadFiles.push(p); store.logCdpEvent(null, "info", `穿搭指南[${cat}]: ${outfit.brand}`, null, taskId); }
+                }
+              }
+            }
+          }
+        }
+
         // Step 1: 上传文件到 daemon
         const fileIds = [];
-        for (const filePath of filesToUpload) {
+        for (const filePath of uploadFiles) {
           if (!filePath || !existsSync(filePath)) {
             store.logCdpEvent(null, "warning", `AI混剪: 文件不存在，跳过: ${filePath}`, null, taskId);
             continue;
@@ -737,7 +811,7 @@ export function createMonitorServer({
             processAiRemixQueue();
 
             // 本地拼接在后台异步执行（不阻塞 AI 队列）
-            composeAiRemixVideoAsync(taskId, mainVideoLocalPath, imagePaths, presetId, matrixIds, creatorId, sourceVideoId, videoTitle);
+            composeAiRemixVideoAsync(taskId, uploadMainVideoPath || mainVideoLocalPath, imagePaths, presetId, matrixIds, creatorId, sourceVideoId, videoTitle);
             return; // processSingleAiRemixTask 到此结束，finally 中不再减 aiRemixActiveCount（已提前减了）
         } else if (hasVideos) {
           // 视频输出：下载后走本地拼接流程（去重/片头片尾/背景音乐）
@@ -780,7 +854,7 @@ export function createMonitorServer({
                 store.logCdpEvent(null, "info", `分段脚本模式，开始本地拼接`, null, taskId);
                 aiRemixActiveCount--;
                 processAiRemixQueue();
-                composeAiRemixVideoAsync(taskId, mainVideoLocalPath, [], presetId, matrixIds, creatorId, sourceVideoId, videoTitle);
+                composeAiRemixVideoAsync(taskId, uploadMainVideoPath || mainVideoLocalPath, [], presetId, matrixIds, creatorId, sourceVideoId, videoTitle);
                 return;
               } else {
                 store.logCdpEvent(null, "error", `分段脚本下载失败: ${scriptDownloadRes.status}`, null, taskId);
@@ -2312,7 +2386,7 @@ export function createMonitorServer({
             return path.resolve(THIS_DIR, "..", fp.replace(/^\//, ""));
           };
 
-          // 为每个视频创建 remix task
+          // 为每个视频创建 remix task（快速创建，预压缩和穿搭取图交给队列异步处理）
           const tasks = [];
           for (const video of selectedVideos) {
             const title = `AI混剪 · ${video.title || "未命名"} → ${matrixIds.length}个矩阵`;
@@ -2331,99 +2405,11 @@ export function createMonitorServer({
               }
             }
 
-            // AI混剪只上传原视频，方案绑定的文件用于后续拼接不上传给ChatGPT
-            let mainVideoLocalPath = resolveLocal(video.url);
-            // 提交前预检：文件超过50MB先压缩
-            try {
-              const { statSync } = await import('fs');
-              const fileSize = statSync(mainVideoLocalPath).size;
-              if (fileSize > 50 * 1024 * 1024) {
-                store.logCdpEvent(null, "info", `原视频 ${Math.round(fileSize / 1024 / 1024)}MB 超过50MB，提交前预压缩...`, null, task.id);
-                const { execFileSync } = await import('child_process');
-                const compressedPath = path.join(path.dirname(getOutputDir()), 'remix-tmp', `precompressed_${Date.now()}.mp4`);
-                const compress = (input, output, crf, scale) => {
-                  execFileSync('ffmpeg', ['-err_detect', 'ignore_err', '-y', '-i', input, '-c:v', 'libx264', '-crf', String(crf), '-preset', 'fast', '-vf', `scale=${scale}`, '-c:a', 'aac', '-b:a', '96k', '-movflags', '+faststart', output], { stdio: 'pipe', timeout: 300000 });
-                };
-                compress(mainVideoLocalPath, compressedPath, 28, '-2:1920');
-                let compressedSize = statSync(compressedPath).size;
-                if (compressedSize > 50 * 1024 * 1024) {
-                  const tmpPath = compressedPath.replace('.mp4', '_2.mp4');
-                  compress(compressedPath, tmpPath, 32, '-2:1280');
-                  const { renameSync } = await import('fs');
-                  renameSync(tmpPath, compressedPath);
-                  compressedSize = statSync(compressedPath).size;
-                }
-                store.logCdpEvent(null, "info", `预压缩完成: ${Math.round(compressedSize / 1024 / 1024)}MB`, null, task.id);
-                mainVideoLocalPath = compressedPath;
-              }
-            } catch (e) { store.logCdpEvent(null, "warning", `预压缩失败，使用原文件: ${e.message}`, null, task.id); }
-            const filesToUpload = [mainVideoLocalPath];
+            const mainVideoLocalPath = resolveLocal(video.url);
 
-            // 穿搭指南：方案开启时根据来源选鞋子+衣服+场景图片一起上传
-            if (presetId) {
-              const preset = store.getAiRemixPreset(presetId);
-              if (preset?.outfitGuide) {
-                if (preset.outfitSource === "remote") {
-                  // 远程取图
-                  try {
-                    const pickUrl = preset.outfitPickUrl || "http://localhost:12999/api/image-washing/queue/pick";
-                    const pickIndices = preset.outfitPickIndex || [1];
-                    const pickRes = await fetch(pickUrl, {
-                      method: "POST", headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ indices: pickIndices }),
-                    });
-                    if (pickRes.ok) {
-                      const pickData = await pickRes.json();
-                      if (pickData.productId && pickData.images?.length) {
-                      // 保存 taskId 到任务记录
-                      const outfitTaskIds = pickData.images.map(img => img.taskId);
-                      store.updateRemixTask(task.id, { outfitTaskIds });
-                      // 下载远程图片到本地
-                      for (const img of pickData.images) {
-                        try {
-                          if (!img.url) { store.logCdpEvent(null, "warning", `穿搭指南[远程]: taskId=${img.taskId} 无URL，跳过`, null, task.id); continue; }
-                          const imgRes = await fetch(img.url);
-                            if (imgRes.ok) {
-                              const buffer = Buffer.from(await imgRes.arrayBuffer());
-                              const outfitFileName = `outfit_remote_${img.taskId}_${Date.now()}.jpg`;
-                              const outfitPath = path.join(getOutputDir(), outfitFileName);
-                              writeFileSync(outfitPath, buffer);
-                              filesToUpload.push(outfitPath);
-                              store.logCdpEvent(null, "info", `穿搭指南[远程]: taskId=${img.taskId} index=${img.index}`, null, task.id);
-                            } else {
-                              store.logCdpEvent(null, "warning", `穿搭指南[远程]下载失败: taskId=${img.taskId} status=${imgRes.status}`, null, task.id);
-                            }
-                          } catch (e) { store.logCdpEvent(null, "warning", `穿搭指南[远程]下载失败: ${e.message}`, null, task.id); }
-                        }
-                      } else {
-                        store.logCdpEvent(null, "info", "穿搭指南[远程]: 无可用产品", null, task.id);
-                      }
-                    } else {
-                      store.logCdpEvent(null, "warning", `穿搭指南[远程]取图失败: ${pickRes.status}`, null, task.id);
-                    }
-                  } catch (e) { store.logCdpEvent(null, "warning", `穿搭指南[远程]取图异常: ${e.message}`, null, task.id); }
-                } else {
-                  // 本地取图
-                  const outfitCats = ["shoes", "clothing", "scene"];
-                  for (const cat of outfitCats) {
-                    const outfit = store.randomOutfitByCategory(cat);
-                    if (outfit) {
-                      const outfitLocalPath = path.resolve(THIS_DIR, "..", outfit.file_path.replace(/^\//, ""));
-                      if (existsSync(outfitLocalPath)) {
-                        filesToUpload.push(outfitLocalPath);
-                        store.logCdpEvent(null, "info", `穿搭指南[${cat}]: ${outfit.brand} ${outfit.filename}`, null, task.id);
-                      }
-                    } else {
-                      store.logCdpEvent(null, "info", `穿搭指南[${cat}]: 无可用图片，跳过`, null, task.id);
-                    }
-                  }
-                }
-              }
-            }
-
-            // 提交到 AI 混剪队列（异步处理）
+            // 提交到 AI 混剪队列（异步处理，预压缩和穿搭取图在队列中做）
             aiRemixQueue.push({
-              taskId: task.id, daemonUrl, filesToUpload, prompt: prompt || "",
+              taskId: task.id, daemonUrl, filesToUpload: [mainVideoLocalPath], prompt: prompt || "",
               matrixIds, creatorId, sourceVideoId: video.id, videoTitle: video.title,
               presetId: presetId || null,
               mainVideoLocalPath,
