@@ -2347,9 +2347,10 @@ export function createMonitorServer({
                 compress(mainVideoLocalPath, compressedPath, 28, '-2:1920');
                 let compressedSize = statSync(compressedPath).size;
                 if (compressedSize > 50 * 1024 * 1024) {
-                  compress(compressedPath, compressedPath + '.tmp', 32, '-2:1280');
+                  const tmpPath = compressedPath.replace('.mp4', '_2.mp4');
+                  compress(compressedPath, tmpPath, 32, '-2:1280');
                   const { renameSync } = await import('fs');
-                  renameSync(compressedPath + '.tmp', compressedPath);
+                  renameSync(tmpPath, compressedPath);
                   compressedSize = statSync(compressedPath).size;
                 }
                 store.logCdpEvent(null, "info", `预压缩完成: ${Math.round(compressedSize / 1024 / 1024)}MB`, null, task.id);
@@ -2958,9 +2959,10 @@ export function createMonitorServer({
                   const compressedPath = path.join(path.dirname(getOutputDir()), 'remix-tmp', `precompressed_${Date.now()}.mp4`);
                   execFileSync('ffmpeg', ['-err_detect', 'ignore_err', '-y', '-i', retryVideoPath, '-c:v', 'libx264', '-crf', '28', '-preset', 'fast', '-vf', 'scale=-2:1920', '-c:a', 'aac', '-b:a', '96k', '-movflags', '+faststart', compressedPath], { stdio: 'pipe', timeout: 300000 });
                   if (statSync(compressedPath).size > 50 * 1024 * 1024) {
-                    execFileSync('ffmpeg', ['-err_detect', 'ignore_err', '-y', '-i', compressedPath, '-c:v', 'libx264', '-crf', '32', '-preset', 'fast', '-vf', 'scale=-2:1280', '-c:a', 'aac', '-b:a', '96k', '-movflags', '+faststart', compressedPath + '.tmp'], { stdio: 'pipe', timeout: 300000 });
+                    const tmpPath = compressedPath.replace('.mp4', '_2.mp4');
+                    execFileSync('ffmpeg', ['-err_detect', 'ignore_err', '-y', '-i', compressedPath, '-c:v', 'libx264', '-crf', '32', '-preset', 'fast', '-vf', 'scale=-2:1280', '-c:a', 'aac', '-b:a', '96k', '-movflags', '+faststart', tmpPath], { stdio: 'pipe', timeout: 300000 });
                     const { renameSync } = await import('fs');
-                    renameSync(compressedPath + '.tmp', compressedPath);
+                    renameSync(tmpPath, compressedPath);
                   }
                   store.logCdpEvent(null, "info", `重试: 预压缩完成 ${Math.round(statSync(compressedPath).size / 1024 / 1024)}MB`, null, newTask.id);
                   retryVideoPath = compressedPath;
