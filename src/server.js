@@ -1082,6 +1082,10 @@ export function createMonitorServer({
         }
 
         const finalOut = await composeAiRemixVideo(videoForRemix, imagePaths, { introConfig, outroConfig, musicConfig, dedup: preset?.dedup !== false, videoTitle: videoTitle || null }, "9:16");
+        // 验证成品文件是否存在
+        if (!existsSync(finalOut)) {
+          throw new Error(`成品视频生成失败：文件不存在 ${finalOut}`);
+        }
         const outputUrl = `/data/remix-output/${path.basename(finalOut)}`;
         store.logCdpEvent(null, "info", `AI 混剪成品: ${outputUrl}`, null, taskId);
         store.updateRemixTask(taskId, { status: "DONE", outputUrl, completedAt: nowIso() });

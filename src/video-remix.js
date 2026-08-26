@@ -887,7 +887,7 @@ export async function composeAiRemixVideo(mainVideoPath, imagePaths, config = {}
     }
 
     // 叠加背景音乐
-    const outputPath = path.join(getOutputDir(), videoTitle ? `${sanitizeFilename(videoTitle)}.mp4` : `ai_remix_${id}.mp4`);
+    const outputPath = path.join(getOutputDir(), videoTitle ? `${sanitizeFilename(videoTitle)}_${id.substring(0, 8)}.mp4` : `ai_remix_${id}.mp4`);
     const musicPath = musicConfig.segmentFilePath ? resolveLocal(musicConfig.segmentFilePath) : null;
 
     if (musicConfig.enabled !== false && musicPath && existsSync(musicPath) && musicConfig.scope !== "none") {
