@@ -205,11 +205,6 @@ async function processSingleVideo(inputPath, outputPath, meta, options = {}) {
   const cropX = Math.round((width - cropW) / 2);
   const cropY = Math.round((height - cropH) / 2);
 
-  // 首尾裁切：去掉 0.3~0.8 秒
-  const trimHead = Math.min(0.8, duration * 0.03);
-  const trimTail = Math.min(0.8, duration * 0.03);
-  const needTrim = duration > 5 && (trimHead + trimTail) > 0.5;
-
   // 变速
   const speed = Math.max(0.5, Math.min(2.0, t.speed));
   const setptsFactor = (1 / speed).toFixed(6);
@@ -234,12 +229,7 @@ async function processSingleVideo(inputPath, outputPath, meta, options = {}) {
   // ─── 构建 video filter chain ───
   const vFilters = [];
 
-  // 1. 首尾裁切
-  if (needTrim) {
-    vFilters.push(`trim=start=${trimHead.toFixed(3)}:end=${(duration - trimTail).toFixed(3)}`, "setpts=PTS-STARTPTS");
-  }
-
-  // 2. 水平镜像翻转（最有效的单手段）
+  // 1. 水平镜像翻转（最有效的单手段）
   if (t.flip) {
     vFilters.push("hflip");
   }
@@ -292,11 +282,6 @@ async function processSingleVideo(inputPath, outputPath, meta, options = {}) {
   if (hasAudio) {
     const aFilters = [];
 
-    // 首尾裁切同步
-    if (needTrim) {
-      aFilters.push(`atrim=start=${trimHead.toFixed(3)}:end=${(duration - trimTail).toFixed(3)}`, "asetpts=PTS-STARTPTS");
-    }
-
     // 变调 + 变速
     aFilters.push(
       `asetrate=${sampleRate}*${pitchFactor.toFixed(6)}`,
@@ -341,7 +326,7 @@ async function processSingleVideo(inputPath, outputPath, meta, options = {}) {
     // 图片特效需要 -loop 1 -t duration；视频特效用 -stream_loop -1 循环
     const ext = path.extname(effectInput).toLowerCase();
     const effectInputArgs = [".png", ".jpg", ".jpeg"].includes(ext)
-      ? ["-loop", "1", "-t", (needTrim ? duration - trimHead - trimTail : duration).toFixed(3)]
+      ? ["-loop", "1", "-t", duration.toFixed(3)]
       : ["-stream_loop", "-1"];
 
     args = [
