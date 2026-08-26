@@ -1148,7 +1148,7 @@ async function handleChatGptAiRemix(taskNo, params) {
           const jsonBuffer = Buffer.from(jsonStr, 'utf-8')
           const filename = `ai_segment_script_${Date.now()}_1.json`
           const filepath = join(OUTPUTS_DIR, filename)
-          await writeFile(filepath, jsonBuffer)
+          writeFileSync(filepath, jsonBuffer)
           outputs.push({ type: 'segment_script', filename, url: `/outputs/${filename}` })
           downloadedCount++
           log(`分段脚本 JSON 已提取: ${filename} (${jsonBuffer.length} bytes, segments: ${parsed.segment_count || parsed.segments?.length || '?'})`)
