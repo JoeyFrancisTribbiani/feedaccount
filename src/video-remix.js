@@ -213,8 +213,8 @@ async function processSingleVideo(inputPath, outputPath, meta, options = {}) {
   const pitchFactor = Math.pow(2, t.pitchSemitones / 12);
   const atempoVal = (speed / pitchFactor).toFixed(6);
 
-  // 帧率微调
-  const targetFps = Math.round(fps) === 30 ? 29 : Math.round(fps) === 60 ? 59 : Math.round(fps * 0.97);
+  // 帧率保持与原视频一致
+  const targetFps = Math.round(fps);
 
   // 水印：在随机角落画一个半透明色块
   const wmSize = Math.round(Math.min(targetW, targetH) * 0.04);
