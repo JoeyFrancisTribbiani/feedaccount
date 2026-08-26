@@ -1356,46 +1356,65 @@ async function extractExtraResources(destDir) {
     try {
       let url = res.url
 
-      // sandbox: 路径需要通过点击按钮触发下载，拦截 fetch 获取真实 URL
+      // sandbox: 路径需要通过点击"下载文件"按钮触发下载，拦截 fetch 获取真实 URL
       if (url.startsWith('sandbox:') || url.startsWith('/mnt/data/')) {
         const fileName = res.filename || url.split('/').pop()
-        // 在浏览器中点击文件按钮并拦截网络请求获取真实下载 URL
+        // 在浏览器中点击"下载文件"按钮并拦截网络请求获取真实下载 URL
         const realUrl = await page.evaluate(async (fname) => {
-          // 找到 aria-label 匹配文件名的按钮
-          const btn = document.querySelector(`button[aria-label="${CSS.escape(fname)}"]`)
-          if (!btn) return null
+          // 找到文件名按钮所在 turn，再找该 turn 内的"下载文件"按钮
+          const allBtns = document.querySelectorAll('button[aria-label]')
+          let downloadBtn = null
+          for (const btn of allBtns) {
+            if (btn.getAttribute('aria-label') === '下载文件' || btn.getAttribute('aria-label') === 'Download file') {
+              // 确认这个按钮在含 fname 的 turn 中
+              const turn = btn.closest('[data-testid^="conversation-turn-"]')
+              if (turn && turn.textContent.includes(fname.substring(0, 30))) {
+                downloadBtn = btn
+                break
+              }
+            }
+          }
+
+          if (!downloadBtn) {
+            // 回退：找文件名按钮点击
+            const fileBtn = document.querySelector(`button[aria-label$="${fname.slice(-20)}"]`)
+            if (fileBtn) downloadBtn = fileBtn
+          }
+          if (!downloadBtn) return null
 
           // 拦截 fetch 获取下载 URL
           let capturedUrl = null
           const origFetch = window.fetch
           window.fetch = function(...args) {
             const u = typeof args[0] === 'string' ? args[0] : (args[0]?.url || '')
-            if (u.includes('/backend-api/files/') || u.includes('/sandbox/')) {
+            // 优先截获 interpreter/download（下载）而非 files/library（预览）
+            if (u.includes('/interpreter/download') || u.includes('/backend-api/files/') || u.includes('/sandbox/')) {
               capturedUrl = u
             }
             return origFetch.apply(this, args)
           }
 
-          // 也拦截 PerformanceObserver
+          // PerformanceObserver 作为备用
           const entries = []
           const observer = new PerformanceObserver(list => {
             for (const entry of list.getEntries()) {
-              if (entry.name.includes('/backend-api/files/')) {
+              if (entry.name.includes('/interpreter/download') || entry.name.includes('/backend-api/files/')) {
                 entries.push(entry.name)
               }
             }
           })
           observer.observe({ entryTypes: ['resource'] })
 
-          // 点击按钮
-          btn.click()
-          await new Promise(r => setTimeout(r, 2000))
+          // 点击下载按钮
+          downloadBtn.click()
+          await new Promise(r => setTimeout(r, 2500))
 
           // 恢复
           window.fetch = origFetch
           observer.disconnect()
 
-          return capturedUrl || entries[0] || null
+          // 优先返回 interpreter/download URL
+          return capturedUrl || entries.find(u => u.includes('/interpreter/download')) || entries[0] || null
         }, fileName)
 
         if (realUrl) {
