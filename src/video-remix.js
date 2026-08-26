@@ -252,23 +252,31 @@ async function processSingleVideo(inputPath, outputPath, meta, options = {}) {
   // 7. 水印色块
   vFilters.push(`drawbox=x=${wmPos.split(":")[0]}:y=${wmPos.split(":")[1]}:w=${wmSize}:h=${wmSize}:color=0x000000@${(t.watermarkOpacity).toFixed(2)}:t=fill`);
 
-  // 8. 旋转透明特效叠加（从 data/dedup-effects/ 随机选一个特效素材）
+  // 8. 旋转透明特效叠加（从 data/dedup-effects/ 随机选2个素材叠加）
   const effectsDir = path.resolve(process.cwd(), "data", "dedup-effects");
-  let effectInput = null;
-  let effectOverlayFilter = null;
+  let effectInputs = [];
   if (existsSync(effectsDir)) {
     const effectFiles = readdirSync(effectsDir).filter(f => /\.(mp4|mov|webm|png|jpg|jpeg)$/i.test(f));
-    if (effectFiles.length > 0) {
-      const picked = effectFiles[Math.floor(Math.random() * effectFiles.length)];
-      effectInput = path.join(effectsDir, picked);
-    }
+    // 随机选2个（不重复）
+    const shuffled = [...effectFiles].sort(() => Math.random() - 0.5);
+    effectInputs = shuffled.slice(0, Math.min(2, shuffled.length)).map(f => path.join(effectsDir, f));
   }
 
-  if (effectInput) {
-    // 特效：放大到全屏 + 全程旋转 + 透明度 3-5%，用 overlay 叠加
-    const effectAlpha = (0.03 + Math.random() * 0.02).toFixed(3); // 3%-5%
-    const rotateSpeed = (1.5 + Math.random() * 1.5); // 每秒旋转 1.5-3 弧度
-    effectOverlayFilter = `scale=${targetW}:${targetH}:flags=bicubic,format=yuva420p,rotate='${rotateSpeed}*t':c=black@0,colorchannelmixer=aa=${effectAlpha}`;
+  // 特效参数：正片叠底混合 + 69%透明度 + 两个素材反向旋转
+  const EFFECT_OPACITY = 0.69;
+  const rotateSpeed1 = (1.5 + Math.random() * 1.5); // 顺时针 1.5-3 弧度/秒
+  const rotateSpeed2 = -rotateSpeed1 - (Math.random() * 0.5 - 0.25); // 反向，略不同速
+
+  // 为每个特效素材构建 filter chain
+  function buildEffectFilter(effectIdx, srcW, srcH) {
+    // 判断是否需要旋转90度（横屏素材转竖屏）
+    const isLandscape = srcW > srcH;
+    const aspectFix = isLandscape
+      ? `transpose=1` // 横屏转竖屏（顺时针90度）
+      : `scale=${targetW}:${targetH}:force_original_aspect_ratio=increase,crop=${targetW}:${targetH}`;
+
+    const rotateExpr = effectIdx === 0 ? `${rotateSpeed1}*t` : `${rotateSpeed2}*t`;
+    return `${aspectFix},scale=${targetW}:${targetH}:flags=bicubic,format=yuva420p,rotate='${rotateExpr}':c=black@0`;
   }
 
   // 9. 帧率变换
@@ -305,15 +313,38 @@ async function processSingleVideo(inputPath, outputPath, meta, options = {}) {
 
   // ─── 构建 ffmpeg 命令 ───
   let args;
-  if (effectInput) {
+  const useEffects = effectInputs.length > 0;
+  if (useEffects) {
     // 有特效素材：用 filter_complex 多输入模式
     const fcParts = [];
     // [0:v] 原视频 filter chain
     fcParts.push(`[0:v]${vFilters.join(",")}[vbase]`);
-    // [1:v] 特效 filter chain
-    fcParts.push(`[1:v]${effectOverlayFilter}[vfx]`);
-    // overlay 叠加
-    fcParts.push(`[vbase][vfx]overlay=0:0:format=auto[vout]`);
+
+    // 需要获取每个特效素材的分辨率来判断横竖屏
+    const { probeVideo: probe } = await import("./video-remix.js");
+
+    // 为每个特效构建 filter chain
+    const effectLabels = [];
+    for (let i = 0; i < effectInputs.length; i++) {
+      const inputIdx = i + 1; // 输入索引：0=原视频, 1=特效1, 2=特效2
+      const effectMeta = await probe(effectInputs[i]).catch(() => null);
+      const srcW = effectMeta?.width || targetW;
+      const srcH = effectMeta?.height || targetH;
+      const effectFilter = buildEffectFilter(i, srcW, srcH);
+      const outLabel = `vfx${i}`;
+      fcParts.push(`[${inputIdx}:v]${effectFilter}[${outLabel}]`);
+      effectLabels.push(`[${outLabel}]`);
+    }
+
+    // 正片叠底叠加：先叠第一个特效，再叠第二个
+    if (effectLabels.length === 1) {
+      // 单个特效：正片叠底混合
+      fcParts.push(`[vbase]${effectLabels[0]}blend=all_mode=multiply:all_opacity=${EFFECT_OPACITY}[vout]`);
+    } else {
+      // 两个特效：先正片叠底第一个到原视频，再正片叠底第二个
+      fcParts.push(`[vbase]${effectLabels[0]}blend=all_mode=multiply:all_opacity=${EFFECT_OPACITY}[vmid]`);
+      fcParts.push(`[vmid]${effectLabels[1]}blend=all_mode=multiply:all_opacity=${EFFECT_OPACITY}[vout]`);
+    }
 
     let audioFilterArgs = [];
     if (hasAudio && audioArgs.length > 0) {
@@ -323,17 +354,20 @@ async function processSingleVideo(inputPath, outputPath, meta, options = {}) {
       audioFilterArgs = ["-map", "[aout]"];
     }
 
-    // 图片特效需要 -loop 1 -t duration；视频特效用 -stream_loop -1 循环
-    const ext = path.extname(effectInput).toLowerCase();
-    const effectInputArgs = [".png", ".jpg", ".jpeg"].includes(ext)
-      ? ["-loop", "1", "-t", duration.toFixed(3)]
-      : ["-stream_loop", "-1"];
+    // 构建输入参数（图片用 -loop 1 -t duration，视频用 -stream_loop -1）
+    const inputArgs = ["-err_detect", "ignore_err", "-i", inputPath];
+    for (const effPath of effectInputs) {
+      const ext = path.extname(effPath).toLowerCase();
+      if ([".png", ".jpg", ".jpeg"].includes(ext)) {
+        inputArgs.push("-loop", "1", "-t", duration.toFixed(3));
+      } else {
+        inputArgs.push("-stream_loop", "-1");
+      }
+      inputArgs.push("-i", effPath);
+    }
 
     args = [
-      "-err_detect", "ignore_err",
-      "-i", inputPath,
-      ...effectInputArgs,
-      "-i", effectInput,
+      ...inputArgs,
       "-filter_complex", fcParts.join(";"),
       "-map", "[vout]",
       ...audioFilterArgs,
@@ -644,6 +678,8 @@ async function mixBackgroundMusic(videoPath, musicPath, outputPath, volumePercen
   const duration = videoMeta?.duration || 0;
   const hasVideoAudio = videoMeta?.hasAudio;
   const musicVol = (volumePercent / 100).toFixed(2);
+  // 背景音乐音量降低24dB（固定值，对应剪映"复合片段"的音频处理）
+  const musicGainDb = -24;
 
   // 计算音乐区间：优先用调用方传入的 spans，否则按 scope 整段
   let regions = Array.isArray(spans) ? spans : (scope === "none" ? [] : [{ start: 0, end: duration }]);
@@ -667,7 +703,7 @@ async function mixBackgroundMusic(videoPath, musicPath, outputPath, volumePercen
   let musicOut;
   if (regions.length === 1) {
     const r = regions[0];
-    const f = [`volume=${musicVol}`];
+    const f = [`volume=${musicGainDb}dB`];
     if (r.start > 0) f.push(`adelay=${Math.round(r.start * 1000)}:all=1`);
     f.push(`atrim=end=${r.end.toFixed(3)}`);
     filterParts.push(`[1:a]${f.join(",")}[mc0]`);
@@ -675,7 +711,7 @@ async function mixBackgroundMusic(videoPath, musicPath, outputPath, volumePercen
   } else {
     // 多段区间（片头+片尾）：asplit 分流后各自定位，再 amix 合并（normalize=0 保持音量）
     const srcLabels = regions.map((_, i) => `[src${i}]`).join("");
-    filterParts.push(`[1:a]volume=${musicVol},asplit=${regions.length}${srcLabels}`);
+    filterParts.push(`[1:a]volume=${musicGainDb}dB,asplit=${regions.length}${srcLabels}`);
     regions.forEach((r, i) => {
       const f = [];
       if (r.start > 0) f.push(`adelay=${Math.round(r.start * 1000)}:all=1`);
@@ -687,8 +723,9 @@ async function mixBackgroundMusic(videoPath, musicPath, outputPath, volumePercen
   }
 
   if (hasVideoAudio) {
-    // 视频有原声音轨：保留原声 + 叠加背景音乐
-    filterParts.push(`[0:a]volume=1.0[a0];[a0][${musicOut}]amix=inputs=2:duration=first:dropout_transition=0[aout]`);
+    // 视频有原声音轨：原声音量+20dB + 背景音乐音量(volumePercent)% → 混合
+    const origBoost = 20; // 原视频音频+20dB
+    filterParts.push(`[0:a]volume=${origBoost}dB[a0];[a0][${musicOut}]amix=inputs=2:duration=first:dropout_transition=0[aout]`);
   } else {
     // 视频没有原声音轨：只有背景音乐，不足处补静音到视频时长
     filterParts.push(`[${musicOut}]apad=whole_dur=${duration.toFixed(3)}[aout]`);
