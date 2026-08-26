@@ -754,7 +754,14 @@ async function chatgptWaitForResponse(opts = {}) {
         if (turns[i].getAttribute('data-message-author-role') !== 'user') { lastTurn = turns[i]; break }
       }
       if (!lastTurn) return 0
-      return lastTurn.querySelectorAll('a[href$=".json"], a[href$=".txt"], a[href$=".srt"], a[href$=".csv"], a[href$=".md"]').length
+      // 检测 <a> 下载链接（旧格式）
+      var links = lastTurn.querySelectorAll('a[href$=".json"], a[href$=".txt"], a[href$=".srt"], a[href$=".csv"], a[href$=".md"]').length
+      // 检测 <button aria-label> 文件按钮（ChatGPT 新格式）
+      var btns = [...lastTurn.querySelectorAll('button[aria-label]')].filter(function(b) {
+        var a = b.getAttribute('aria-label') || ''
+        return a.endsWith('.json') || a.endsWith('.txt') || a.endsWith('.srt') || a.endsWith('.csv') || a.endsWith('.md')
+      }).length
+      return links + btns
     }).catch(() => 0)
     if (DEBUG) log(`轮询: textLen=${currentText.length} imgCount=${currentImgCount} fileLinks=${currentFileLinkCount} stable=${stableIterations}/${stableCount} generating=${stillGenerating}`)
 
