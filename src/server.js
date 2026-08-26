@@ -538,10 +538,13 @@ export function createMonitorServer({
         if (!fileIds.length) throw new Error("没有可上传的文件");
 
         // Step 2: 提交 AI 混剪任务（传入 taskId 让 daemon 日志能关联）
+        // 把方案的 resourceTypes 传给 daemon，让回复检测逻辑知道期望什么类型的输出
+        const taskInfo0 = store.getRemixTask(taskId);
+        const expectedResourceTypes = taskInfo0?.resourceTypes || ["image"];
         const taskRes = await fetch(`${daemonUrl}/api/tasks`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ type: "chatgpt-ai-remix", params: { prompt, fileIds, options: { responseTimeout: 3600000, taskId } } }),
+          body: JSON.stringify({ type: "chatgpt-ai-remix", params: { prompt, fileIds, options: { responseTimeout: 3600000, taskId, expectedResourceTypes } } }),
         });
         const daemonResData = await taskRes.json();
         if (!taskRes.ok || !daemonResData.taskNo) throw new Error(`提交 AI 混剪任务失败: ${daemonResData.error}`);

@@ -711,6 +711,7 @@ async function chatgptWaitForResponse(opts = {}) {
   const stableCount = opts.stableCount || 3
   const startTimeout = opts.startTimeout || 60000
   const minResponseLength = opts.minResponseLength || 0
+  const expectFileOutput = opts.expectFileOutput || false
 
   await ensureChatGPT()
   log('等待 ChatGPT 回复...')
@@ -729,6 +730,7 @@ async function chatgptWaitForResponse(opts = {}) {
 
   let lastText = ''
   let lastImgCount = 0
+  let lastFileLinkCount = 0
   let stableIterations = 0
 
   while (Date.now() - startTime < timeout) {
@@ -744,7 +746,17 @@ async function chatgptWaitForResponse(opts = {}) {
       if (!lastTurn) return 0
       return lastTurn.querySelectorAll('img[src*="estuary/content"], img[src*="oaiusercontent"], img[src*="files."]').length
     }).catch(() => 0)
-    if (DEBUG) log(`轮询: textLen=${currentText.length} imgCount=${currentImgCount} stable=${stableIterations}/${stableCount} generating=${stillGenerating}`)
+    // 检测文件下载链接（分段脚本JSON等文件类输出）
+    const currentFileLinkCount = await page.evaluate(() => {
+      var turns = document.querySelectorAll('[data-testid^="conversation-turn-"]')
+      var lastTurn = null
+      for (var i = turns.length - 1; i >= 0; i--) {
+        if (turns[i].getAttribute('data-message-author-role') !== 'user') { lastTurn = turns[i]; break }
+      }
+      if (!lastTurn) return 0
+      return lastTurn.querySelectorAll('a[href$=".json"], a[href$=".txt"], a[href$=".srt"], a[href$=".csv"], a[href$=".md"]').length
+    }).catch(() => 0)
+    if (DEBUG) log(`轮询: textLen=${currentText.length} imgCount=${currentImgCount} fileLinks=${currentFileLinkCount} stable=${stableIterations}/${stableCount} generating=${stillGenerating}`)
 
     // 检测 ChatGPT 错误提示
     if (currentText && (currentText.includes('出了点问题') || currentText.includes('请重试') || currentText.includes('Something went wrong') || currentText.includes('try again'))) {
@@ -755,7 +767,8 @@ async function chatgptWaitForResponse(opts = {}) {
     // 文本和图片数量都没变化时认为稳定
     const textStable = currentText === lastText
     const imgStable = currentImgCount === lastImgCount
-    if (textStable && imgStable) {
+    const fileLinkStable = currentFileLinkCount === lastFileLinkCount
+    if (textStable && imgStable && fileLinkStable) {
       if (!stillGenerating) {
         // 有图片时跳过文本长度检查，稳定2次即可（6秒）
         if (currentImgCount > 0) {
@@ -765,14 +778,23 @@ async function chatgptWaitForResponse(opts = {}) {
             log(`图片回复完成 (${currentImgCount}张图片, ${Math.round(duration / 1000)}s)`)
             return { ok: true, text: currentText, duration }
           }
+        } else if (expectFileOutput && currentFileLinkCount > 0) {
+          // 期望文件输出且检测到文件下载链接，稳定2次即可
+          stableIterations++
+          if (stableIterations >= 2) {
+            const duration = Date.now() - startTime
+            log(`文件回复完成 (${currentFileLinkCount}个文件链接, ${Math.round(duration / 1000)}s)`)
+            return { ok: true, text: currentText, duration }
+          }
         } else if (minResponseLength > 0 && currentText.length < minResponseLength) {
           if (DEBUG) log(`响应过短, 继续等待...`)
-        } else if (minResponseLength > 0 && !currentText.includes('{')) {
+        } else if (minResponseLength > 0 && !expectFileOutput && !currentText.includes('{')) {
+          // 期望 JSON 内联但回复不含 { → 继续等（仅非文件输出模式）
           if (DEBUG) log(`回复无 JSON 内容, 继续等待...`)
         } else {
           stableIterations++
         }
-        const noJson = minResponseLength > 0 && !currentText.includes('{')
+        const noJson = minResponseLength > 0 && !expectFileOutput && !currentText.includes('{')
         const requiredStable = (minResponseLength > 0 && (currentText.length < minResponseLength || noJson)) ? 999 : (currentText.length < 100 ? 10 : stableCount)
         if (stableIterations >= requiredStable) {
           const duration = Date.now() - startTime
@@ -787,6 +809,7 @@ async function chatgptWaitForResponse(opts = {}) {
       stableIterations = 0
       lastText = currentText
       lastImgCount = currentImgCount
+      lastFileLinkCount = currentFileLinkCount
     }
     await page.waitForTimeout(pollInterval)
   }
@@ -968,6 +991,9 @@ async function handleChatGptAiRemix(taskNo, params) {
   const { prompt, fileIds = [], options = {} } = params
   const responseTimeout = options.responseTimeout || 1800000
   const serverTaskId = options.taskId || null
+  const expectedResourceTypes = options.expectedResourceTypes || ['image']
+  // 是否期望文件类输出（分段脚本/文本/其他文件）而非图片
+  const expectFileOutput = expectedResourceTypes.includes('segment_script') || expectedResourceTypes.includes('text')
 
   // 临时覆盖 log 函数，让每条日志带上 serverTaskId
   const origLog = log
@@ -1055,6 +1081,7 @@ async function handleChatGptAiRemix(taskNo, params) {
     pollInterval: 3000,
     stableCount: 5,
     minResponseLength: 50,
+    expectFileOutput,
   })
 
   taskStore.set(taskNo, { status: 'running', outputs: [], error: null, progress: '80%', startedAt: taskStore.get(taskNo).startedAt })
