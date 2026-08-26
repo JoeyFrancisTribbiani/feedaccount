@@ -21,6 +21,7 @@ import { RotationScheduler, SCHEDULER_DEFAULTS } from "./scheduler.js";
 import { checkIpGeoViaSocks5 } from "./socks5-check.js";
 import { DEDUP_PRESETS, dedupVideo, stitchVideos, probeVideo, remixVideoWithResources, composeAiRemixVideo, antiAiProcessImage, setOutputDir, setUploadDir, getOutputDir, getUploadDir, OUTPUT_DIR as REMIX_OUTPUT_DIR } from "./video-remix.js";
 import { handleComfyuiEdit, updateComfyuiConfig } from "./comfyui-gateway.js";
+import { ImageGenTaskManager } from "./image-gen-task-manager.js";
 
 const THIS_DIR = path.dirname(fileURLToPath(import.meta.url));
 const CDP_DAEMON_DIR = path.resolve(THIS_DIR, "chrome-cdp-daemon");
@@ -317,6 +318,67 @@ async function readJson(request) {
   } catch {
     throw new Error("请求内容不是有效的 JSON");
   }
+}
+
+// 简单 multipart/form-data 解析（不依赖第三方库）
+async function parseMultipartSimple(request) {
+  const contentType = request.headers["content-type"] || "";
+  const boundaryMatch = contentType.match(/boundary=(.+)$/);
+  if (!boundaryMatch) throw new Error("缺少 multipart boundary");
+
+  const boundary = "--" + boundaryMatch[1];
+  const chunks = [];
+  let size = 0;
+  const MAX_BODY = 50 * 1024 * 1024;
+
+  for await (const chunk of request) {
+    size += chunk.length;
+    if (size > MAX_BODY) throw new Error("请求体过大（>50MB）");
+    chunks.push(chunk);
+  }
+  const body = Buffer.concat(chunks);
+
+  const fields = {};
+  const files = {};
+
+  // 按 boundary 分割
+  const boundaryBuf = Buffer.from(boundary);
+  const parts = [];
+  let start = 0;
+  let idx;
+  while ((idx = body.indexOf(boundaryBuf, start)) !== -1) {
+    if (start < idx) parts.push(body.subarray(start, idx));
+    start = idx + boundaryBuf.length;
+  }
+  if (start < body.length) parts.push(body.subarray(start));
+
+  for (const part of parts) {
+    if (part.length === 0 || part.toString("utf8").trim() === "--") continue;
+
+    let buf = part;
+    if (buf[0] === 0x0d && buf[1] === 0x0a) buf = buf.subarray(2);
+    if (buf[buf.length - 2] === 0x0d && buf[buf.length - 1] === 0x0a) buf = buf.subarray(0, buf.length - 2);
+
+    const headerEnd = buf.indexOf("\r\n\r\n");
+    if (headerEnd === -1) continue;
+
+    const headerStr = Buffer.from(buf.subarray(0, headerEnd)).toString("utf8");
+    const data = Buffer.from(buf.subarray(headerEnd + 4));
+
+    const nameMatch = headerStr.match(/name="([^"]+)"/);
+    const filenameMatch = headerStr.match(/filename="([^"]+)"/);
+
+    if (!nameMatch) continue;
+    const fieldName = nameMatch[1];
+
+    if (filenameMatch) {
+      files[fieldName] = { name: filenameMatch[1], data: data };
+    } else {
+      fields[fieldName] = data.toString("utf8");
+    }
+  }
+
+  return { fields, files };
 }
 
 async function serveStatic(publicDir, urlPath, response, headOnly = false) {
@@ -934,9 +996,82 @@ export function createMonitorServer({
     const { pathname } = url;
 
     try {
-      // ComfyUI 图片编辑网关（允许局域网访问，不走 assertLocalWriteRequest）
+      // ComfyUI 图片编辑网关 - 异步模式
+      // POST /api/comfyui/edit → 立刻返回 task_id，后台执行
+      // GET /api/comfyui/result/{taskId} → 查询状态/获取结果
+      // GET /api/comfyui/tasks → 查询所有任务
       if (request.method === "POST" && pathname === "/api/comfyui/edit") {
-        await handleComfyuiEdit(request, response);
+        // 解析 multipart
+        let parsed;
+        try {
+          parsed = await parseMultipartSimple(request);
+        } catch (e) {
+          sendJson(response, 400, { error: e.message });
+          return;
+        }
+
+        if (!parsed.files.image) {
+          sendJson(response, 400, { error: "缺少 image 字段" });
+          return;
+        }
+        const instruction = parsed.fields.instruction || "";
+        if (!instruction) {
+          sendJson(response, 400, { error: "缺少 instruction 字段" });
+          return;
+        }
+
+        const workflowName = parsed.fields.workflow || "qwen_edit_2511_api";
+        const megapixels = parsed.fields.megapixels ? parseFloat(parsed.fields.megapixels) : null;
+
+        // 创建异步任务
+        const taskId = scheduler.imageGenManager.createEditTask(
+          parsed.files.image.data,
+          parsed.files.image.name,
+          instruction,
+          workflowName,
+          megapixels
+        );
+
+        sendJson(response, 202, { task_id: taskId, status: "pending", message: "图片编辑任务已提交" });
+        return;
+      }
+
+      // 查询单个任务状态
+      const resultMatch = pathname.match(/^\/api\/comfyui\/result\/(.+)$/);
+      if (request.method === "GET" && resultMatch) {
+        const taskId = decodeURIComponent(resultMatch[1]);
+        const task = scheduler.imageGenManager.getTask(taskId);
+        if (!task) {
+          sendJson(response, 404, { error: "任务不存在" });
+          return;
+        }
+        // 如果完成，返回图片
+        if (task.status === "done" && task.result?.imageBuffer) {
+          response.writeHead(200, {
+            "Content-Type": "image/png",
+            "Content-Length": task.result.imageBuffer.length,
+            "Cache-Control": "no-store",
+            "X-Task-Status": "done",
+            "X-Result-Filename": task.result.filename || "result.png",
+          });
+          response.end(task.result.imageBuffer);
+          return;
+        }
+        // 否则返回状态
+        sendJson(response, 200, {
+          task_id: taskId,
+          status: task.status,
+          statusLabel: task.statusLabel || task.status,
+          elapsedMs: task.elapsedMs,
+          error: task.error,
+          instruction: task.instruction,
+        });
+        return;
+      }
+
+      // 查询所有任务
+      if (request.method === "GET" && pathname === "/api/comfyui/tasks") {
+        sendJson(response, 200, scheduler.imageGenManager.getSummary());
         return;
       }
 

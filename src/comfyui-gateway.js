@@ -7,8 +7,8 @@
  * 调用方只需：POST 一个 multipart 表单（image + instruction），直接拿回编辑后的图片。
  */
 
-import { readFile, writeFile, mkdirSync } from "node:fs";
-import { existsSync } from "node:fs";
+import { readFile as readFileAsync } from "node:fs/promises";
+import { readFile, writeFile, mkdirSync, existsSync } from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 
@@ -68,8 +68,16 @@ async function parseMultipart(request) {
   const fields = {};
   const files = {};
 
-  // 按 boundary 分割
-  const parts = body.split(Buffer.from(boundary));
+  // 按 boundary 分割（Buffer 没有 .split 方法，手动实现）
+  const boundaryBuf = Buffer.from(boundary);
+  const parts = [];
+  let start = 0;
+  let idx;
+  while ((idx = body.indexOf(boundaryBuf, start)) !== -1) {
+    if (start < idx) parts.push(body.subarray(start, idx));
+    start = idx + boundaryBuf.length;
+  }
+  if (start < body.length) parts.push(body.subarray(start));
   for (const part of parts) {
     if (part.length === 0 || part.toString("utf8").trim() === "--") continue;
 
@@ -376,7 +384,7 @@ async function getObjectInfo() {
  */
 async function buildWorkflow(workflowName, imageName, instruction, megapixels) {
   const templatePath = getWorkflowPath(workflowName);
-  const raw = await readFile(templatePath, "utf8");
+  const raw = await readFileAsync(templatePath, "utf8");
   const wf = JSON.parse(raw);
 
   let apiWorkflow;
