@@ -4054,7 +4054,7 @@ async function openResourceGallery(taskId, fallbackImages = []) {
     const tabsHeader = modal.querySelector("#image-gallery-tabs");
     if (tabsHeader) {
       tabsHeader.innerHTML = types.map(t => {
-        const label = { image: "图片", video: "视频", audio: "音频", text: "文本", other: "其他" }[t] || t;
+        const label = { image: "图片", video: "视频", audio: "音频", text: "文本", segment_script: "分段脚本", other: "其他" }[t] || t;
         const active = t === activeType ? "background:#3b82f6;color:#fff;" : "background:#f1f5f9;cursor:pointer;";
         return `<span data-type="${t}" style="padding:2px 10px;border-radius:4px;font-size:12px;${active}">${label}(${allItems.filter(i => i.type === t).length})</span>`;
       }).join("");
@@ -4063,7 +4063,7 @@ async function openResourceGallery(taskId, fallbackImages = []) {
       });
     }
     const items = allItems.filter(i => i.type === activeType);
-    const label = { image: "图片", video: "视频", audio: "音频", text: "文本", other: "其他" }[activeType] || activeType;
+    const label = { image: "图片", video: "视频", audio: "音频", text: "文本", segment_script: "分段脚本", other: "其他" }[activeType] || activeType;
 
     if (activeType === "text") {
       // 文本类型：显示 txt 缩略图 + 预览按钮 + 下载
@@ -6224,6 +6224,7 @@ function openPresetEditModal(preset) {
               <label style="display:inline-flex;align-items:center;gap:4px;white-space:nowrap;"><input type="checkbox" class="preset-resource-type" value="video" /> 视频</label>
               <label style="display:inline-flex;align-items:center;gap:4px;white-space:nowrap;"><input type="checkbox" class="preset-resource-type" value="audio" /> 音频</label>
               <label style="display:inline-flex;align-items:center;gap:4px;white-space:nowrap;"><input type="checkbox" class="preset-resource-type" value="text" /> 文本</label>
+              <label style="display:inline-flex;align-items:center;gap:4px;white-space:nowrap;"><input type="checkbox" class="preset-resource-type" value="segment_script" /> 分段脚本</label>
               <label style="display:inline-flex;align-items:center;gap:4px;white-space:nowrap;"><input type="checkbox" class="preset-resource-type" value="other" /> 其他文件</label>
             </div>
             <span class="muted-activity" style="font-size:11px;">选择后会在AI输出中寻找对应类型的资源并下载</span>

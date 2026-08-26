@@ -721,6 +721,7 @@ export function createMonitorServer({
       else if (output.type === "video" && resourceTypes.includes("video")) matchedType = "video";
       else if (output.type === "audio" && resourceTypes.includes("audio")) matchedType = "audio";
       else if (output.type === "text" && resourceTypes.includes("text")) matchedType = "text";
+      else if (output.type === "segment_script" && resourceTypes.includes("segment_script")) matchedType = "segment_script";
       else if (output.type === "file" && resourceTypes.includes("other")) matchedType = "other";
       if (!matchedType) continue;
 
@@ -728,7 +729,7 @@ export function createMonitorServer({
         const downloadRes = await fetch(`${daemonUrl}${output.url}`);
         if (downloadRes.ok) {
           const buffer = Buffer.from(await downloadRes.arrayBuffer());
-          const ext = matchedType === "image" ? "png" : matchedType === "video" ? "mp4" : matchedType === "audio" ? "mp3" : matchedType === "text" ? "txt" : "bin";
+          const ext = matchedType === "image" ? "png" : matchedType === "video" ? "mp4" : matchedType === "audio" ? "mp3" : matchedType === "segment_script" ? "json" : matchedType === "text" ? "txt" : "bin";
           const fileName = `ai_res_${matchedType}_${Date.now()}_${results.length + 1}.${ext}`;
           const filePath = path.join(getOutputDir(), fileName);
           writeFileSync(filePath, buffer);
@@ -761,7 +762,114 @@ export function createMonitorServer({
       store.logCdpEvent(null, "info", `AI混剪合成: ${imagePaths.length}张图片, 方案=${preset?.name || "默认"}, 片头=${introConfig.segmentFilePath ? "有" : "无"}, 片尾=${outroConfig.segmentFilePath ? "有" : "无"}, 音乐=${musicConfig.segmentFilePath ? "有" : "无"}, 去重=${preset?.dedup !== false ? "是" : "否"}`, null, taskId);
 
       if (mainVideoLocalPath && existsSync(mainVideoLocalPath)) {
-        const finalOut = await composeAiRemixVideo(mainVideoLocalPath, imagePaths, { introConfig, outroConfig, musicConfig, dedup: preset?.dedup !== false, videoTitle: videoTitle || null }, "9:16");
+        // ★ 分段脚本处理：去重开启 + 有分段脚本资源时，打乱中间段顺序
+        let videoForRemix = mainVideoLocalPath;
+        const resourceTypes = preset?.resourceTypes || [];
+        const hasSegmentScript = resourceTypes.includes("segment_script");
+        if (hasSegmentScript && preset?.dedup !== false) {
+          try {
+            const resolveLocalPath = (url) => {
+              if (!url) return null;
+              if (url.startsWith("/data/remix-output/")) return path.join(getOutputDir(), path.basename(url));
+              return url;
+            };
+            const resources = store.listTaskResources(taskId);
+            const scriptResource = resources.find(r => r.type === "segment_script");
+            if (scriptResource) {
+              const scriptPath = resolveLocalPath(scriptResource.filePath);
+              if (scriptPath && existsSync(scriptPath)) {
+                const { readFileSync } = await import("fs");
+                const scriptData = JSON.parse(readFileSync(scriptPath, "utf-8"));
+                const segments = scriptData.segments || scriptData || [];
+                if (Array.isArray(segments) && segments.length >= 3) {
+                  // 解析每段的起止帧
+                  const parsedSegs = segments.map((s, i) => ({
+                    index: i,
+                    startFrame: s.startFrame ?? s.start_frame ?? s.start,
+                    endFrame: s.endFrame ?? s.end_frame ?? s.end,
+                    subtitle: s.subtitle ?? s.text ?? "",
+                  })).filter(s => typeof s.startFrame === "number" && typeof s.endFrame === "number");
+
+                  if (parsedSegs.length >= 3) {
+                    store.logCdpEvent(null, "info", `分段脚本: ${parsedSegs.length}段, 打乱中间段顺序`, null, taskId);
+
+                    // 保留第一段和最后一段，打乱中间段
+                    const firstSeg = parsedSegs[0];
+                    const lastSeg = parsedSegs[parsedSegs.length - 1];
+                    const middleSegs = parsedSegs.slice(1, -1);
+                    // Fisher-Yates 洗牌
+                    for (let i = middleSegs.length - 1; i > 0; i--) {
+                      const j = Math.floor(Math.random() * (i + 1));
+                      [middleSegs[i], middleSegs[j]] = [middleSegs[j], middleSegs[i]];
+                    }
+                    const shuffledSegs = [firstSeg, ...middleSegs, lastSeg];
+
+                    // 记录打乱后的顺序
+                    store.logCdpEvent(null, "info", `分段打乱: ${shuffledSegs.map(s => s.index).join("→")}`, null, taskId);
+
+                    // 用 FFmpeg 按帧范围切割并重新拼接
+                    const { probeVideo } = await import("./video-remix.js");
+                    const videoMeta = await probeVideo(mainVideoLocalPath);
+                    const fps = videoMeta?.fps || 30;
+                    const shuffledPath = path.join(getOutputDir(), `shuffled_${Date.now()}.mp4`);
+
+                    // 切割每段
+                    const segFiles = [];
+                    for (let i = 0; i < shuffledSegs.length; i++) {
+                      const seg = shuffledSegs[i];
+                      const segPath = path.join(getOutputDir(), `seg_${i}_${Date.now()}.mp4`);
+                      const startTime = (seg.startFrame / fps).toFixed(3);
+                      const endTime = (seg.endFrame / fps).toFixed(3);
+                      const { execFileSync } = await import("child_process");
+                      execFileSync("ffmpeg", [
+                        "-err_detect", "ignore_err", "-y",
+                        "-i", mainVideoLocalPath,
+                        "-ss", startTime, "-to", endTime,
+                        "-c:v", "libx264", "-crf", "23", "-preset", "veryfast",
+                        "-c:a", "aac", "-b:a", "128k",
+                        "-pix_fmt", "yuv420p", "-movflags", "+faststart",
+                        segPath,
+                      ], { stdio: "pipe", timeout: 300000 });
+                      segFiles.push(segPath);
+                    }
+
+                    // 拼接所有段
+                    const listFile = path.join(getOutputDir(), `concat_list_${Date.now()}.txt`);
+                    const { writeFileSync: writeSync } = await import("fs");
+                    writeSync(listFile, segFiles.map(f => `file '${f.replace(/'/g, "'\\''")}'`).join("\n"), "utf-8");
+                    const { execFileSync } = await import("child_process");
+                    execFileSync("ffmpeg", [
+                      "-err_detect", "ignore_err", "-y",
+                      "-f", "concat", "-safe", "0",
+                      "-i", listFile,
+                      "-c", "copy",
+                      "-movflags", "+faststart",
+                      shuffledPath,
+                    ], { stdio: "pipe", timeout: 300000 });
+
+                    // 清理临时文件
+                    try { for (const f of segFiles) unlinkSync(f); unlinkSync(listFile); } catch {}
+
+                    store.logCdpEvent(null, "info", `分段打乱完成: ${shuffledPath}`, null, taskId);
+                    videoForRemix = shuffledPath;
+                  } else {
+                    store.logCdpEvent(null, "warning", "分段脚本段数不足(<3)，跳过打乱", null, taskId);
+                  }
+                } else {
+                  store.logCdpEvent(null, "warning", "分段脚本格式无效或段数不足", null, taskId);
+                }
+              } else {
+                store.logCdpEvent(null, "warning", "分段脚本文件不存在", null, taskId);
+              }
+            } else {
+              store.logCdpEvent(null, "info", "未找到分段脚本资源，跳过打乱", null, taskId);
+            }
+          } catch (e) {
+            store.logCdpEvent(null, "warning", `分段脚本处理失败: ${e.message}，使用原视频`, null, taskId);
+          }
+        }
+
+        const finalOut = await composeAiRemixVideo(videoForRemix, imagePaths, { introConfig, outroConfig, musicConfig, dedup: preset?.dedup !== false, videoTitle: videoTitle || null }, "9:16");
         const outputUrl = `/data/remix-output/${path.basename(finalOut)}`;
         store.logCdpEvent(null, "info", `AI 混剪成品: ${outputUrl}`, null, taskId);
         store.updateRemixTask(taskId, { status: "DONE", outputUrl, completedAt: nowIso() });

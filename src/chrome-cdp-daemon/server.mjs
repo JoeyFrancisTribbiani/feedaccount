@@ -1223,7 +1223,8 @@ async function extractExtraResources(destDir) {
         const ext = href.split('.').pop()?.toLowerCase().split('?')[0] || ''
         if (['mp4', 'mov', 'avi', 'webm', 'mkv'].includes(ext)) results.push({ type: 'video', url: href })
         else if (['mp3', 'wav', 'aac', 'ogg', 'm4a', 'flac'].includes(ext)) results.push({ type: 'audio', url: href })
-        else if (['txt', 'md', 'pdf', 'doc', 'docx', 'csv', 'json', 'srt'].includes(ext)) results.push({ type: 'text', url: href })
+        else if (ext === 'json') results.push({ type: 'segment_script', url: href })
+        else if (['txt', 'md', 'pdf', 'doc', 'docx', 'csv', 'srt'].includes(ext)) results.push({ type: 'text', url: href })
         else if (!text.includes('查看') && !text.includes('登录')) results.push({ type: 'other', url: href, filename: text })
       })
     }
@@ -1249,7 +1250,7 @@ async function extractExtraResources(destDir) {
       if (!base64Data) { log(`资源下载失败: ${res.type} fetch返回空`); continue }
       const buffer = Buffer.from(base64Data.split(',')[1], 'base64')
       if (buffer.length === 0) continue
-      const ext = res.type === 'video' ? 'mp4' : res.type === 'audio' ? 'mp3' : res.type === 'text' ? 'txt' : 'bin'
+      const ext = res.type === 'video' ? 'mp4' : res.type === 'audio' ? 'mp3' : res.type === 'segment_script' ? 'json' : res.type === 'text' ? 'txt' : 'bin'
       const filename = `ai_${res.type}_${Date.now()}_${downloaded.length + 1}.${ext}`
       const filepath = join(destDir, filename)
       await writeFile(filepath, buffer)
