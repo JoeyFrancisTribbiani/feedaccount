@@ -1,5 +1,5 @@
 import { spawn, execFile, execSync } from "node:child_process";
-import { mkdirSync, existsSync, unlinkSync, writeFileSync, rmSync } from "node:fs";
+import { mkdirSync, existsSync, unlinkSync, writeFileSync, rmSync, readdirSync } from "node:fs";
 import { readFile, writeFile, unlink } from "node:fs/promises";
 import path from "node:path";
 import crypto from "node:crypto";
@@ -262,10 +262,29 @@ async function processSingleVideo(inputPath, outputPath, meta, options = {}) {
   // 7. 水印色块
   vFilters.push(`drawbox=x=${wmPos.split(":")[0]}:y=${wmPos.split(":")[1]}:w=${wmSize}:h=${wmSize}:color=0x000000@${(t.watermarkOpacity).toFixed(2)}:t=fill`);
 
-  // 8. 帧率变换
+  // 8. 旋转透明特效叠加（从 data/dedup-effects/ 随机选一个特效素材）
+  const effectsDir = path.resolve(process.cwd(), "data", "dedup-effects");
+  let effectInput = null;
+  let effectOverlayFilter = null;
+  if (existsSync(effectsDir)) {
+    const effectFiles = readdirSync(effectsDir).filter(f => /\.(mp4|mov|webm|png|jpg|jpeg)$/i.test(f));
+    if (effectFiles.length > 0) {
+      const picked = effectFiles[Math.floor(Math.random() * effectFiles.length)];
+      effectInput = path.join(effectsDir, picked);
+    }
+  }
+
+  if (effectInput) {
+    // 特效：放大到全屏 + 全程旋转 + 透明度 3-5%，用 overlay 叠加
+    const effectAlpha = (0.03 + Math.random() * 0.02).toFixed(3); // 3%-5%
+    const rotateSpeed = (1.5 + Math.random() * 1.5); // 每秒旋转 1.5-3 弧度
+    effectOverlayFilter = `scale=${targetW}:${targetH}:flags=bicubic,format=yuva420p,rotate='${rotateSpeed}*t':c=black@0,colorchannelmixer=aa=${effectAlpha}`;
+  }
+
+  // 9. 帧率变换
   vFilters.push(`fps=${targetFps}`);
 
-  // 9. 确保像素格式
+  // 10. 确保像素格式
   vFilters.push("format=yuv420p");
 
   // ─── 构建 audio filter chain ───
@@ -300,16 +319,58 @@ async function processSingleVideo(inputPath, outputPath, meta, options = {}) {
   }
 
   // ─── 构建 ffmpeg 命令 ───
-  const args = [
-    "-i", inputPath,
-    "-vf", vFilters.join(","),
-    ...audioArgs,
-    "-c:v", "libx264",
-    "-crf", "23",
-    "-preset", "veryfast",
-    "-pix_fmt", "yuv420p",
-    "-movflags", "+faststart",
-  ];
+  let args;
+  if (effectInput) {
+    // 有特效素材：用 filter_complex 多输入模式
+    const fcParts = [];
+    // [0:v] 原视频 filter chain
+    fcParts.push(`[0:v]${vFilters.join(",")}[vbase]`);
+    // [1:v] 特效 filter chain
+    fcParts.push(`[1:v]${effectOverlayFilter}[vfx]`);
+    // overlay 叠加
+    fcParts.push(`[vbase][vfx]overlay=0:0:format=auto[vout]`);
+
+    let audioFilterArgs = [];
+    if (hasAudio && audioArgs.length > 0) {
+      // 把 -af 改为 filter_complex 中的音频处理
+      const afStr = audioArgs[1]; // audioArgs = ["-af", "..."]
+      fcParts.push(`[0:a]${afStr}[aout]`);
+      audioFilterArgs = ["-map", "[aout]"];
+    }
+
+    // 图片特效需要 -loop 1 -t duration；视频特效用 -stream_loop -1 循环
+    const ext = path.extname(effectInput).toLowerCase();
+    const effectInputArgs = [".png", ".jpg", ".jpeg"].includes(ext)
+      ? ["-loop", "1", "-t", (needTrim ? duration - trimHead - trimTail : duration).toFixed(3)]
+      : ["-stream_loop", "-1"];
+
+    args = [
+      "-err_detect", "ignore_err",
+      "-i", inputPath,
+      ...effectInputArgs,
+      "-i", effectInput,
+      "-filter_complex", fcParts.join(";"),
+      "-map", "[vout]",
+      ...audioFilterArgs,
+      "-c:v", "libx264",
+      "-crf", "23",
+      "-preset", "veryfast",
+      "-pix_fmt", "yuv420p",
+      "-movflags", "+faststart",
+    ];
+  } else {
+    // 无特效素材：保持原来的 -vf 模式
+    args = [
+      "-i", inputPath,
+      "-vf", vFilters.join(","),
+      ...audioArgs,
+      "-c:v", "libx264",
+      "-crf", "23",
+      "-preset", "veryfast",
+      "-pix_fmt", "yuv420p",
+      "-movflags", "+faststart",
+    ];
+  }
 
   if (hasAudio) {
     args.push("-c:a", "aac", "-b:a", "128k");
