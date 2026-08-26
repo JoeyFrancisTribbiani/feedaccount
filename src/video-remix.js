@@ -259,19 +259,13 @@ async function processSingleVideo(inputPath, outputPath, meta, options = {}) {
     `eq=contrast=${t.contrast.toFixed(3)}:brightness=${t.brightness.toFixed(3)}:saturation=1.0`,
   );
 
-  // 7. 轻微锐化（减小范围以加速）
-  vFilters.push(`unsharp=3:3:0.4:3:3:0`);
-
-  // 8. 胶片颗粒噪点（只用 temporal 避免逐像素计算过重）
-  vFilters.push(`noise=alls=${t.grainStrength}:allf=t`);
-
-  // 9. 水印色块
+  // 7. 水印色块
   vFilters.push(`drawbox=x=${wmPos.split(":")[0]}:y=${wmPos.split(":")[1]}:w=${wmSize}:h=${wmSize}:color=0x000000@${(t.watermarkOpacity).toFixed(2)}:t=fill`);
 
-  // 10. 帧率变换
+  // 8. 帧率变换
   vFilters.push(`fps=${targetFps}`);
 
-  // 11. 确保像素格式
+  // 9. 确保像素格式
   vFilters.push("format=yuv420p");
 
   // ─── 构建 audio filter chain ───
