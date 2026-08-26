@@ -20,7 +20,7 @@ import { TiktokPublishManager } from "./tiktok/tiktok-publish-manager.js";
 import { RotationScheduler, SCHEDULER_DEFAULTS } from "./scheduler.js";
 import { checkIpGeoViaSocks5 } from "./socks5-check.js";
 import { DEDUP_PRESETS, dedupVideo, stitchVideos, probeVideo, remixVideoWithResources, composeAiRemixVideo, antiAiProcessImage, setOutputDir, setUploadDir, getOutputDir, getUploadDir, OUTPUT_DIR as REMIX_OUTPUT_DIR } from "./video-remix.js";
-import { handleComfyuiEdit, updateComfyuiConfig, handleV1Models, handleV1ImagesGenerations, handleV1ChatCompletions } from "./comfyui-gateway.js";
+import { handleComfyuiEdit, updateComfyuiConfig, handleV1Models, handleV1ImagesGenerations, handleV1ChatCompletions, handleV1VideosGenerations } from "./comfyui-gateway.js";
 import { ImageGenTaskManager } from "./image-gen-task-manager.js";
 
 const THIS_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -1112,6 +1112,19 @@ export function createMonitorServer({
           return;
         }
         await handleV1ChatCompletions(request, response, body);
+        return;
+      }
+
+      // POST /v1/videos/generations → 视频生成
+      if (request.method === "POST" && pathname === "/v1/videos/generations") {
+        let body;
+        try {
+          body = await readJson(request);
+        } catch (e) {
+          sendJson(response, 400, { error: { message: "无效的 JSON 请求体", type: "invalid_request_error" } });
+          return;
+        }
+        await handleV1VideosGenerations(request, response, body);
         return;
       }
 

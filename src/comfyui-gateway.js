@@ -204,7 +204,14 @@ async function pollResult(promptId) {
         const nodeOutput = outputs[nodeId];
         // SaveImage 节点输出 images 数组
         if (nodeOutput.images && nodeOutput.images.length > 0) {
-          return nodeOutput.images[0]; // { filename, subfolder, type }
+          return { type: "image", ...nodeOutput.images[0] }; // { filename, subfolder, type }
+        }
+        // SaveVideo / SaveAnimatedWEBP 节点输出 gifs 或 videos 数组
+        if (nodeOutput.gifs && nodeOutput.gifs.length > 0) {
+          return { type: "gif", ...nodeOutput.gifs[0] };
+        }
+        if (nodeOutput.videos && nodeOutput.videos.length > 0) {
+          return { type: "video", ...nodeOutput.videos[0] };
         }
       }
     }
@@ -511,6 +518,7 @@ export function handleV1Models(request, response) {
     data: [
       { id: "comfyui-qwen-edit", object: "model", created: Date.now(), owned_by: "comfyui" },
       { id: "comfyui-qwen-edit-mega", object: "model", created: Date.now(), owned_by: "comfyui" },
+      { id: "comfyui-video-gen", object: "model", created: Date.now(), owned_by: "comfyui" },
     ],
   });
 }
@@ -691,6 +699,114 @@ export async function handleV1ChatCompletions(request, response, body) {
     });
   } catch (err) {
     console.error("[comfyui-gateway] v1/chat/completions 错误:", err.message);
+    sendJsonResponse(response, 500, { error: { message: err.message, type: "server_error" } });
+  }
+}
+
+/**
+ * POST /v1/videos/generations → OpenAI 兼容视频生成接口
+ * 
+ * 请求体:
+ * {
+ *   "model": "comfyui-video-gen",
+ *   "prompt": "视频生成指令",
+ *   "image": "base64或URL（图生视频模式，可选）",
+ *   "n": 1,
+ *   "response_format": "b64_json" 或 "url"
+ * }
+ * 
+ * 响应体:
+ * {
+ *   "created": 1234567890,
+ *   "data": [{ "b64_json": "..." }] 或 [{ "url": "http://..." }]
+ * }
+ */
+export async function handleV1VideosGenerations(request, response, body) {
+  try {
+    const model = body.model || "comfyui-video-gen";
+    const instruction = body.prompt || "";
+    if (!instruction) {
+      sendJsonResponse(response, 400, { error: { message: "prompt (视频生成指令) 不能为空", type: "invalid_request_error" } });
+      return;
+    }
+
+    // 获取输入图片（可选，图生视频模式）
+    let imageBuffer = null;
+    let imageName = "input.png";
+
+    if (body.image) {
+      if (body.image.startsWith("http")) {
+        const imgRes = await fetch(body.image);
+        if (!imgRes.ok) throw new Error(`下载输入图片失败: ${imgRes.status}`);
+        imageBuffer = Buffer.from(await imgRes.arrayBuffer());
+        const ct = imgRes.headers.get("content-type") || "";
+        const ext = ct.includes("png") ? "png" : ct.includes("webp") ? "webp" : "jpg";
+        imageName = `input.${ext}`;
+      } else {
+        const b64 = body.image.replace(/^data:image\/\w+;base64,/, "");
+        imageBuffer = Buffer.from(b64, "base64");
+      }
+    }
+
+    // 工作流名称（支持自定义或按模型名推断）
+    const workflowName = body.workflow || (model.includes("wan") ? "wan_video_gen" : model.includes("cog") ? "cogvideo_gen" : "video_gen");
+
+    // 构建工作流
+    const workflow = await buildWorkflow(workflowName, imageBuffer ? imageName : null, instruction, undefined);
+
+    // 如果有输入图片，上传到 ComfyUI
+    if (imageBuffer) {
+      const uploadedImageName = await uploadImage(imageBuffer, imageName);
+      // 注入到 LoadImage 节点
+      for (const [, node] of Object.entries(workflow)) {
+        const ct = node.class_type;
+        if ((ct === "LoadImage" || ct === "LoadImageMask" || ct === "LoadImageUpload") && node.inputs.image !== undefined) {
+          node.inputs.image = uploadedImageName;
+        }
+      }
+    }
+
+    // 注入文本提示词到 TextEncode 节点
+    for (const [, node] of Object.entries(workflow)) {
+      const ct = node.class_type;
+      if (ct === "TextEncodeQwenImageEdit" || ct === "TextEncodeQwenImageEditPlus" || ct === "CLIPTextEncode" || ct === "TextEncode") {
+        if (node._promptRole !== "negative" && node.inputs.prompt !== undefined) {
+          node.inputs.prompt = instruction;
+        }
+      }
+    }
+
+    // 提交工作流
+    const promptId = await submitWorkflow(workflow);
+
+    // 轮询等待结果
+    const resultInfo = await pollResult(promptId);
+
+    // 下载结果
+    const resultBuffer = await downloadResult(resultInfo);
+
+    // 按响应格式返回
+    const responseFormat = body.response_format || "b64_json";
+    const ext = resultInfo.type === "video" ? "mp4" : resultInfo.type === "gif" ? "gif" : "png";
+
+    if (responseFormat === "url") {
+      const resultFileName = `openai_video_${Date.now()}.${ext}`;
+      const resultPath = path.join(getOutputDir?.() || path.resolve(process.cwd(), "data", "remix-output"), resultFileName);
+      const { writeFileSync: writeSync } = await import("fs");
+      writeSync(resultPath, resultBuffer);
+      sendJsonResponse(response, 200, {
+        created: Math.floor(Date.now() / 1000),
+        data: [{ url: `/data/remix-output/${resultFileName}` }],
+      });
+    } else {
+      const b64 = resultBuffer.toString("base64");
+      sendJsonResponse(response, 200, {
+        created: Math.floor(Date.now() / 1000),
+        data: [{ b64_json: b64 }],
+      });
+    }
+  } catch (err) {
+    console.error("[comfyui-gateway] v1/videos/generations 错误:", err.message);
     sendJsonResponse(response, 500, { error: { message: err.message, type: "server_error" } });
   }
 }
