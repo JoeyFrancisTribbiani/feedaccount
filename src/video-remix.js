@@ -146,9 +146,9 @@ function randomBetween(min, max) {
 
 // ─── 去重强度预设 ───
 export const DEDUP_PRESETS = Object.freeze({
-  light: { flip: true, speed: 1.0, cropPercent: 0.03, hueShift: 5, saturation: 1.08, contrast: 1.03, brightness: 0.01, grainStrength: 8, pitchSemitones: 1, watermarkOpacity: 0.06 },
-  medium: { flip: true, speed: 1.0, cropPercent: 0.05, hueShift: 8, saturation: 1.15, contrast: 1.05, brightness: 0.02, grainStrength: 12, pitchSemitones: 2, watermarkOpacity: 0.08 },
-  strong: { flip: true, speed: 1.0, cropPercent: 0.08, hueShift: 12, saturation: 1.25, contrast: 1.08, brightness: 0.03, grainStrength: 18, pitchSemitones: 3, watermarkOpacity: 0.10 },
+  light: { flip: true, speed: 1.0, cropPercent: 0.02, hueShift: 3, saturation: 1.03, contrast: 1.01, brightness: 0.005, grainStrength: 8, pitchSemitones: 1, watermarkOpacity: 0.06 },
+  medium: { flip: true, speed: 1.0, cropPercent: 0.03, hueShift: 5, saturation: 1.05, contrast: 1.02, brightness: 0.01, grainStrength: 12, pitchSemitones: 2, watermarkOpacity: 0.08 },
+  strong: { flip: true, speed: 1.0, cropPercent: 0.05, hueShift: 8, saturation: 1.08, contrast: 1.03, brightness: 0.015, grainStrength: 18, pitchSemitones: 3, watermarkOpacity: 0.10 },
 });
 
 const RATIO_MAP = {
@@ -238,7 +238,7 @@ async function processSingleVideo(inputPath, outputPath, meta, options = {}) {
   vFilters.push(`crop=${cropW}:${cropH}:${cropX}:${cropY}`);
 
   // 4. 缩放到目标尺寸（bicubic 比 lanczos 快很多，去重场景足够）
-  vFilters.push(`scale=${targetW}:${targetH}:flags=bicubic`);
+  vFilters.push(`scale=${targetW}:${targetH}:flags=lanczos`);
 
   // 5. 变速
   vFilters.push(`setpts=PTS*${setptsFactor}`);
@@ -277,7 +277,7 @@ async function processSingleVideo(inputPath, outputPath, meta, options = {}) {
 
     const rotateExpr = effectIdx === 0 ? `${rotateSpeed1}*t` : `${rotateSpeed2}*t`;
     // 用 format=rgba 在 RGB 色彩空间做旋转，避免 YUV 下 multiply 导致画面变暗
-    return `${aspectFix},scale=${targetW}:${targetH}:flags=bicubic,format=rgba,rotate='${rotateExpr}':c=black@0`;
+    return `${aspectFix},scale=${targetW}:${targetH}:flags=lanczos,format=rgba,rotate='${rotateExpr}':c=black@0`;
   }
 
   // 9. 帧率变换
