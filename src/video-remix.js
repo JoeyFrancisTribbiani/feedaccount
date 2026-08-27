@@ -180,13 +180,9 @@ async function processSingleVideo(inputPath, outputPath, meta, options = {}) {
   const t = pickRandomTransform(preset);
   const ratio = options.ratio || null;
 
-  // 目标尺寸
-  let targetW = width;
-  let targetH = height;
-  if (ratio && RATIO_MAP[ratio]) {
-    targetW = RATIO_MAP[ratio].w;
-    targetH = RATIO_MAP[ratio].h;
-  }
+  // 用原视频实际尺寸，不强制缩放
+  const targetW = width;
+  const targetH = height;
 
   // 裁切计算：先按目标比例裁切，再从边缘裁掉 cropPercent
   const targetAspect = targetW / targetH;
@@ -234,22 +230,10 @@ async function processSingleVideo(inputPath, outputPath, meta, options = {}) {
     vFilters.push("hflip");
   }
 
-  // 3. 中心裁切（改变像素位置）
-  vFilters.push(`crop=${cropW}:${cropH}:${cropX}:${cropY}`);
-
-  // 4. 缩放到目标尺寸（bicubic 比 lanczos 快很多，去重场景足够）
-  vFilters.push(`scale=${targetW}:${targetH}:flags=lanczos`);
-
-  // 5. 变速
+  // 2. 变速
   vFilters.push(`setpts=PTS*${setptsFactor}`);
 
-  // 6. 色彩变换：色相偏移 + 饱和度 + 对比度 + 亮度
-  vFilters.push(
-    `hue=h=${t.hueShift.toFixed(1)}:s=${t.saturation.toFixed(3)}`,
-    `eq=contrast=${t.contrast.toFixed(3)}:brightness=${t.brightness.toFixed(3)}:saturation=1.0`,
-  );
-
-  // 7. 水印色块
+  // 3. 水印色块
   vFilters.push(`drawbox=x=${wmPos.split(":")[0]}:y=${wmPos.split(":")[1]}:w=${wmSize}:h=${wmSize}:color=0x000000@${(t.watermarkOpacity).toFixed(2)}:t=fill`);
 
   // 8. 旋转透明特效叠加（从 data/dedup-effects/ 随机选2个素材叠加）
