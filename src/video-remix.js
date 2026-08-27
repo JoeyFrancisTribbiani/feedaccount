@@ -277,18 +277,21 @@ async function processSingleVideo(inputPath, outputPath, meta, options = {}) {
       effectLabels.push(`[${outLabel}]`);
     }
 
-    // 正片叠底叠加
+    // 用 overlay 叠加（比 blend=multiply 快很多）
+    // colorchannelmixer 控制透明度
     if (effectLabels.length === 1) {
-      fcParts.push(`[vbase]${effectLabels[0]}blend=all_mode=multiply:all_opacity=${EFFECT_OPACITY}[vout]`);
+      fcParts.push(`${effectLabels[0]}colorchannelmixer=aa=${EFFECT_OPACITY}[vfx0_adj]`);
+      fcParts.push(`[vbase][vfx0_adj]overlay=0:0[vout]`);
     } else {
-      fcParts.push(`[vbase]${effectLabels[0]}blend=all_mode=multiply:all_opacity=${EFFECT_OPACITY}[vmid]`);
-      fcParts.push(`[vmid]${effectLabels[1]}blend=all_mode=multiply:all_opacity=${EFFECT_OPACITY}[vout]`);
+      fcParts.push(`${effectLabels[0]}colorchannelmixer=aa=${EFFECT_OPACITY}[vfx0_adj]`);
+      fcParts.push(`${effectLabels[1]}colorchannelmixer=aa=${EFFECT_OPACITY}[vfx1_adj]`);
+      fcParts.push(`[vbase][vfx0_adj]overlay=0:0[vmid]`);
+      fcParts.push(`[vmid][vfx1_adj]overlay=0:0[vout]`);
     }
 
     let audioFilterArgs = [];
     if (hasAudio && audioArgs.length > 0) {
-      // 把 -af 改为 filter_complex 中的音频处理
-      const afStr = audioArgs[1]; // audioArgs = ["-af", "..."]
+      const afStr = audioArgs[1];
       fcParts.push(`[0:a]${afStr}[aout]`);
       audioFilterArgs = ["-map", "[aout]"];
     }
@@ -305,14 +308,25 @@ async function processSingleVideo(inputPath, outputPath, meta, options = {}) {
       inputArgs.push("-i", effPath);
     }
 
+    // 检测是否支持 NVENC GPU 编码
+    let videoCodec = "libx264";
+    let videoCodecArgs = ["-crf", "23", "-preset", "veryfast"];
+    try {
+      const { execFileSync } = await import("child_process");
+      const encoders = execFileSync("ffmpeg", ["-hide_banner", "-encoders"], { stdio: "pipe", timeout: 5000 }).toString();
+      if (encoders.includes("h264_nvenc")) {
+        videoCodec = "h264_nvenc";
+        videoCodecArgs = ["-cq", "23", "-preset", "p4", "-rc", "vbr"];
+      }
+    } catch {}
+
     args = [
       ...inputArgs,
       "-filter_complex", fcParts.join(";"),
       "-map", "[vout]",
       ...audioFilterArgs,
-      "-c:v", "libx264",
-      "-crf", "23",
-      "-preset", "veryfast",
+      "-c:v", videoCodec,
+      ...videoCodecArgs,
       "-pix_fmt", "yuv420p",
       "-movflags", "+faststart",
     ];
@@ -320,11 +334,10 @@ async function processSingleVideo(inputPath, outputPath, meta, options = {}) {
     // 无特效素材：保持原来的 -vf 模式
     args = [
       "-i", inputPath,
-      "-vf", vFilters.join(","),
+      "-vf", vFilters.length > 0 ? vFilters.join(",") : "null",
       ...audioArgs,
-      "-c:v", "libx264",
-      "-crf", "23",
-      "-preset", "veryfast",
+      "-c:v", videoCodec,
+      ...videoCodecArgs,
       "-pix_fmt", "yuv420p",
       "-movflags", "+faststart",
     ];
