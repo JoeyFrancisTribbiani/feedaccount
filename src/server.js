@@ -1012,17 +1012,14 @@ export function createMonitorServer({
                         // 提取 true 段
                         const trueSegs = trueIndices.map(i => parsedSegs[i]);
 
-                        // Fisher-Yates 洗牌，确保结果与原顺序不同
-                        let shuffled;
+                        // 最大化位移的整体重排：生成循环错排
+                        // 循环排列保证每个段都移动到不同位置，且位移总和最大化
+                        let shuffled = null;
+                        let bestDisplacement = 0;
                         let attempts = 0;
                         do {
-                          shuffled = [...trueSegs];
-                          for (let i = shuffled.length - 1; i > 0; i--) {
-                            const j = Math.floor(Math.random() * (i + 1));
-                            [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
-                          }
-                          attempts++;
-                        } while (shuffled.every((s, i) => s.index === trueSegs[i].index) && attempts < 10);
+                          // Sattolo 算法生成随机循环排列（保证无元素留在原位）
+          ...[truncated]
 
                         // 将打乱后的 true 段放回原槽位
                         const result = [...parsedSegs];

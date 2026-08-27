@@ -5758,6 +5758,7 @@ function renderModalTabs() {
         ${thumb}
         <span class="modal-video-card-title">${title}</span>
         ${meta}
+        ${remixTaskMap[v.url] ? remixBadgeHtml(remixTaskMap[v.url]) : ""}
       </label>`;
     }).join("");
   } else if (tab.creatorId) {
