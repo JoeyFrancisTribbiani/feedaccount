@@ -1632,6 +1632,7 @@ export function createMonitorServer({
           `--remote-debugging-port=${cdpPort}`,
           `--user-data-dir=${profilePath}`,
           "--restore-last-session",
+          "--remote-allow-origins=*",
         ];
         if (profileDirectory && profileDirectory.trim()) {
           args.push(`--profile-directory=${profileDirectory.trim()}`);
