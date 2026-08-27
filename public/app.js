@@ -4008,6 +4008,10 @@ async function openTextPreviewModal(url) {
   }
   overlay.dataset.url = url;
   overlay.classList.remove("hidden");
+  // 根据文件扩展名设置标题
+  const ext = url.split('.').pop()?.split('?')[0]?.toLowerCase() || '';
+  const titleEl = overlay.querySelector("h3");
+  if (titleEl) titleEl.textContent = ext === 'json' ? '分段脚本预览' : '文本预览';
   const textarea = overlay.querySelector("#text-content");
   const info = overlay.querySelector("#text-info");
   textarea.value = "加载中...";
@@ -4015,10 +4019,18 @@ async function openTextPreviewModal(url) {
   try {
     const res = await fetch(url);
     const text = await res.text();
-    textarea.value = text;
+    // JSON 文件自动格式化美化
+    let displayText = text;
+    if (ext === 'json') {
+      try {
+        const parsed = JSON.parse(text);
+        displayText = JSON.stringify(parsed, null, 2);
+      } catch {}
+    }
+    textarea.value = displayText;
     textarea.disabled = false;
-    const lines = text.split("\n").length;
-    const chars = text.length;
+    const lines = displayText.split("\n").length;
+    const chars = displayText.length;
     info.textContent = `${chars} 字符 · ${lines} 行`;
   } catch (e) {
     textarea.value = "加载失败: " + e.message;
@@ -4081,13 +4093,13 @@ async function openResourceGallery(taskId, fallbackImages = []) {
     const items = allItems.filter(i => i.type === activeType);
     const label = { image: "图片", video: "视频", audio: "音频", text: "文本", segment_script: "分段脚本", other: "其他" }[activeType] || activeType;
 
-    if (activeType === "text") {
-      // 文本类型：显示 txt 缩略图 + 预览按钮 + 下载
+    if (activeType === "text" || activeType === "segment_script") {
+      // 文本/分段脚本类型：显示缩略图 + 预览按钮 + 下载
       grid.innerHTML = items.map((item, i) => `
         <div class="gallery-item" data-url="${escapeHtml(item.url)}" style="position:relative;cursor:pointer;border:2px solid transparent;border-radius:8px;overflow:hidden;">
           <input type="checkbox" class="gallery-select-cb" data-url="${escapeHtml(item.url)}" style="position:absolute;top:4px;left:4px;z-index:2;width:18px;height:18px;" />
           <div style="padding:30px 8px;text-align:center;background:#f8fafc;">
-            <div style="font-size:32px;margin-bottom:6px;">📄</div>
+            <div style="font-size:32px;margin-bottom:6px;">${activeType === "segment_script" ? "📋" : "📄"}</div>
             <div style="font-size:10px;color:#64748b;word-break:break-all;line-height:1.4;">${escapeHtml(item.filename || "文本文件")}</div>
           </div>
           <button class="text-preview-btn" data-url="${escapeHtml(item.url)}" style="position:absolute;bottom:4px;left:4px;font-size:14px;padding:6px 14px;background:rgba(0,0,0,0.7);color:#fff;border:none;border-radius:6px;cursor:pointer;">预览</button>
