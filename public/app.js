@@ -3691,6 +3691,13 @@ function renderRemixSelected() {
 
 let remixTaskMap = {};
 function renderRemixTasks() {
+  // 保存当前选中的任务ID
+  const checkedIds = new Set();
+  remixEl.tasksList.querySelectorAll('input[type="checkbox"][data-task-id]:checked').forEach(cb => {
+    if (cb.dataset.taskId) checkedIds.add(cb.dataset.taskId);
+  });
+  const wasSelectAllChecked = remixEl.tasksList.querySelector('#task-select-all')?.checked || false;
+
   remixTaskMap = {};
   for (const t of remix.tasks) {
     for (const url of t.videoUrls) {
@@ -3710,10 +3717,11 @@ function renderRemixTasks() {
   }
   // 全选 + 批量删除
   const batchBar = `<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;padding:4px 0;">
-    <label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;"><input type="checkbox" id="task-select-all" /> 全选</label>
-    <button id="task-batch-delete" class="danger-button" type="button" style="font-size:11px;padding:4px 10px;" disabled>批量删除</button>
+    <label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;"><input type="checkbox" id="task-select-all"${wasSelectAllChecked ? ' checked' : ''} /> 全选</label>
+    <button id="task-batch-delete" class="danger-button" type="button" style="font-size:11px;padding:4px 10px;"${checkedIds.size === 0 ? ' disabled' : ''}>批量删除</button>
   </div>`;
   remixEl.tasksList.innerHTML = batchBar + remix.tasks.map((t) => {
+    const isChecked = checkedIds.has(t.id);
     const isDedup = t.mode === "dedup";
     const isMatrixRemix = t.mode === "matrix-remix";
     const isAiRemix = t.mode === "ai-remix";
@@ -3727,7 +3735,7 @@ function renderRemixTasks() {
     return `
       <div class="remix-task-item">
         <div class="remix-task-info">
-          <input type="checkbox" class="task-select-cb" data-task-id="${escapeHtml(t.id)}" style="margin-right:8px;" />
+          <input type="checkbox" class="task-select-cb" data-task-id="${escapeHtml(t.id)}" style="margin-right:8px;"${isChecked ? ' checked' : ''} />
           <span class="remix-task-mode ${isDedup ? "mode-dedup" : "mode-stitch"}">${modeLabel}</span>
           <strong>${escapeHtml(t.title)}</strong>
           <span style="font-size:10px;color:#94a3b8;font-family:monospace;">#${t.seqNum || '-'}</span>
