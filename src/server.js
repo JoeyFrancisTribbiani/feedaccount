@@ -990,62 +990,76 @@ export function createMonitorServer({
                 } else {
                   const segments = scriptData.segments || [];
                   if (Array.isArray(segments) && segments.length >= 3) {
-                    // 解析每段：字段名为 start_frame / end_frame（snake_case），reorderable 为布尔值
+                    // 解析每段
                     const parsedSegs = segments.map((s, i) => ({
                       index: i,
                       originalOrder: s.original_order ?? (i + 1),
                       segmentId: s.segment_id ?? `seg_${String(i + 1).padStart(3, "0")}`,
-                      segmentType: s.segment_type ?? "other",
                       startFrame: s.start_frame ?? s.startFrame ?? s.start,
                       endFrame: s.end_frame ?? s.endFrame ?? s.end,
                       reorderable: s.reorderable === true,
-                      contentSummary: s.content_summary ?? s.topic_point ?? "",
-                      dependencyNote: s.dependency_note ?? "",
+                      recommendedPosition: s.recommended_position ?? null,
                     })).filter(s => typeof s.startFrame === "number" && typeof s.endFrame === "number");
 
                     if (parsedSegs.length >= 3) {
-                      // 按提示词规则打乱：只打乱 reorderable=true 的段，false 的保持原位
-                      const trueIndices = parsedSegs.map((s, i) => s.reorderable ? i : -1).filter(i => i >= 0);
-                      const falseIndices = parsedSegs.map((s, i) => !s.reorderable ? i : -1).filter(i => i >= 0);
+                      // V3 新版：直接用 AI 的 recommended_order，不再随机打乱
+                      const reorderPlan = scriptData.reorder_plan || {};
+                      const recommendedOrder = reorderPlan.recommended_order || [];
+                      let orderedSegs;
 
-                      if (trueIndices.length >= 2) {
-                        // 提取 true 段
-                        const trueSegs = trueIndices.map(i => parsedSegs[i]);
-
-                        // 最大化位移的整体重排：生成循环错排
-                        // 循环排列保证每个段都移动到不同位置，且位移总和最大化
-                        let shuffled = null;
-                        let bestDisplacement = 0;
-                        let attempts = 0;
-                        do {
-                          // Sattolo 算法生成随机循环排列（保证无元素留在原位）
-          ...[truncated]
-
-                        // 将打乱后的 true 段放回原槽位
-                        const result = [...parsedSegs];
-                        for (let i = 0; i < trueIndices.length; i++) {
-                          result[trueIndices[i]] = shuffled[i];
+                      if (recommendedOrder.length === parsedSegs.length) {
+                        // 按 recommended_order 重新排序
+                        const segMap = {};
+                        for (const s of parsedSegs) segMap[s.segmentId] = s;
+                        orderedSegs = recommendedOrder.map(id => segMap[id]).filter(Boolean);
+                        store.logCdpEvent(null, "info", `分段脚本V3: ${parsedSegs.length}段, AI推荐顺序, strategy=${reorderPlan.strategy || "ai_global_reorder"}, strength=${reorderPlan.reorder_strength || "?"}`, null, taskId);
+                        store.logCdpEvent(null, "info", `原顺序: ${parsedSegs.map(s => s.segmentId).join("→")}`, null, taskId);
+                        store.logCdpEvent(null, "info", `推荐顺序: ${orderedSegs.map(s => s.segmentId).join("→")}`, null, taskId);
+                        if (reorderPlan.reorder_note) {
+                          store.logCdpEvent(null, "info", `重排说明: ${reorderPlan.reorder_note}`, null, taskId);
                         }
+                      } else {
+                        // 兼容旧版：没有 recommended_order，用 recommended_position 排序
+                        if (parsedSegs.every(s => s.recommendedPosition != null)) {
+                          orderedSegs = [...parsedSegs].sort((a, b) => a.recommendedPosition - b.recommendedPosition);
+                          store.logCdpEvent(null, "info", `分段脚本: ${parsedSegs.length}段, 按recommended_position排序`, null, taskId);
+                        } else {
+                          // 旧版兼容：Fisher-Yates 随机打乱 reorderable=true 的段
+                          orderedSegs = [...parsedSegs];
+                          const trueIndices = parsedSegs.map((s, i) => s.reorderable ? i : -1).filter(i => i >= 0);
+                          if (trueIndices.length >= 2) {
+                            const trueSegs = trueIndices.map(i => orderedSegs[i]);
+                            let shuffled;
+                            let attempts = 0;
+                            do {
+                              shuffled = [...trueSegs];
+                              for (let i = shuffled.length - 1; i > 0; i--) {
+                                const j = Math.floor(Math.random() * (i + 1));
+                                [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+                              }
+                              attempts++;
+                            } while (shuffled.every((s, i) => s.index === trueSegs[i].index) && attempts < 10);
+                            for (let i = 0; i < trueIndices.length; i++) {
+                              orderedSegs[trueIndices[i]] = shuffled[i];
+                            }
+                          }
+                          store.logCdpEvent(null, "info", `分段脚本(旧版兼容): ${parsedSegs.length}段, 随机打乱`, null, taskId);
+                        }
+                      }
 
-                        store.logCdpEvent(null, "info", `分段脚本: ${parsedSegs.length}段, reorderable=true: ${trueIndices.length}个, 打乱顺序`, null, taskId);
-                        store.logCdpEvent(null, "info", `打乱前: ${parsedSegs.map(s => s.index + (s.reorderable ? "(T)" : "(F)")).join(" ")}`, null, taskId);
-                        store.logCdpEvent(null, "info", `打乱后: ${result.map(s => s.index).join("→")}`, null, taskId);
-
-                        // 用 FFmpeg 按帧范围切割并重新拼接
+                      if (orderedSegs && orderedSegs.length === parsedSegs.length) {
+                        // 用 FFmpeg 按帧范围切割并按推荐顺序重新拼接
                         const { probeVideo } = await import("./video-remix.js");
                         const videoMeta = await probeVideo(mainVideoLocalPath);
                         const fps = videoMeta?.fps || 30;
                         const shuffledPath = path.join(getOutputDir(), `shuffled_${Date.now()}.mp4`);
 
-                        // 切割每段（按打乱后的顺序）
+                        // 切割每段（按推荐顺序）
                         const segFiles = [];
-                        for (let i = 0; i < result.length; i++) {
-                          const seg = result[i];
+                        for (let i = 0; i < orderedSegs.length; i++) {
+                          const seg = orderedSegs[i];
                           const segPath = path.join(getOutputDir(), `seg_${i}_${Date.now()}.mp4`);
-                          // start_frame 和 end_frame 都是包含端点的帧号
-                          // 转为时间：帧号 / fps
                           const startTime = (seg.startFrame / fps).toFixed(3);
-                          // end_frame 是包含的最后一帧，+1 得到切出时间（左闭右开）
                           const endTime = ((seg.endFrame + 1) / fps).toFixed(3);
                           const { execFileSync } = await import("child_process");
                           execFileSync("ffmpeg", [
@@ -1078,23 +1092,39 @@ export function createMonitorServer({
                         // 清理临时文件
                         try { for (const f of segFiles) unlinkSync(f); unlinkSync(listFile); } catch {}
 
-                        store.logCdpEvent(null, "info", `分段打乱完成: ${shuffledPath}`, null, taskId);
+                        store.logCdpEvent(null, "info", `分段重排完成: ${shuffledPath}`, null, taskId);
                         videoForRemix = shuffledPath;
                       } else {
-                        store.logCdpEvent(null, "info", `reorderable=true 的段不足2个(${trueIndices.length}个)，不执行打乱`, null, taskId);
+                        store.logCdpEvent(null, "warning", "推荐顺序与段数不匹配，跳过重排", null, taskId);
                       }
                     } else {
-                      store.logCdpEvent(null, "warning", "分段脚本有效段数不足(<3)，跳过打乱", null, taskId);
+                      store.logCdpEvent(null, "warning", "分段脚本有效段数不足(<3)，跳过重排", null, taskId);
                     }
                   } else {
                     store.logCdpEvent(null, "warning", "分段脚本格式无效或段数不足", null, taskId);
                   }
                 }
+
+                // 解析 TikTok 内容
+                if (scriptData.tiktok_content) {
+                  const tc = scriptData.tiktok_content;
+                  store.logCdpEvent(null, "info", `TikTok内容: title="${(tc.title || "").substring(0, 60)}", hashtags=${(tc.hashtags || []).length}个, note=${(tc.expert_buying_note || "").length}字符`, null, taskId);
+                  // 存储到任务记录（复用 errorMessage 字段不行，需要单独存储）
+                  try {
+                    const { DatabaseSync } = await import("node:sqlite");
+                    const dbPath = path.join(path.dirname(THIS_DIR), "data", "reddit-flow.db");
+                    const db = new DatabaseSync(dbPath);
+                    // 确保 tiktok_content_json 列存在
+                    try { db.exec("ALTER TABLE remix_tasks ADD COLUMN tiktok_content_json TEXT"); } catch {}
+                    db.prepare("UPDATE remix_tasks SET tiktok_content_json = ? WHERE id = ?").run(JSON.stringify(tc), taskId);
+                    db.close();
+                  } catch (e) { console.error("[AI混剪] TikTok内容存储失败:", e.message); }
+                }
               } else {
                 store.logCdpEvent(null, "warning", "分段脚本文件不存在", null, taskId);
               }
             } else {
-              store.logCdpEvent(null, "info", "未找到分段脚本资源，跳过打乱", null, taskId);
+              store.logCdpEvent(null, "info", "未找到分段脚本资源，跳过重排", null, taskId);
             }
           } catch (e) {
             store.logCdpEvent(null, "warning", `分段脚本处理失败: ${e.message}，使用原视频`, null, taskId);
