@@ -261,14 +261,14 @@ async function processSingleVideo(inputPath, outputPath, meta, options = {}) {
 
     const rotateExpr = effectIdx === 0 ? `${rotateSpeed1}*t` : `${rotateSpeed2}*t`;
     // 用 format=rgba 在 RGB 色彩空间做旋转，避免 YUV 下 multiply 导致画面变暗
-    return `${aspectFix},scale=${targetW}:${targetH}:flags=lanczos,format=rgba,rotate='${rotateExpr}':c=black@0`;
+    return `${aspectFix},scale=${targetW}:${targetH}:flags=lanczos,rotate='${rotateExpr}':c=black@0`;
   }
 
   // 9. 帧率变换
   vFilters.push(`fps=${targetFps}`);
 
-  // 10. 确保像素格式
-  vFilters.push("format=yuv420p");
+  // 注意：format=yuv420p 不放在 vFilters 中，避免和特效的 rgba 转换冲突导致偏色
+  // 统一在输出参数中用 -pix_fmt yuv420p
 
   // ─── 构建 audio filter chain ───
   let audioArgs = [];
@@ -321,15 +321,11 @@ async function processSingleVideo(inputPath, outputPath, meta, options = {}) {
       effectLabels.push(`[${outLabel}]`);
     }
 
-    // 正片叠底叠加：先转 RGB 色彩空间再做 multiply，避免 YUV 下画面变暗
+    // 正片叠底叠加
     if (effectLabels.length === 1) {
-      // 单个特效：正片叠底混合
-      fcParts.push(`[vbase]format=rgba[vbase_rgb]`);
-      fcParts.push(`[vbase_rgb]${effectLabels[0]}blend=all_mode=multiply:all_opacity=${EFFECT_OPACITY}[vout]`);
+      fcParts.push(`[vbase]${effectLabels[0]}blend=all_mode=multiply:all_opacity=${EFFECT_OPACITY}[vout]`);
     } else {
-      // 两个特效：先正片叠底第一个到原视频，再正片叠底第二个
-      fcParts.push(`[vbase]format=rgba[vbase_rgb]`);
-      fcParts.push(`[vbase_rgb]${effectLabels[0]}blend=all_mode=multiply:all_opacity=${EFFECT_OPACITY}[vmid]`);
+      fcParts.push(`[vbase]${effectLabels[0]}blend=all_mode=multiply:all_opacity=${EFFECT_OPACITY}[vmid]`);
       fcParts.push(`[vmid]${effectLabels[1]}blend=all_mode=multiply:all_opacity=${EFFECT_OPACITY}[vout]`);
     }
 
