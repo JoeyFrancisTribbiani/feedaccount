@@ -2762,6 +2762,30 @@ export function createMonitorServer({
           const origTask = store.getRemixTask(taskId);
           if (!origTask) { sendJson(response, 404, { error: "任务不存在" }); return; }
 
+          // 检查是否有分段脚本资源
+          const segmentResources = store.listTaskResources(taskId);
+          const scriptResource = segmentResources.find(r => r.type === "segment_script");
+
+          if (scriptResource) {
+            // 分段脚本模式：重新做去重+分段打乱+拼接
+            const resolveLocal = (url) => {
+              if (url.startsWith("/data/remix-videos/")) return path.join(getUploadDir(), path.basename(url));
+              if (url.startsWith("/data/remix-output/")) return path.join(getOutputDir(), path.basename(url));
+              return url;
+            };
+            const mainVideoLocalPath = resolveLocal(origTask.videoUrls[0]);
+            if (!mainVideoLocalPath || !existsSync(mainVideoLocalPath)) {
+              sendJson(response, 400, { error: "原视频文件不存在" }); return;
+            }
+
+            store.updateRemixTask(taskId, { status: "PROCESSING", errorMessage: null, completedAt: null });
+            store.logCdpEvent(null, "info", `重新去重(分段脚本模式)`, null, taskId);
+            composeAiRemixVideoAsync(taskId, mainVideoLocalPath, [], origTask.presetId, origTask.matrixIds, origTask.creatorId, null, origTask.videoUrls[0]?.replace(/^.*\//, '').replace(/\.mp4$/, '') || origTask.title, origTask.outputUrl);
+            sendJson(response, 200, { ok: true, message: "重新去重已开始（分段脚本模式）" });
+            return;
+          }
+
+          // 图片模式重新剪辑（原有逻辑）
           // 从任务专属目录读取图片
           const taskSeq = origTask.seqNum || taskId.replace(/[^0-9]/g, "").slice(-6) || taskId;
           const taskDir = path.join(getOutputDir(), "tasks", String(taskSeq));
