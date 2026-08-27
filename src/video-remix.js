@@ -308,15 +308,27 @@ async function processSingleVideo(inputPath, outputPath, meta, options = {}) {
       inputArgs.push("-i", effPath);
     }
 
-    // 检测是否支持 NVENC GPU 编码
+    // 检测可用的硬件编码器（实际测试，不只查列表）
     let videoCodec = "libx264";
     let videoCodecArgs = ["-crf", "23", "-preset", "veryfast"];
     try {
       const { execFileSync } = await import("child_process");
-      const encoders = execFileSync("ffmpeg", ["-hide_banner", "-encoders"], { stdio: "pipe", timeout: 5000 }).toString();
-      if (encoders.includes("h264_nvenc")) {
+      // 用 1 帧测试 NVENC 是否真的可用
+      try {
+        execFileSync("ffmpeg", ["-hide_banner", "-f", "lavfi", "-i", "color=black:s=16x16:d=0.04", "-frames:v", "1", "-c:v", "h264_nvenc", "-f", "null", "-"], { stdio: "pipe", timeout: 10000 });
         videoCodec = "h264_nvenc";
         videoCodecArgs = ["-cq", "23", "-preset", "p4", "-rc", "vbr"];
+      } catch {
+        // NVENC 不可用，尝试 Intel QuickSync
+        try {
+          execFileSync("ffmpeg", ["-hide_banner", "-f", "lavfi", "-i", "color=black:s=16x16:d=0.04", "-frames:v", "1", "-c:v", "h264_qsv", "-f", "null", "-"], { stdio: "pipe", timeout: 10000 });
+          videoCodec = "h264_qsv";
+          videoCodecArgs = ["-q", "23", "-preset", "veryfast"];
+        } catch {
+          // 都不可用，用 libx264 ultrafast
+          videoCodec = "libx264";
+          videoCodecArgs = ["-crf", "23", "-preset", "ultrafast"];
+        }
       }
     } catch {}
 
