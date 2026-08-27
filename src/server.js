@@ -986,7 +986,9 @@ export function createMonitorServer({
                 // 检查 status
                 if (scriptData.status === "failed") {
                   const errMsg = scriptData.errors?.map(e => e.message).join("; ") || "分段脚本分析失败";
-                  store.logCdpEvent(null, "warning", `分段脚本状态: failed — ${errMsg}`, null, taskId);
+                  store.logCdpEvent(null, "error", `分段脚本状态: failed — ${errMsg}`, null, taskId);
+                  store.updateRemixTask(taskId, { status: "FAILED", errorMessage: `分段脚本分析失败: ${errMsg}`, completedAt: nowIso(), durationMs: Date.now() - composeStartTime });
+                  return;
                 } else {
                   const segments = scriptData.segments || [];
                   if (Array.isArray(segments) && segments.length >= 3) {
