@@ -223,78 +223,33 @@ async function processSingleVideo(inputPath, outputPath, meta, options = {}) {
   const wmPos = corners[Math.floor(Math.random() * corners.length)];
 
   // ─── 构建 video filter chain ───
+  // 只保留旋转透明特效叠加，去掉所有其他画面处理
   const vFilters = [];
 
-  // 1. 水平镜像翻转（最有效的单手段）
-  if (t.flip) {
-    vFilters.push("hflip");
-  }
-
-  // 2. 变速
-  vFilters.push(`setpts=PTS*${setptsFactor}`);
-
-  // 3. 水印色块
-  vFilters.push(`drawbox=x=${wmPos.split(":")[0]}:y=${wmPos.split(":")[1]}:w=${wmSize}:h=${wmSize}:color=0x000000@${(t.watermarkOpacity).toFixed(2)}:t=fill`);
-
-  // 8. 旋转透明特效叠加（从 data/dedup-effects/ 随机选2个素材叠加）
+  // 旋转透明特效叠加（从 data/dedup-effects/ 随机选2个素材叠加）
   const effectsDir = path.resolve(process.cwd(), "data", "dedup-effects");
   let effectInputs = [];
   if (existsSync(effectsDir)) {
     const effectFiles = readdirSync(effectsDir).filter(f => /\.(mp4|mov|webm|png|jpg|jpeg)$/i.test(f));
-    // 随机选2个（不重复）
     const shuffled = [...effectFiles].sort(() => Math.random() - 0.5);
     effectInputs = shuffled.slice(0, Math.min(2, shuffled.length)).map(f => path.join(effectsDir, f));
   }
 
-  // 特效参数：正片叠底混合 + 69%透明度 + 两个素材反向旋转
   const EFFECT_OPACITY = 0.01;
-  const rotateSpeed1 = (1.5 + Math.random() * 1.5); // 顺时针 1.5-3 弧度/秒
-  const rotateSpeed2 = -rotateSpeed1 - (Math.random() * 0.5 - 0.25); // 反向，略不同速
+  const rotateSpeed1 = (1.5 + Math.random() * 1.5);
+  const rotateSpeed2 = -rotateSpeed1 - (Math.random() * 0.5 - 0.25);
 
-  // 为每个特效素材构建 filter chain
   function buildEffectFilter(effectIdx, srcW, srcH) {
-    // 判断是否需要旋转90度（横屏素材转竖屏）
     const isLandscape = srcW > srcH;
     const aspectFix = isLandscape
-      ? `transpose=1` // 横屏转竖屏（顺时针90度）
+      ? `transpose=1`
       : `scale=${targetW}:${targetH}:force_original_aspect_ratio=increase,crop=${targetW}:${targetH}`;
-
     const rotateExpr = effectIdx === 0 ? `${rotateSpeed1}*t` : `${rotateSpeed2}*t`;
-    // 用 format=rgba 在 RGB 色彩空间做旋转，避免 YUV 下 multiply 导致画面变暗
     return `${aspectFix},scale=${targetW}:${targetH}:flags=lanczos,rotate='${rotateExpr}':c=black@0`;
   }
 
-  // 9. 帧率变换
-  vFilters.push(`fps=${targetFps}`);
-
-  // 注意：format=yuv420p 不放在 vFilters 中，避免和特效的 rgba 转换冲突导致偏色
-  // 统一在输出参数中用 -pix_fmt yuv420p
-
-  // ─── 构建 audio filter chain ───
+  // 音频：直通不做任何处理（变调/EQ/音量全部去掉）
   let audioArgs = [];
-  if (hasAudio) {
-    const aFilters = [];
-
-    // 变调 + 变速
-    aFilters.push(
-      `asetrate=${sampleRate}*${pitchFactor.toFixed(6)}`,
-      `atempo=${atempoVal}`,
-      `aresample=${sampleRate}`,
-    );
-
-    // EQ 调整（改变音频指纹）
-    aFilters.push(
-      `equalizer=f=800:t=q:w=1:g=2`,
-      `equalizer=f=3000:t=q:w=1:g=-1.5`,
-      `bass=g=2:f=120:w=0.7`,
-      `treble=g=1.5:f=8000:w=0.7`,
-    );
-
-    // 音量归一化
-    aFilters.push(`volume=1.5dB`);
-
-    audioArgs = ["-af", aFilters.join(",")];
-  }
 
   // ─── 构建 ffmpeg 命令 ───
   let args;
