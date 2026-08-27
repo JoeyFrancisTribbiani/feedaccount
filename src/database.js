@@ -448,6 +448,9 @@ export class LocalDatabase {
     this.#ensureColumn("remix_tasks", "music_id", "TEXT");
     this.#ensureColumn("remix_tasks", "cdp_instance_id", "TEXT");
     this.#ensureColumn("remix_tasks", "image_paths_json", "TEXT");
+    this.#ensureColumn("remix_tasks", "resource_types_json", "TEXT");
+    this.#ensureColumn("remix_tasks", "outfit_task_ids_json", "TEXT");
+    this.#ensureColumn("remix_tasks", "duration_ms", "INTEGER");
     // 穿搭图库索引
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS outfit_library (
