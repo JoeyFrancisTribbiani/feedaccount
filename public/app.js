@@ -1377,6 +1377,13 @@ function updateCountdowns() {
     const remaining = Math.max(0, new Date(element.dataset.countdown).getTime() - Date.now());
     element.textContent = `${(remaining / 1000).toFixed(1)} 秒`;
   }
+  // 实时更新任务计时器
+  for (const el of document.querySelectorAll(".task-timer")) {
+    const startTime = parseInt(el.dataset.startTime);
+    if (startTime) {
+      el.textContent = `耗时${formatDuration(Date.now() - startTime)}`;
+    }
+  }
 }
 
 async function fetchJoinTargets() {
@@ -3740,6 +3747,7 @@ function renderRemixTasks() {
           <strong>${escapeHtml(t.title)}</strong>
           <span style="font-size:10px;color:#94a3b8;font-family:monospace;">#${t.seqNum || '-'}</span>
           ${statusBadge}
+          ${t.durationMs ? `<span style="font-size:11px;color:#94a3b8;">耗时${formatDuration(t.durationMs)}</span>` : (t.status === "PROCESSING" ? `<span class="task-timer" data-start-time="${new Date(t.createdAt).getTime()}" style="font-size:11px;color:#94a3b8;">计时中</span>` : "")}
           <span class="muted-activity" style="font-size: 11px;">${t.videoCount}视频 · ${escapeHtml(t.ratio)} · ${formatDateTime(t.createdAt)}</span>
         </div>
         <div class="remix-task-actions">
@@ -3748,7 +3756,7 @@ function renderRemixTasks() {
           ${(t.status === "FAILED" || t.status === "DONE") ? `<button class="button button-secondary task-retry-btn" data-task-id="${escapeHtml(t.id)}" style="font-size: 11px; padding:2px 8px;">重试</button>` : ""}
           ${t.status === "DONE" && t.outputUrl ? `<button class="button button-secondary task-preview-btn" data-out-url="${escapeHtml(t.outputUrl)}" style="font-size: 11px; padding:2px 8px;">预览</button>` : ""}
           ${t.imagePaths?.length || t.resourceTypes?.length ? `<button class="button button-secondary task-gallery-btn" data-task-id="${escapeHtml(t.id)}" data-images='${escapeHtml(JSON.stringify(t.imagePaths))}' style="font-size: 11px; padding:2px 8px;">资源集</button>` : ""}
-          ${t.imagePaths?.length && t.status === "DONE" ? `<button class="button button-secondary task-recompose-btn" data-task-id="${escapeHtml(t.id)}" style="font-size: 11px; padding:2px 8px;">重新剪辑</button>` : ""}
+          ${(t.status === "DONE" || (t.resourceTypes?.includes("segment_script"))) ? `<button class="button button-secondary task-recompose-btn" data-task-id="${escapeHtml(t.id)}" style="font-size: 11px; padding:2px 8px;">重新剪辑</button>` : ""}
           ${t.status === "DONE" && t.outputUrl ? `<a href="${escapeHtml(t.outputUrl)}" download data-task-id="${escapeHtml(t.id)}" data-out-url="${escapeHtml(t.outputUrl)}" class="button button-primary" style="font-size: 11px;">${t.downloaded ? "已下载 ✓" : "下载"}</a>` : ""}
           <button class="remix-del-task" data-del-task="${escapeHtml(t.id)}" style="color: #dc2626; background: none; border: none; cursor: pointer; font-size: 16px;">×</button>
         </div>

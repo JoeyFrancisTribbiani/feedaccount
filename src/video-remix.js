@@ -682,7 +682,7 @@ async function mixBackgroundMusic(videoPath, musicPath, outputPath, volumePercen
   const hasVideoAudio = videoMeta?.hasAudio;
   const musicVol = (volumePercent / 100).toFixed(2);
   // 背景音乐音量降低24dB（固定值，对应剪映"复合片段"的音频处理）
-  const musicGainDb = -30;
+  const musicGainDb = -35;
 
   // 计算音乐区间：优先用调用方传入的 spans，否则按 scope 整段
   let regions = Array.isArray(spans) ? spans : (scope === "none" ? [] : [{ start: 0, end: duration }]);

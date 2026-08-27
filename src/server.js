@@ -518,6 +518,7 @@ export function createMonitorServer({
     console.log(`[AI混剪] 任务开始: ${taskId}, daemonUrl=${daemonUrl}, files=${filesToUpload?.length}, prompt=${(prompt||'').slice(0,50)}`);
     store.updateRemixTask(taskId, { status: "PROCESSING" });
     store.logCdpEvent(null, "info", `AI混剪任务开始: ${taskId}`, null, taskId);
+    const taskStartTime = Date.now();
     try {
         // Step 0: 预压缩和穿搭取图（异步处理，不阻塞提交）
         let uploadFiles = [...filesToUpload];
@@ -883,7 +884,7 @@ export function createMonitorServer({
         }
       } catch (e) {
         console.error(`[AI混剪] 任务失败: ${taskId}`, e.message, e.stack);
-        store.updateRemixTask(taskId, { status: "FAILED", errorMessage: e.message, completedAt: nowIso() });
+        store.updateRemixTask(taskId, { status: "FAILED", errorMessage: e.message, completedAt: nowIso(), durationMs: Date.now() - taskStartTime });
         store.logCdpEvent(null, "error", `AI混剪任务失败: ${e.message}`, null, taskId);
       }
     console.log(`[AI混剪] 任务结束: ${taskId}`);
@@ -922,6 +923,7 @@ export function createMonitorServer({
 
   // 本地拼接异步执行（不阻塞 AI 队列）
   async function composeAiRemixVideoAsync(taskId, mainVideoLocalPath, imagePaths, presetId, matrixIds, creatorId, sourceVideoId, videoTitle, oldOutputUrl = null) {
+    const composeStartTime = Date.now();
     try {
       // imagePaths 为空时仍可继续（AI 返回视频模式，只做去重/片头片尾/音乐）
 
@@ -1088,7 +1090,7 @@ export function createMonitorServer({
         }
         const outputUrl = `/data/remix-output/${path.basename(finalOut)}`;
         store.logCdpEvent(null, "info", `AI 混剪成品: ${outputUrl}`, null, taskId);
-        store.updateRemixTask(taskId, { status: "DONE", outputUrl, completedAt: nowIso() });
+        store.updateRemixTask(taskId, { status: "DONE", outputUrl, completedAt: nowIso(), durationMs: Date.now() - composeStartTime });
 
         // 链接到矩阵（重新剪辑时先删旧的再建新的，避免重复）
         if (matrixIds?.length) {
@@ -1118,11 +1120,11 @@ export function createMonitorServer({
         }
       } else {
         store.logCdpEvent(null, "error", "找不到原视频文件，无法合成", null, taskId);
-        store.updateRemixTask(taskId, { status: "FAILED", errorMessage: "找不到原视频文件", completedAt: nowIso() });
+        store.updateRemixTask(taskId, { status: "FAILED", errorMessage: "找不到原视频文件", completedAt: nowIso(), durationMs: Date.now() - composeStartTime });
       }
     } catch (e) {
       console.error(`[AI混剪] 拼接失败: ${taskId}`, e.message);
-      store.updateRemixTask(taskId, { status: "FAILED", errorMessage: e.message, completedAt: nowIso() });
+      store.updateRemixTask(taskId, { status: "FAILED", errorMessage: e.message, completedAt: nowIso(), durationMs: Date.now() - composeStartTime });
       store.logCdpEvent(null, "error", `AI混剪拼接失败: ${e.message}`, null, taskId);
     }
   }

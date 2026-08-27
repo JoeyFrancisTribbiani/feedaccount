@@ -2052,6 +2052,7 @@ export class LocalDatabase {
       outputUrl: r.output_url, errorMessage: r.error_message,
       downloaded: Boolean(r.downloaded),
       createdAt: r.created_at, completedAt: r.completed_at,
+      durationMs: r.duration_ms || null,
       creatorId: r.creator_id || null,
       matrixIds: parseJson(r.matrix_ids_json, null),
       presetId: r.preset_id || null,
@@ -2090,7 +2091,7 @@ export class LocalDatabase {
     return this.db.prepare("DELETE FROM ai_task_resources WHERE task_id = ?").run(taskId).changes;
   }
 
-  updateRemixTask(id, { status = null, outputUrl = null, errorMessage = null, completedAt = null, imagePaths = null, resourceTypes = null, outfitTaskIds = null }) {
+  updateRemixTask(id, { status = null, outputUrl = null, errorMessage = null, completedAt = null, imagePaths = null, resourceTypes = null, outfitTaskIds = null, durationMs = null }) {
     this.db.prepare(`
       UPDATE remix_tasks
       SET status = COALESCE(?, status),
@@ -2099,9 +2100,10 @@ export class LocalDatabase {
           completed_at = COALESCE(?, completed_at),
           image_paths_json = COALESCE(?, image_paths_json),
           resource_types_json = COALESCE(?, resource_types_json),
-          outfit_task_ids_json = COALESCE(?, outfit_task_ids_json)
+          outfit_task_ids_json = COALESCE(?, outfit_task_ids_json),
+          duration_ms = COALESCE(?, duration_ms)
       WHERE id = ?
-    `).run(status, outputUrl, errorMessage, completedAt, imagePaths ? JSON.stringify(imagePaths) : null, resourceTypes ? JSON.stringify(resourceTypes) : null, outfitTaskIds ? JSON.stringify(outfitTaskIds) : null, id);
+    `).run(status, outputUrl, errorMessage, completedAt, imagePaths ? JSON.stringify(imagePaths) : null, resourceTypes ? JSON.stringify(resourceTypes) : null, outfitTaskIds ? JSON.stringify(outfitTaskIds) : null, durationMs, id);
     return this.getRemixTask(id);
   }
 
