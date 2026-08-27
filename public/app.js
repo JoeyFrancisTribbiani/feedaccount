@@ -3961,6 +3961,69 @@ document.querySelector("#video-preview-close")?.addEventListener("click", () => 
   modal.classList.add("hidden");
 });
 
+// TikTok 内容弹窗
+function openTikTokContentModal(tc) {
+  let overlay = document.querySelector("#tiktok-content-overlay");
+  if (!overlay) {
+    overlay = document.createElement("div");
+    overlay.id = "tiktok-content-overlay";
+    overlay.className = "modal-overlay";
+    overlay.style.cssText = "z-index:10002;";
+    overlay.innerHTML = `
+      <div class="modal-content" style="max-width:600px;width:80vw;display:flex;flex-direction:column;max-height:90vh;">
+        <div class="modal-header">
+          <h3>TikTok 文案</h3>
+          <div style="display:flex;gap:6px;">
+            <button id="tk-copy-all" class="button button-primary" type="button" style="font-size:11px;padding:4px 12px;">全部复制</button>
+            <button id="tk-close" class="modal-close" type="button">×</button>
+          </div>
+        </div>
+        <div class="modal-body" style="flex:1;overflow-y:auto;padding:12px;">
+          <div id="tk-title-row" style="margin-bottom:12px;">
+            <div style="font-size:11px;color:#94a3b8;margin-bottom:4px;">标题</div>
+            <div id="tk-title" style="font-size:14px;line-height:1.5;padding:8px;background:#f8fafc;border-radius:6px;"></div>
+          </div>
+          <div id="tk-hashtags-row" style="margin-bottom:12px;">
+            <div style="font-size:11px;color:#94a3b8;margin-bottom:4px;">标签</div>
+            <div id="tk-hashtags" style="font-size:13px;line-height:1.6;padding:8px;background:#f8fafc;border-radius:6px;word-break:break-all;"></div>
+          </div>
+          <div id="tk-note-row">
+            <div style="font-size:11px;color:#94a3b8;margin-bottom:4px;">购买经验文案</div>
+            <div id="tk-note" style="font-size:13px;line-height:1.8;padding:8px;background:#f8fafc;border-radius:6px;white-space:pre-wrap;"></div>
+          </div>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+    overlay.addEventListener("click", (e) => {
+      if (e.target === overlay) overlay.classList.add("hidden");
+    });
+    overlay.querySelector("#tk-close").addEventListener("click", () => overlay.classList.add("hidden"));
+    overlay.querySelector("#tk-copy-all").addEventListener("click", () => {
+      const title = overlay.querySelector("#tk-title").textContent;
+      const hashtags = overlay.querySelector("#tk-hashtags").textContent;
+      const note = overlay.querySelector("#tk-note").textContent;
+      const fullText = `${title}\n${hashtags}\n${note}`;
+      navigator.clipboard.writeText(fullText).then(() => {
+        showToast("已复制全部内容");
+      }).catch(() => {
+        // 回退方案
+        const ta = document.createElement("textarea");
+        ta.value = fullText;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+        showToast("已复制全部内容");
+      });
+    });
+  }
+  overlay.classList.remove("hidden");
+  overlay.querySelector("#tk-title").textContent = tc.title || "";
+  overlay.querySelector("#tk-hashtags").textContent = (tc.hashtags || []).join(" ");
+  overlay.querySelector("#tk-note").textContent = tc.expert_buying_note || "";
+}
+
 // 文本预览弹窗（可编辑/复制）
 async function openTextPreviewModal(url) {
   // 动态创建弹窗
@@ -4075,6 +4138,22 @@ async function openResourceGallery(taskId, fallbackImages = []) {
   const types = [...new Set(allItems.map(i => i.type))];
   const activeType = types[0] || "image";
   titleEl.textContent = "资源集";
+
+  // 加载 TikTok 内容
+  const tkBtn = modal.querySelector("#gallery-tiktok-btn");
+  if (tkBtn) tkBtn.style.display = "none";
+  if (taskId) {
+    try {
+      const tkData = await request(`/api/remix/tasks/${encodeURIComponent(taskId)}/tiktok-content`);
+      if (tkData && tkData.title) {
+        if (tkBtn) {
+          tkBtn.style.display = "";
+          tkBtn.onclick = () => openTikTokContentModal(tkData);
+        }
+      }
+    } catch {}
+  }
+
   renderResourceByType(types, activeType);
 
   function renderResourceByType(types, activeType) {

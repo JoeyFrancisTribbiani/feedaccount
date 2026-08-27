@@ -2944,6 +2944,27 @@ export function createMonitorServer({
           return;
         }
 
+        // TikTok 内容
+        const tkMatch = pathname.match(/^\/api\/remix\/tasks\/([^/]+)\/tiktok-content$/);
+        if (request.method === "GET" && tkMatch) {
+          const tid = decodeURIComponent(tkMatch[1]);
+          try {
+            const { DatabaseSync } = await import("node:sqlite");
+            const dbPath = path.join(path.dirname(THIS_DIR), "data", "reddit-flow.db");
+            const db = new DatabaseSync(dbPath);
+            const row = db.prepare("SELECT tiktok_content_json FROM remix_tasks WHERE id = ?").get(tid);
+            db.close();
+            if (row?.tiktok_content_json) {
+              sendJson(response, 200, JSON.parse(row.tiktok_content_json));
+            } else {
+              sendJson(response, 200, {});
+            }
+          } catch (e) {
+            sendJson(response, 200, {});
+          }
+          return;
+        }
+
         // 中止任务
         const remixAbortMatch = pathname.match(/^\/api\/remix\/tasks\/([^/]+)\/abort$/);
         if (request.method === "POST" && remixAbortMatch) {
