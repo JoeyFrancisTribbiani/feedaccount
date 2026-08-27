@@ -258,7 +258,8 @@ async function processSingleVideo(inputPath, outputPath, meta, options = {}) {
     // 有特效素材：用 filter_complex 多输入模式
     const fcParts = [];
     // [0:v] 原视频 filter chain
-    fcParts.push(`[0:v]${vFilters.join(",")}[vbase]`);
+    const vChain = vFilters.length > 0 ? vFilters.join(",") : "null";
+    fcParts.push(`[0:v]${vChain}[vbase]`);
 
     // 需要获取每个特效素材的分辨率来判断横竖屏
     const { probeVideo: probe } = await import("./video-remix.js");
