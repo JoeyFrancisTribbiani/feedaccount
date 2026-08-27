@@ -532,20 +532,41 @@ export function createMonitorServer({
             if (fileSize > 50 * 1024 * 1024) {
               store.logCdpEvent(null, "info", `原视频 ${Math.round(fileSize / 1024 / 1024)}MB 超过50MB，预压缩...`, null, taskId);
               const { execFileSync } = await import('child_process');
+              const { renameSync, unlinkSync } = await import('fs');
               const compressedPath = path.join(path.dirname(getOutputDir()), 'remix-tmp', `precompressed_${Date.now()}.mp4`);
               const compress = (input, output, crf, scale) => {
                 execFileSync('ffmpeg', ['-err_detect', 'ignore_err', '-y', '-i', input, '-c:v', 'libx264', '-crf', String(crf), '-preset', 'fast', '-vf', `scale=${scale}`, '-c:a', 'aac', '-b:a', '96k', '-movflags', '+faststart', output], { stdio: 'pipe', timeout: 300000 });
               };
-              compress(uploadMainVideoPath, compressedPath, 28, '-2:1920');
-              let compressedSize = statSync(compressedPath).size;
-              if (compressedSize > 50 * 1024 * 1024) {
-                const tmpPath = compressedPath.replace('.mp4', '_2.mp4');
-                compress(compressedPath, tmpPath, 32, '-2:1280');
-                const { renameSync } = await import('fs');
-                renameSync(tmpPath, compressedPath);
-                compressedSize = statSync(compressedPath).size;
+              // 循环压缩直到 ≤50MB，逐步增大CRF和降低分辨率
+              const steps = [
+                { crf: 28, scale: '-2:1920' },
+                { crf: 32, scale: '-2:1280' },
+                { crf: 35, scale: '-2:960' },
+                { crf: 38, scale: '-2:720' },
+                { crf: 40, scale: '-2:540' },
+              ];
+              let currentInput = uploadMainVideoPath;
+              let currentSize = fileSize;
+              let stepIdx = 0;
+              while (currentSize > 50 * 1024 * 1024 && stepIdx < steps.length) {
+                const step = steps[stepIdx];
+                const outputPath = stepIdx === 0 ? compressedPath : compressedPath.replace('.mp4', `_${stepIdx + 1}.mp4`);
+                store.logCdpEvent(null, "info", `压缩第${stepIdx + 1}轮: CRF=${step.crf}, 分辨率=${step.scale}`, null, taskId);
+                compress(currentInput, outputPath, step.crf, step.scale);
+                // 如果不是第一轮，删掉上一轮的临时文件
+                if (stepIdx > 0) {
+                  try { unlinkSync(currentInput); } catch {}
+                  // 重命名最终文件为 compressedPath
+                  if (outputPath !== compressedPath) {
+                    try { unlinkSync(compressedPath); } catch {}
+                    renameSync(outputPath, compressedPath);
+                  }
+                }
+                currentInput = compressedPath;
+                currentSize = statSync(compressedPath).size;
+                stepIdx++;
               }
-              store.logCdpEvent(null, "info", `预压缩完成: ${Math.round(compressedSize / 1024 / 1024)}MB`, null, taskId);
+              store.logCdpEvent(null, "info", `预压缩完成: ${Math.round(currentSize / 1024 / 1024)}MB (${stepIdx}轮)`, null, taskId);
               uploadMainVideoPath = compressedPath;
               uploadFiles = [compressedPath];
             }
@@ -2972,15 +2993,38 @@ export function createMonitorServer({
                 if (fileSize > 50 * 1024 * 1024) {
                   store.logCdpEvent(null, "info", `重试: 原视频 ${Math.round(fileSize / 1024 / 1024)}MB 超过50MB，预压缩...`, null, newTask.id);
                   const { execFileSync } = await import('child_process');
+                  const { renameSync, unlinkSync } = await import('fs');
                   const compressedPath = path.join(path.dirname(getOutputDir()), 'remix-tmp', `precompressed_${Date.now()}.mp4`);
-                  execFileSync('ffmpeg', ['-err_detect', 'ignore_err', '-y', '-i', retryVideoPath, '-c:v', 'libx264', '-crf', '28', '-preset', 'fast', '-vf', 'scale=-2:1920', '-c:a', 'aac', '-b:a', '96k', '-movflags', '+faststart', compressedPath], { stdio: 'pipe', timeout: 300000 });
-                  if (statSync(compressedPath).size > 50 * 1024 * 1024) {
-                    const tmpPath = compressedPath.replace('.mp4', '_2.mp4');
-                    execFileSync('ffmpeg', ['-err_detect', 'ignore_err', '-y', '-i', compressedPath, '-c:v', 'libx264', '-crf', '32', '-preset', 'fast', '-vf', 'scale=-2:1280', '-c:a', 'aac', '-b:a', '96k', '-movflags', '+faststart', tmpPath], { stdio: 'pipe', timeout: 300000 });
-                    const { renameSync } = await import('fs');
-                    renameSync(tmpPath, compressedPath);
+                  const compress = (input, output, crf, scale) => {
+                    execFileSync('ffmpeg', ['-err_detect', 'ignore_err', '-y', '-i', input, '-c:v', 'libx264', '-crf', String(crf), '-preset', 'fast', '-vf', `scale=${scale}`, '-c:a', 'aac', '-b:a', '96k', '-movflags', '+faststart', output], { stdio: 'pipe', timeout: 300000 });
+                  };
+                  const steps = [
+                    { crf: 28, scale: '-2:1920' },
+                    { crf: 32, scale: '-2:1280' },
+                    { crf: 35, scale: '-2:960' },
+                    { crf: 38, scale: '-2:720' },
+                    { crf: 40, scale: '-2:540' },
+                  ];
+                  let currentInput = retryVideoPath;
+                  let currentSize = fileSize;
+                  let stepIdx = 0;
+                  while (currentSize > 50 * 1024 * 1024 && stepIdx < steps.length) {
+                    const step = steps[stepIdx];
+                    const outputPath = stepIdx === 0 ? compressedPath : compressedPath.replace('.mp4', `_${stepIdx + 1}.mp4`);
+                    store.logCdpEvent(null, "info", `重试: 压缩第${stepIdx + 1}轮: CRF=${step.crf}, 分辨率=${step.scale}`, null, newTask.id);
+                    compress(currentInput, outputPath, step.crf, step.scale);
+                    if (stepIdx > 0) {
+                      try { unlinkSync(currentInput); } catch {}
+                      if (outputPath !== compressedPath) {
+                        try { unlinkSync(compressedPath); } catch {}
+                        renameSync(outputPath, compressedPath);
+                      }
+                    }
+                    currentInput = compressedPath;
+                    currentSize = statSync(compressedPath).size;
+                    stepIdx++;
                   }
-                  store.logCdpEvent(null, "info", `重试: 预压缩完成 ${Math.round(statSync(compressedPath).size / 1024 / 1024)}MB`, null, newTask.id);
+                  store.logCdpEvent(null, "info", `重试: 预压缩完成 ${Math.round(currentSize / 1024 / 1024)}MB (${stepIdx}轮)`, null, newTask.id);
                   retryVideoPath = compressedPath;
                 }
               } catch (e) { store.logCdpEvent(null, "warning", `重试: 预压缩失败: ${e.message}`, null, newTask.id); }
