@@ -222,144 +222,16 @@ async function processSingleVideo(inputPath, outputPath, meta, options = {}) {
   ];
   const wmPos = corners[Math.floor(Math.random() * corners.length)];
 
-  // ─── 构建 video filter chain ───
-  // 只保留旋转透明特效叠加，去掉所有其他画面处理
-  const vFilters = [];
-
-  // 旋转透明特效叠加（从 data/dedup-effects/ 随机选2个素材叠加）
-  const effectsDir = path.resolve(process.cwd(), "data", "dedup-effects");
-  let effectInputs = [];
-  if (existsSync(effectsDir)) {
-    const effectFiles = readdirSync(effectsDir).filter(f => /\.(mp4|mov|webm|png|jpg|jpeg)$/i.test(f));
-    const shuffled = [...effectFiles].sort(() => Math.random() - 0.5);
-    effectInputs = shuffled.slice(0, Math.min(2, shuffled.length)).map(f => path.join(effectsDir, f));
-  }
-
-  const EFFECT_OPACITY = 0.01;
-  const rotateSpeed1 = (1.5 + Math.random() * 1.5);
-  const rotateSpeed2 = -rotateSpeed1 - (Math.random() * 0.5 - 0.25);
-
-  function buildEffectFilter(effectIdx, srcW, srcH) {
-    const isLandscape = srcW > srcH;
-    const aspectFix = isLandscape
-      ? `transpose=1`
-      : `scale=${targetW}:${targetH}:force_original_aspect_ratio=increase,crop=${targetW}:${targetH}`;
-    const rotateExpr = effectIdx === 0 ? `${rotateSpeed1}*t` : `${rotateSpeed2}*t`;
-    return `${aspectFix},scale=${targetW}:${targetH}:flags=lanczos,rotate='${rotateExpr}':c=black@0`;
-  }
-
-  // 音频：直通不做任何处理（变调/EQ/音量全部去掉）
-  let audioArgs = [];
-
   // ─── 构建 ffmpeg 命令 ───
-  let args;
-  const useEffects = effectInputs.length > 0;
-  if (useEffects) {
-    // 有特效素材：用 filter_complex 多输入模式
-    const fcParts = [];
-    // [0:v] 原视频 filter chain
-    const vChain = vFilters.length > 0 ? vFilters.join(",") : "null";
-    fcParts.push(`[0:v]${vChain}[vbase]`);
-
-    // 需要获取每个特效素材的分辨率来判断横竖屏
-    const { probeVideo: probe } = await import("./video-remix.js");
-
-    // 为每个特效构建 filter chain
-    const effectLabels = [];
-    for (let i = 0; i < effectInputs.length; i++) {
-      const inputIdx = i + 1; // 输入索引：0=原视频, 1=特效1, 2=特效2
-      const effectMeta = await probe(effectInputs[i]).catch(() => null);
-      const srcW = effectMeta?.width || targetW;
-      const srcH = effectMeta?.height || targetH;
-      const effectFilter = buildEffectFilter(i, srcW, srcH);
-      const outLabel = `vfx${i}`;
-      fcParts.push(`[${inputIdx}:v]${effectFilter}[${outLabel}]`);
-      effectLabels.push(`[${outLabel}]`);
-    }
-
-    // 用 overlay 叠加（比 blend=multiply 快很多）
-    // colorchannelmixer 控制透明度
-    if (effectLabels.length === 1) {
-      fcParts.push(`${effectLabels[0]}colorchannelmixer=aa=${EFFECT_OPACITY}[vfx0_adj]`);
-      fcParts.push(`[vbase][vfx0_adj]overlay=0:0[vout]`);
-    } else {
-      fcParts.push(`${effectLabels[0]}colorchannelmixer=aa=${EFFECT_OPACITY}[vfx0_adj]`);
-      fcParts.push(`${effectLabels[1]}colorchannelmixer=aa=${EFFECT_OPACITY}[vfx1_adj]`);
-      fcParts.push(`[vbase][vfx0_adj]overlay=0:0[vmid]`);
-      fcParts.push(`[vmid][vfx1_adj]overlay=0:0[vout]`);
-    }
-
-    let audioFilterArgs = [];
-    if (hasAudio && audioArgs.length > 0) {
-      const afStr = audioArgs[1];
-      fcParts.push(`[0:a]${afStr}[aout]`);
-      audioFilterArgs = ["-map", "[aout]"];
-    }
-
-    // 构建输入参数（图片用 -loop 1 -t duration，视频用 -stream_loop -1）
-    const inputArgs = ["-err_detect", "ignore_err", "-i", inputPath];
-    for (const effPath of effectInputs) {
-      const ext = path.extname(effPath).toLowerCase();
-      if ([".png", ".jpg", ".jpeg"].includes(ext)) {
-        inputArgs.push("-loop", "1", "-t", duration.toFixed(3));
-      } else {
-        inputArgs.push("-stream_loop", "-1");
-      }
-      inputArgs.push("-i", effPath);
-    }
-
-    // 检测可用的硬件编码器（实际测试，不只查列表）
-    let videoCodec = "libx264";
-    let videoCodecArgs = ["-crf", "23", "-preset", "veryfast"];
-    try {
-      const { execFileSync } = await import("child_process");
-      // 用 1 帧测试 NVENC 是否真的可用
-      try {
-        execFileSync("ffmpeg", ["-hide_banner", "-f", "lavfi", "-i", "color=black:s=16x16:d=0.04", "-frames:v", "1", "-c:v", "h264_nvenc", "-f", "null", "-"], { stdio: "pipe", timeout: 10000 });
-        videoCodec = "h264_nvenc";
-        videoCodecArgs = ["-cq", "23", "-preset", "p4", "-rc", "vbr"];
-      } catch {
-        // NVENC 不可用，尝试 Intel QuickSync
-        try {
-          execFileSync("ffmpeg", ["-hide_banner", "-f", "lavfi", "-i", "color=black:s=16x16:d=0.04", "-frames:v", "1", "-c:v", "h264_qsv", "-f", "null", "-"], { stdio: "pipe", timeout: 10000 });
-          videoCodec = "h264_qsv";
-          videoCodecArgs = ["-q", "23", "-preset", "veryfast"];
-        } catch {
-          // 都不可用，用 libx264 ultrafast
-          videoCodec = "libx264";
-          videoCodecArgs = ["-crf", "23", "-preset", "ultrafast"];
-        }
-      }
-    } catch {}
-
-    args = [
-      ...inputArgs,
-      "-filter_complex", fcParts.join(";"),
-      "-map", "[vout]",
-      ...audioFilterArgs,
-      "-c:v", videoCodec,
-      ...videoCodecArgs,
-      "-pix_fmt", "yuv420p",
-      "-movflags", "+faststart",
-    ];
-  } else {
-    // 无特效素材：保持原来的 -vf 模式
-    args = [
-      "-i", inputPath,
-      "-vf", vFilters.length > 0 ? vFilters.join(",") : "null",
-      ...audioArgs,
-      "-c:v", videoCodec,
-      ...videoCodecArgs,
-      "-pix_fmt", "yuv420p",
-      "-movflags", "+faststart",
-    ];
-  }
-
-  if (hasAudio) {
-    args.push("-c:a", "aac", "-b:a", "128k");
-  }
-
-  args.push("-shortest", "-y", outputPath);
+  // 去重：视频流复制不重编码，音频直通
+  // 去重手段：分段打乱 + 背景音乐混音（在 mixBackgroundMusic 中处理）
+  const args = [
+    "-err_detect", "ignore_err",
+    "-i", inputPath,
+    "-c", "copy",
+    "-movflags", "+faststart",
+    "-y", outputPath,
+  ];
   await runFfmpeg(args);
 }
 
