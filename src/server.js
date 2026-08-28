@@ -524,13 +524,13 @@ export function createMonitorServer({
         let uploadFiles = [...filesToUpload];
         let uploadMainVideoPath = mainVideoLocalPath;
 
-        // 预压缩：文件超过50MB先压缩
+        // 预压缩：文件超过20MB先压缩
         if (uploadMainVideoPath && existsSync(uploadMainVideoPath)) {
           try {
             const { statSync } = await import('fs');
             const fileSize = statSync(uploadMainVideoPath).size;
-            if (fileSize > 50 * 1024 * 1024) {
-              store.logCdpEvent(null, "info", `原视频 ${Math.round(fileSize / 1024 / 1024)}MB 超过50MB，预压缩...`, null, taskId);
+            if (fileSize > 20 * 1024 * 1024) {
+              store.logCdpEvent(null, "info", `原视频 ${Math.round(fileSize / 1024 / 1024)}MB 超过20MB，预压缩...`, null, taskId);
               const { execFileSync } = await import('child_process');
               const { renameSync, unlinkSync } = await import('fs');
               const compressedPath = path.join(path.dirname(getOutputDir()), 'remix-tmp', `precompressed_${Date.now()}.mp4`);
@@ -547,7 +547,7 @@ export function createMonitorServer({
               let currentInput = uploadMainVideoPath;
               let currentSize = fileSize;
               let stepIdx = 0;
-              while (currentSize > 50 * 1024 * 1024 && stepIdx < steps.length) {
+              while (currentSize > 20 * 1024 * 1024 && stepIdx < steps.length) {
                 const step = steps[stepIdx];
                 const outputPath = stepIdx === 0 ? compressedPath : compressedPath.replace('.mp4', `_${stepIdx + 1}.mp4`);
                 store.logCdpEvent(null, "info", `压缩第${stepIdx + 1}轮: CRF=${step.crf}, 分辨率=${step.scale}`, null, taskId);
@@ -3040,8 +3040,8 @@ export function createMonitorServer({
               try {
                 const { statSync } = await import('fs');
                 const fileSize = statSync(retryVideoPath).size;
-                if (fileSize > 50 * 1024 * 1024) {
-                  store.logCdpEvent(null, "info", `重试: 原视频 ${Math.round(fileSize / 1024 / 1024)}MB 超过50MB，预压缩...`, null, newTask.id);
+                if (fileSize > 20 * 1024 * 1024) {
+                  store.logCdpEvent(null, "info", `重试: 原视频 ${Math.round(fileSize / 1024 / 1024)}MB 超过20MB，预压缩...`, null, newTask.id);
                   const { execFileSync } = await import('child_process');
                   const { renameSync, unlinkSync } = await import('fs');
                   const compressedPath = path.join(path.dirname(getOutputDir()), 'remix-tmp', `precompressed_${Date.now()}.mp4`);
@@ -3057,7 +3057,7 @@ export function createMonitorServer({
                   let currentInput = retryVideoPath;
                   let currentSize = fileSize;
                   let stepIdx = 0;
-                  while (currentSize > 50 * 1024 * 1024 && stepIdx < steps.length) {
+                  while (currentSize > 20 * 1024 * 1024 && stepIdx < steps.length) {
                     const step = steps[stepIdx];
                     const outputPath = stepIdx === 0 ? compressedPath : compressedPath.replace('.mp4', `_${stepIdx + 1}.mp4`);
                     store.logCdpEvent(null, "info", `重试: 压缩第${stepIdx + 1}轮: CRF=${step.crf}, 分辨率=${step.scale}`, null, newTask.id);
