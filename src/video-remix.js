@@ -406,25 +406,12 @@ export async function remixVideoWithResources(inputPath, resources = {}, ratio =
       concatenatedPath = dedupedPath;
     }
 
-    // 4. 叠加背景音乐
+    // 4. 直接输出（不做背景音乐混音，不做任何音视频处理）
     const baseName = path.basename(inputPath, path.extname(inputPath));
     const cleanName = baseName.startsWith("remix_") ? baseName.slice(6) : baseName;
     const outputPath = path.join(getOutputDir(), `remix_${cleanName}_${id}.mp4`);
-
-    if (musicPath && existsSync(musicPath) && musicScope !== "none") {
-      // 计算各段时间轴（普通混剪无转场，overlap 全为 false）
-      const tl = await buildSegmentTimeline(
-        segments.map((p, i) => ({ path: p, role: segmentRoles[i] })),
-        segmentRoles.slice(0, -1).map(() => false)
-      );
-      const spans = musicSpansForScope(musicScope, tl);
-      await mixBackgroundMusic(concatenatedPath, musicPath, outputPath, musicVolume, {
-        scope: musicScope, loop: musicLoop, spans,
-      });
-    } else {
-      const { copyFile } = await import("node:fs/promises");
-      await copyFile(concatenatedPath, outputPath);
-    }
+    const { copyFile } = await import("node:fs/promises");
+    await copyFile(concatenatedPath, outputPath);
 
     return outputPath;
   } finally {
