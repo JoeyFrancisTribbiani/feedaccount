@@ -535,15 +535,14 @@ export function createMonitorServer({
               const { renameSync, unlinkSync } = await import('fs');
               const compressedPath = path.join(path.dirname(getOutputDir()), 'remix-tmp', `precompressed_${Date.now()}.mp4`);
               const compress = (input, output, crf, scale) => {
-                execFileSync('ffmpeg', ['-err_detect', 'ignore_err', '-y', '-i', input, '-c:v', 'libx264', '-crf', String(crf), '-preset', 'fast', '-vf', `scale=${scale}`, '-c:a', 'aac', '-b:a', '96k', '-movflags', '+faststart', output], { stdio: 'pipe', timeout: 300000 });
+                execFileSync('ffmpeg', ['-err_detect', 'ignore_err', '-y', '-i', input, '-c:v', 'libx264', '-crf', String(crf), '-preset', 'fast', '-vf', `scale=${scale}`, '-c:a', 'copy', '-movflags', '+faststart', output], { stdio: 'pipe', timeout: 300000 });
               };
-              // 循环压缩直到 ≤50MB，逐步增大CRF和降低分辨率
+              // 循环压缩直到 ≤50MB，音频直通不重编码
               const steps = [
-                { crf: 28, scale: '-2:1920' },
-                { crf: 32, scale: '-2:1280' },
-                { crf: 35, scale: '-2:960' },
-                { crf: 38, scale: '-2:720' },
-                { crf: 40, scale: '-2:540' },
+                { crf: 32, scale: '-2:720' },
+                { crf: 35, scale: '-2:540' },
+                { crf: 38, scale: '-2:480' },
+                { crf: 40, scale: '-2:360' },
               ];
               let currentInput = uploadMainVideoPath;
               let currentSize = fileSize;
@@ -3047,14 +3046,13 @@ export function createMonitorServer({
                   const { renameSync, unlinkSync } = await import('fs');
                   const compressedPath = path.join(path.dirname(getOutputDir()), 'remix-tmp', `precompressed_${Date.now()}.mp4`);
                   const compress = (input, output, crf, scale) => {
-                    execFileSync('ffmpeg', ['-err_detect', 'ignore_err', '-y', '-i', input, '-c:v', 'libx264', '-crf', String(crf), '-preset', 'fast', '-vf', `scale=${scale}`, '-c:a', 'aac', '-b:a', '96k', '-movflags', '+faststart', output], { stdio: 'pipe', timeout: 300000 });
+                    execFileSync('ffmpeg', ['-err_detect', 'ignore_err', '-y', '-i', input, '-c:v', 'libx264', '-crf', String(crf), '-preset', 'fast', '-vf', `scale=${scale}`, '-c:a', 'copy', '-movflags', '+faststart', output], { stdio: 'pipe', timeout: 300000 });
                   };
                   const steps = [
-                    { crf: 28, scale: '-2:1920' },
-                    { crf: 32, scale: '-2:1280' },
-                    { crf: 35, scale: '-2:960' },
-                    { crf: 38, scale: '-2:720' },
-                    { crf: 40, scale: '-2:540' },
+                    { crf: 32, scale: '-2:720' },
+                    { crf: 35, scale: '-2:540' },
+                    { crf: 38, scale: '-2:480' },
+                    { crf: 40, scale: '-2:360' },
                   ];
                   let currentInput = retryVideoPath;
                   let currentSize = fileSize;
