@@ -6342,6 +6342,7 @@ function openPresetEditModal(preset) {
               <label style="display:inline-flex;align-items:center;gap:4px;white-space:nowrap;"><input type="checkbox" id="preset-dedup" checked /> 原视频去重</label>
               <label style="display:inline-flex;align-items:center;gap:4px;white-space:nowrap;"><input type="checkbox" id="preset-ref-lang" /> 参考社媒账号语言</label>
               <label style="display:inline-flex;align-items:center;gap:4px;white-space:nowrap;"><input type="checkbox" id="preset-outfit-guide" /> 穿搭指南</label>
+              <label style="display:inline-flex;align-items:center;gap:4px;white-space:nowrap;"><input type="checkbox" id="preset-compress" /> 视频压缩</label>
             </div>
             <span class="muted-activity" style="font-size:11px;">去重：关闭后原视频不做去重处理，只归一化分辨率。参考语言：开启后在提示词顶部注入社媒账号的语言。穿搭指南：开启后从穿搭图库随机选鞋子+衣服+场景图片一起上传给AI</span>
           </div>
@@ -6412,6 +6413,7 @@ function openPresetEditModal(preset) {
   presetModalEl.musicFileInfo = overlay.querySelector("#preset-music-file-info");
   presetModalEl.dedup = overlay.querySelector("#preset-dedup");
   presetModalEl.refLang = overlay.querySelector("#preset-ref-lang");
+  presetModalEl.compress = overlay.querySelector("#preset-compress");
 
   // 片头/片尾模式切换（视频模式/纯图模式）
   function updateIntroModeVisibility() {
@@ -6519,7 +6521,7 @@ function collectPresetConfig() {
   const outfitCallbackUrl = document.querySelector("#outfit-callback-url")?.value ?? null;
   const outfitPickIndex = (document.querySelector("#outfit-pick-index")?.value || "1").split(",").map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n) && n > 0);
   const outfitCallbackIndex = (document.querySelector("#outfit-callback-index")?.value || "5").split(",").map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n) && n > 0);
-  return { introConfig, outroConfig, musicConfig, dedup: presetModalEl.dedup?.checked ?? true, refLang: presetModalEl.refLang?.checked ?? false, resourceTypes, outfitGuide, outfitSource, outfitPickUrl, outfitCallbackUrl, outfitPickIndex, outfitCallbackIndex };
+  return { introConfig, outroConfig, musicConfig, dedup: presetModalEl.dedup?.checked ?? true, refLang: presetModalEl.refLang?.checked ?? false, resourceTypes, outfitGuide, outfitSource, outfitPickUrl, outfitCallbackUrl, outfitPickIndex, outfitCallbackIndex, compress: presetModalEl.compress?.checked ?? false };
 }
 
 function fillPresetConfigForm(preset) {
@@ -6551,6 +6553,7 @@ function fillPresetConfigForm(preset) {
   if (presetModalEl.musicLoop) presetModalEl.musicLoop.checked = mc.loop ?? true;
   if (presetModalEl.dedup) presetModalEl.dedup.checked = preset?.dedup !== false;
   if (presetModalEl.refLang) presetModalEl.refLang.checked = preset?.refLang === true;
+  if (presetModalEl.compress) presetModalEl.compress.checked = preset?.compress === true;
   const outfitGuideCb = document.querySelector("#preset-outfit-guide");
   if (outfitGuideCb) outfitGuideCb.checked = preset?.outfitGuide === true;
   // 穿搭指南配置区块联动

@@ -524,12 +524,14 @@ export function createMonitorServer({
         let uploadFiles = [...filesToUpload];
         let uploadMainVideoPath = mainVideoLocalPath;
 
-        // 预压缩：文件超过20MB先压缩
+        // 预压缩：方案开启压缩开关且文件超过20MB才压缩
         if (uploadMainVideoPath && existsSync(uploadMainVideoPath)) {
           try {
+            const preset = presetId ? store.getAiRemixPreset(presetId) : null;
+            const shouldCompress = preset?.compress === true;
             const { statSync } = await import('fs');
             const fileSize = statSync(uploadMainVideoPath).size;
-            if (fileSize > 20 * 1024 * 1024) {
+            if (shouldCompress && fileSize > 20 * 1024 * 1024) {
               store.logCdpEvent(null, "info", `原视频 ${Math.round(fileSize / 1024 / 1024)}MB 超过20MB，预压缩...`, null, taskId);
               const { execFileSync } = await import('child_process');
               const { renameSync, unlinkSync } = await import('fs');
@@ -624,7 +626,9 @@ export function createMonitorServer({
           const fileBuffer = await readFile(filePath);
           const formData = new FormData();
           formData.append("file", new Blob([fileBuffer]), path.basename(filePath));
-          const uploadRes = await fetch(`${daemonUrl}/api/files`, { method: "POST", body: formData });
+          // 不压缩时上传大文件可能很慢，超时设为30分钟
+          const uploadTimeout = shouldCompress ? 300000 : 1800000;
+          const uploadRes = await fetch(`${daemonUrl}/api/files`, { method: "POST", body: formData, signal: AbortSignal.timeout(uploadTimeout) });
           const uploadData = await uploadRes.json();
           if (!uploadRes.ok || !uploadData.fileId) throw new Error(`上传文件失败: ${uploadData.error || path.basename(filePath)}`);
           fileIds.push(uploadData.fileId);
@@ -3036,11 +3040,13 @@ export function createMonitorServer({
                 return url;
               };
               let retryVideoPath = resolveRetryLocal(origTask.videoUrls[0]);
-              // 重试也预检压缩
+              // 重试也预检压缩（检查方案compress开关）
+              const retryPreset = origTask.presetId ? store.getAiRemixPreset(origTask.presetId) : null;
+              const retryShouldCompress = retryPreset?.compress === true;
               try {
                 const { statSync } = await import('fs');
                 const fileSize = statSync(retryVideoPath).size;
-                if (fileSize > 20 * 1024 * 1024) {
+                if (retryShouldCompress && fileSize > 20 * 1024 * 1024) {
                   store.logCdpEvent(null, "info", `重试: 原视频 ${Math.round(fileSize / 1024 / 1024)}MB 超过20MB，预压缩...`, null, newTask.id);
                   const { execFileSync } = await import('child_process');
                   const { renameSync, unlinkSync } = await import('fs');
@@ -3408,6 +3414,7 @@ export function createMonitorServer({
             dedup: body.dedup, refLang: body.refLang, resourceTypes: body.resourceTypes, outfitGuide: body.outfitGuide,
             outfitSource: body.outfitSource, outfitPickUrl: body.outfitPickUrl, outfitCallbackUrl: body.outfitCallbackUrl,
             outfitPickIndex: body.outfitPickIndex, outfitCallbackIndex: body.outfitCallbackIndex,
+            compress: body.compress === true,
           }));
           return;
         }
@@ -3424,6 +3431,7 @@ export function createMonitorServer({
             dedup: body.dedup, refLang: body.refLang, resourceTypes: body.resourceTypes, outfitGuide: body.outfitGuide,
             outfitSource: body.outfitSource, outfitPickUrl: body.outfitPickUrl, outfitCallbackUrl: body.outfitCallbackUrl,
             outfitPickIndex: body.outfitPickIndex, outfitCallbackIndex: body.outfitCallbackIndex,
+            compress: body.compress === true,
           });
           if (!updated) { sendJson(response, 404, { error: "方案不存在" }); return; }
           sendJson(response, 200, updated);

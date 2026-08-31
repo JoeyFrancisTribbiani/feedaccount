@@ -498,6 +498,7 @@ export class LocalDatabase {
     this.#ensureColumn("ai_remix_presets", "outfit_callback_url", "TEXT");
     this.#ensureColumn("ai_remix_presets", "outfit_pick_index", "TEXT"); // JSON array
     this.#ensureColumn("ai_remix_presets", "outfit_callback_index", "TEXT"); // JSON array
+    this.#ensureColumn("ai_remix_presets", "compress", "INTEGER DEFAULT 0"); // 视频压缩开关
     this.#ensureColumn("matrix_accounts", "language", "TEXT");
     // 社媒账号绑定达人（多对多）
     this.db.exec(`
@@ -1857,18 +1858,19 @@ export class LocalDatabase {
       outfitCallbackUrl: r.outfit_callback_url,
       outfitPickIndex: parseJson(r.outfit_pick_index, [1]),
       outfitCallbackIndex: parseJson(r.outfit_callback_index, [5]),
+      compress: r.compress === 1,
     };
   }
 
-  createAiRemixPreset({ name, prompt, isDefault = false, introConfig = null, outroConfig = null, musicConfig = null, dedup = true, refLang = false, resourceTypes = null, outfitGuide = false, outfitSource = "local", outfitPickUrl = null, outfitCallbackUrl = null, outfitPickIndex = null, outfitCallbackIndex = null }) {
+  createAiRemixPreset({ name, prompt, isDefault = false, introConfig = null, outroConfig = null, musicConfig = null, dedup = true, refLang = false, resourceTypes = null, outfitGuide = false, outfitSource = "local", outfitPickUrl = null, outfitCallbackUrl = null, outfitPickIndex = null, outfitCallbackIndex = null, compress = false }) {
     const id = `ap_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     const ts = nowIso();
     if (isDefault) {
       this.db.exec("UPDATE ai_remix_presets SET is_default = 0");
     }
     this.db.prepare(`
-      INSERT INTO ai_remix_presets (id, name, prompt, is_default, intro_config_json, outro_config_json, music_config_json, dedup, ref_lang, resource_types_json, outfit_guide, outfit_source, outfit_pick_url, outfit_callback_url, outfit_pick_index, outfit_callback_index, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO ai_remix_presets (id, name, prompt, is_default, intro_config_json, outro_config_json, music_config_json, dedup, ref_lang, resource_types_json, outfit_guide, outfit_source, outfit_pick_url, outfit_callback_url, outfit_pick_index, outfit_callback_index, compress, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(id, name, prompt, booleanInt(isDefault),
       introConfig ? JSON.stringify(introConfig) : null,
       outroConfig ? JSON.stringify(outroConfig) : null,
@@ -1882,6 +1884,7 @@ export class LocalDatabase {
       outfitCallbackUrl,
       outfitPickIndex ? JSON.stringify(outfitPickIndex) : null,
       outfitCallbackIndex ? JSON.stringify(outfitCallbackIndex) : null,
+      booleanInt(compress),
       ts, ts);
     return this.getAiRemixPreset(id);
   }
@@ -1918,7 +1921,7 @@ export class LocalDatabase {
     };
   }
 
-  updateAiRemixPreset(id, { name, prompt, isDefault, introConfig, outroConfig, musicConfig, dedup, refLang, resourceTypes, outfitGuide, outfitSource, outfitPickUrl, outfitCallbackUrl, outfitPickIndex, outfitCallbackIndex }) {
+  updateAiRemixPreset(id, { name, prompt, isDefault, introConfig, outroConfig, musicConfig, dedup, refLang, resourceTypes, outfitGuide, outfitSource, outfitPickUrl, outfitCallbackUrl, outfitPickIndex, outfitCallbackIndex, compress }) {
     const ts = nowIso();
     if (isDefault) {
       this.db.exec("UPDATE ai_remix_presets SET is_default = 0");
@@ -1940,6 +1943,7 @@ export class LocalDatabase {
           outfit_callback_url = COALESCE(?, outfit_callback_url),
           outfit_pick_index = COALESCE(?, outfit_pick_index),
           outfit_callback_index = COALESCE(?, outfit_callback_index),
+          compress = COALESCE(?, compress),
           updated_at = ?
       WHERE id = ?
     `).run(
@@ -1956,6 +1960,7 @@ export class LocalDatabase {
       outfitCallbackUrl ?? null,
       outfitPickIndex === undefined ? null : (outfitPickIndex ? JSON.stringify(outfitPickIndex) : null),
       outfitCallbackIndex === undefined ? null : (outfitCallbackIndex ? JSON.stringify(outfitCallbackIndex) : null),
+      compress === undefined ? null : booleanInt(compress),
       ts, id,
     );
     return this.getAiRemixPreset(id);
