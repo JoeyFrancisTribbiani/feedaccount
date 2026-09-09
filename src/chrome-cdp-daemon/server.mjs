@@ -755,11 +755,13 @@ async function chatgptWaitForResponse(opts = {}) {
       }
       if (!lastTurn) return 0
       // 检测 <a> 下载链接（旧格式）
-      var links = lastTurn.querySelectorAll('a[href$=".json"], a[href$=".txt"], a[href$=".srt"], a[href$=".csv"], a[href$=".md"]').length
+      var links = lastTurn.querySelectorAll('a[href$=".json"], a[href$=".txt"], a[href$=".srt"], a[href$=".csv"], a[href$=".md"], a[href$=".mp4"], a[href$=".mov"], a[href$=".avi"], a[href$=".mkv"]').length
       // 检测 <button aria-label> 文件按钮（ChatGPT 新格式）
-      var btns = [...lastTurn.querySelectorAll('button[aria-label]')].filter(function(b) {
+      var btns = [...lastTurn.querySelectorAll('button')].filter(function(b) {
         var a = b.getAttribute('aria-label') || ''
-        return a.endsWith('.json') || a.endsWith('.txt') || a.endsWith('.srt') || a.endsWith('.csv') || a.endsWith('.md')
+        var t = b.textContent || ''
+        return a.endsWith('.json') || a.endsWith('.txt') || a.endsWith('.srt') || a.endsWith('.csv') || a.endsWith('.md') || a.endsWith('.mp4') || a.endsWith('.mov') || a.endsWith('.avi') || a.endsWith('.mkv')
+            || t.includes('.mp4') || t.includes('.mov') || t.includes('.json') || t.includes('.txt')
       }).length
       return links + btns
     }).catch(() => 0)
