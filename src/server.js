@@ -876,7 +876,7 @@ export function createMonitorServer({
           }
         }
 
-        // 分段脚本输出：下载 JSON 到本地，然后走本地拼接（去重+分段打乱+片头片尾+音乐）
+        // 分段脚本输出：下载 JSON 到本地，然后走本地拼接
         if (hasSegmentScripts) {
           const scriptOutput = fileOutputs.find((o) => o.type === "segment_script");
           if (scriptOutput) {
@@ -892,7 +892,154 @@ export function createMonitorServer({
                 // 记录到任务资源表
                 store.createTaskResource({ taskId, type: "segment_script", filePath: `/data/remix-output/${scriptFileName}`, filename: scriptFileName, fileSize: buffer.length });
 
-                // 走本地拼接（分段打乱+去重+片头片尾+音乐）
+                // 读取 JSON 判断格式
+                const { readFileSync: readSync } = await import("fs");
+                const scriptData = JSON.parse(readSync(scriptPath, "utf-8"));
+
+                if (scriptData.status === "failed") {
+                  const errMsg = scriptData.errors?.map(e => e.message).join("; ") || "分段脚本分析失败";
+                  store.logCdpEvent(null, "error", `分段脚本状态: failed — ${errMsg}`, null, taskId);
+                  store.updateRemixTask(taskId, { status: "FAILED", errorMessage: `分段脚本分析失败: ${errMsg}`, completedAt: nowIso(), durationMs: Date.now() - taskStartTime });
+                  return;
+                }
+
+                // 检测是否为多视频分段格式（有 sources 数组 + final_sequence）
+                const isMultiSourceFormat = Array.isArray(scriptData.sources) && Array.isArray(scriptData.final_sequence) && scriptData.sources.length > 0;
+
+                if (isMultiSourceFormat && multiVideoMode) {
+                  // ★ 多视频分段重排模式（新版提示词）
+                  store.logCdpEvent(null, "info", `多视频分段重排模式: ${scriptData.sources.length}个源视频, ${scriptData.segments?.length || 0}个分段`, null, taskId);
+
+                  try {
+                    // 1. 建立 source_id → 本地文件路径映射
+                    // filesToUpload 是按上传顺序排列的，sources 也是按上传顺序
+                    const sourceMap = {};
+                    for (let i = 0; i < scriptData.sources.length; i++) {
+                      const src = scriptData.sources[i];
+                      const localPath = filesToUpload[i] || uploadFiles[i];
+                      if (localPath && existsSync(localPath)) {
+                        sourceMap[src.source_id] = localPath;
+                        store.logCdpEvent(null, "info", `源视频 ${src.source_id}: ${path.basename(localPath)} (${src.duration?.toFixed(1)}s, speech=${src.speech_present})`, null, taskId);
+                      } else {
+                        store.logCdpEvent(null, "warning", `源视频 ${src.source_id} 本地文件不存在: ${localPath}`, null, taskId);
+                      }
+                    }
+
+                    // 2. 建立 segment_id → segment 映射
+                    const segMap = {};
+                    for (const seg of (scriptData.segments || [])) {
+                      segMap[seg.segment_id] = seg;
+                    }
+
+                    // 3. 按 final_sequence 裁剪并拼接
+                    const finalSeq = scriptData.final_sequence;
+                    if (finalSeq.length === 0) {
+                      throw new Error("final_sequence 为空");
+                    }
+
+                    store.logCdpEvent(null, "info", `最终顺序: ${finalSeq.join(" → ")}`, null, taskId);
+
+                    const segFiles = [];
+                    for (let i = 0; i < finalSeq.length; i++) {
+                      const segId = finalSeq[i];
+                      const seg = segMap[segId];
+                      if (!seg) {
+                        store.logCdpEvent(null, "warning", `分段 ${segId} 在 segments 中不存在，跳过`, null, taskId);
+                        continue;
+                      }
+                      const srcPath = sourceMap[seg.source_id];
+                      if (!srcPath) {
+                        store.logCdpEvent(null, "warning", `分段 ${segId} 的源视频 ${seg.source_id} 不存在，跳过`, null, taskId);
+                        continue;
+                      }
+
+                      const segPath = path.join(getOutputDir(), `mseg_${i}_${Date.now()}.mp4`);
+                      const startTime = seg.start.toFixed(3);
+                      const endTime = seg.end.toFixed(3);
+
+                      store.logCdpEvent(null, "info", `裁剪 ${segId}: ${seg.source_id} ${startTime}s→${endTime}s (${seg.content?.substring(0, 40) || ""})`, null, taskId);
+
+                      const { execFileSync } = await import("child_process");
+                      // 用 -c copy 流复制（快），如果失败则重编码
+                      try {
+                        execFileSync("ffmpeg", [
+                          "-err_detect", "ignore_err", "-y",
+                          "-i", srcPath,
+                          "-ss", startTime, "-to", endTime,
+                          "-c", "copy",
+                          "-movflags", "+faststart",
+                          segPath,
+                        ], { stdio: "pipe", timeout: 60000 });
+                      } catch {
+                        // 流复制失败（可能关键帧不在边界），重编码
+                        execFileSync("ffmpeg", [
+                          "-err_detect", "ignore_err", "-y",
+                          "-i", srcPath,
+                          "-ss", startTime, "-to", endTime,
+                          "-c:v", "libx264", "-crf", "23", "-preset", "veryfast",
+                          "-c:a", "aac", "-b:a", "128k",
+                          "-pix_fmt", "yuv420p", "-movflags", "+faststart",
+                          "-shortest",
+                          segPath,
+                        ], { stdio: "pipe", timeout: 120000 });
+                      }
+                      segFiles.push(segPath);
+                    }
+
+                    if (segFiles.length === 0) {
+                      throw new Error("没有成功裁剪任何分段");
+                    }
+
+                    // 4. concat 拼接
+                    const finalOutputName = `${(videoTitle || "ai_remix").replace(/[<>:"/\\|?*]/g, '_').substring(0, 100)}_${taskId.substring(0, 8)}.mp4`;
+                    const finalOutputPath = path.join(getOutputDir(), finalOutputName);
+                    const listFile = path.join(getOutputDir(), `concat_list_${Date.now()}.txt`);
+                    const { writeFileSync: writeSync } = await import("fs");
+                    writeSync(listFile, segFiles.map(f => `file '${f.replace(/'/g, "'\\''")}'`).join("\n"), "utf-8");
+
+                    const { execFileSync } = await import("child_process");
+                    // 先尝试 concat copy
+                    try {
+                      execFileSync("ffmpeg", [
+                        "-err_detect", "ignore_err", "-y",
+                        "-f", "concat", "-safe", "0",
+                        "-i", listFile,
+                        "-c", "copy",
+                        "-movflags", "+faststart",
+                        finalOutputPath,
+                      ], { stdio: "pipe", timeout: 120000 });
+                    } catch {
+                      // concat copy 失败（不同编码/分辨率），重编码拼接
+                      store.logCdpEvent(null, "info", `concat copy 失败，重编码拼接`, null, taskId);
+                      const concatInputs = segFiles.flatMap(f => ["-i", f]);
+                      const filterComplex = segFiles.map((_, i) => `[${i}:v:0][${i}:a:0]`).join("") + `concat=n=${segFiles.length}:v=1:a=1[v][a]`;
+                      execFileSync("ffmpeg", [
+                        "-err_detect", "ignore_err", "-y",
+                        ...concatInputs,
+                        "-filter_complex", filterComplex,
+                        "-map", "[v]", "-map", "[a]",
+                        "-c:v", "libx264", "-crf", "23", "-preset", "veryfast",
+                        "-c:a", "aac", "-b:a", "128k",
+                        "-pix_fmt", "yuv420p", "-movflags", "+faststart",
+                        finalOutputPath,
+                      ], { stdio: "pipe", timeout: 300000 });
+                    }
+
+                    // 清理临时文件
+                    try { for (const f of segFiles) unlinkSync(f); unlinkSync(listFile); } catch {}
+
+                    const finalUrl = `/data/remix-output/${finalOutputName}`;
+                    store.logCdpEvent(null, "info", `多视频分段拼接完成: ${finalUrl}`, null, taskId);
+                    store.updateRemixTask(taskId, { status: "DONE", outputUrl: finalUrl, completedAt: nowIso(), durationMs: Date.now() - taskStartTime });
+                    return;
+                  } catch (e) {
+                    store.logCdpEvent(null, "error", `多视频分段重排失败: ${e.message}`, null, taskId);
+                    store.updateRemixTask(taskId, { status: "FAILED", errorMessage: `多视频分段重排失败: ${e.message}`, completedAt: nowIso(), durationMs: Date.now() - taskStartTime });
+                    return;
+                  }
+                }
+
+                // 单视频分段脚本模式（旧版逻辑，走 composeAiRemixVideoAsync）
                 store.logCdpEvent(null, "info", `分段脚本模式，开始本地拼接`, null, taskId);
                 composeAiRemixVideoAsync(taskId, uploadMainVideoPath || mainVideoLocalPath, [], presetId, matrixIds, creatorId, sourceVideoId, videoTitle);
                 return;
