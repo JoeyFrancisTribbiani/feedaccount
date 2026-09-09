@@ -525,10 +525,10 @@ export function createMonitorServer({
         let uploadMainVideoPath = mainVideoLocalPath;
 
         // 预压缩：方案开启压缩开关且文件超过20MB才压缩
+        const presetForCompress = presetId ? store.getAiRemixPreset(presetId) : null;
+        const shouldCompress = presetForCompress?.compress === true;
         if (uploadMainVideoPath && existsSync(uploadMainVideoPath)) {
           try {
-            const preset = presetId ? store.getAiRemixPreset(presetId) : null;
-            const shouldCompress = preset?.compress === true;
             const { statSync } = await import('fs');
             const fileSize = statSync(uploadMainVideoPath).size;
             if (shouldCompress && fileSize > 20 * 1024 * 1024) {
