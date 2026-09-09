@@ -1012,7 +1012,7 @@ async function handleChatGptAiRemix(taskNo, params) {
   const serverTaskId = options.taskId || null
   const expectedResourceTypes = options.expectedResourceTypes || ['image']
   // 是否期望文件类输出（分段脚本/文本/其他文件）而非图片
-  const expectFileOutput = expectedResourceTypes.includes('segment_script') || expectedResourceTypes.includes('text')
+  const expectFileOutput = expectedResourceTypes.includes('segment_script') || expectedResourceTypes.includes('text') || expectedResourceTypes.includes('video')
 
   // 临时覆盖 log 函数，让每条日志带上 serverTaskId
   const origLog = log
