@@ -840,8 +840,8 @@ export function createMonitorServer({
             // 本地拼接在后台异步执行（不阻塞 AI 队列，aiRemixActiveCount 由 finally 统一减）
             composeAiRemixVideoAsync(taskId, uploadMainVideoPath || mainVideoLocalPath, imagePaths, presetId, matrixIds, creatorId, sourceVideoId, videoTitle);
             return;
-        } else if (hasVideos) {
-          // 视频输出：下载视频
+        } else if (hasVideos && !hasSegmentScripts) {
+          // 视频输出：下载视频（仅当没有分段脚本时，分段脚本优先）
           const fileOutput = fileOutputs.find((o) => o.type === "file");
           const downloadRes = await fetch(`${daemonUrl}${fileOutput.url}`);
           if (downloadRes.ok) {
@@ -912,11 +912,12 @@ export function createMonitorServer({
 
                   try {
                     // 1. 建立 source_id → 本地文件路径映射
-                    // filesToUpload 是按上传顺序排列的，sources 也是按上传顺序
+                    // 用 uploadFiles（可能被预压缩修改过），因为上传给 ChatGPT 的是这些文件
+                    // JSON 中的 start/end 是基于这些文件的切点
                     const sourceMap = {};
                     for (let i = 0; i < scriptData.sources.length; i++) {
                       const src = scriptData.sources[i];
-                      const localPath = filesToUpload[i] || uploadFiles[i];
+                      const localPath = uploadFiles[i];
                       if (localPath && existsSync(localPath)) {
                         sourceMap[src.source_id] = localPath;
                         store.logCdpEvent(null, "info", `源视频 ${src.source_id}: ${path.basename(localPath)} (${src.duration?.toFixed(1)}s, speech=${src.speech_present})`, null, taskId);
