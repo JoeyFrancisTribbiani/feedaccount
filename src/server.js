@@ -3113,7 +3113,32 @@ export function createMonitorServer({
                   retryVideoPath = compressedPath;
                 }
               } catch (e) { store.logCdpEvent(null, "warning", `重试: 预压缩失败: ${e.message}`, null, newTask.id); }
-              const filesToUpload = [retryVideoPath];
+              // 多视频混剪重试：上传所有视频
+              const isMultiVideo = origTask.videoUrls.length > 1;
+              let filesToUpload;
+              if (isMultiVideo) {
+                filesToUpload = origTask.videoUrls.map(url => resolveRetryLocal(url)).filter(p => p);
+                // 预压缩每个视频（如果开启）
+                if (retryShouldCompress) {
+                  const compressedFiles = [];
+                  for (const vPath of filesToUpload) {
+                    let p = vPath;
+                    try {
+                      const fSize = statSync(vPath).size;
+                      if (fSize > 20 * 1024 * 1024) {
+                        store.logCdpEvent(null, "info", `重试: 多视频压缩 ${path.basename(vPath)} ${Math.round(fSize / 1024 / 1024)}MB`, null, newTask.id);
+                        const compPath = path.join(path.dirname(getOutputDir()), 'remix-tmp', `precomp_${Date.now()}.mp4`);
+                        compress(vPath, compPath, 32, '-2:720');
+                        p = compPath;
+                      }
+                    } catch {}
+                    compressedFiles.push(p);
+                  }
+                  filesToUpload = compressedFiles;
+                }
+              } else {
+                filesToUpload = [retryVideoPath];
+              }
 
               // 记录资源类型到任务
               if (origTask.presetId) {
@@ -3180,6 +3205,7 @@ export function createMonitorServer({
                 videoTitle: origTask.title,
                 presetId: origTask.presetId,
                 mainVideoLocalPath: filesToUpload[0],
+                multiVideoMode: isMultiVideo,
               });
               processAiRemixQueue();
             } else {
