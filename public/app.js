@@ -5600,6 +5600,7 @@ const modalEl = {
   close: document.querySelector("#remix-task-modal-close"),
   cancel: document.querySelector("#remix-task-cancel"),
   start: document.querySelector("#remix-task-start"),
+  startMulti: document.querySelector("#remix-task-start-multi"),
   matrixList: document.querySelector("#modal-matrix-list"),
   creatorList: document.querySelector("#modal-creator-list"),
   videoList: document.querySelector("#modal-video-list"),
@@ -5669,6 +5670,7 @@ async function openRemixTaskModal(presetMode = "stitch") {
     tabsContent.innerHTML = '<div class="empty-state compact">请先选择社媒账号</div>';
   }
   modalEl.start.disabled = true;
+  if (modalEl.startMulti) modalEl.startMulti.disabled = true;
 
   // 加载 AI 混剪方案列表
   await fetchAiPresets();
@@ -6034,6 +6036,7 @@ function updateModalStartBtn() {
     aiReady = !!modalEl.cdpInstance.value;
   }
   modalEl.start.disabled = !(baseReady && aiReady);
+  if (modalEl.startMulti) modalEl.startMulti.disabled = !(baseReady && aiReady);
 }
 
 modalEl.cdpInstance?.addEventListener("change", updateModalStartBtn);
@@ -6894,6 +6897,7 @@ modalEl.start?.addEventListener("click", async () => {
   modalEl.start.disabled = true;
   modalEl.start.textContent = "提交中…";
   modalEl.start.classList.add("loading");
+  if (modalEl.startMulti) modalEl.startMulti.disabled = true;
 
   try {
     if (mode === "ai") {
@@ -7007,6 +7011,77 @@ modalEl.start?.addEventListener("click", async () => {
     modalEl.start.disabled = false;
     modalEl.start.textContent = origText;
     modalEl.start.classList.remove("loading");
+    if (modalEl.startMulti) { modalEl.startMulti.disabled = false; modalEl.startMulti.textContent = "开始多条混剪"; }
+  }
+});
+
+// 多条视频混剪
+modalEl.startMulti?.addEventListener("click", async () => {
+  if (modalEl.startMulti.disabled) return;
+  const ratio = modalEl.ratio.value;
+
+  const origText = modalEl.startMulti.textContent;
+  modalEl.startMulti.disabled = true;
+  modalEl.startMulti.textContent = "提交中…";
+  if (modalEl.start) modalEl.start.disabled = true;
+
+  try {
+    const cdpInstanceId = modalEl.cdpInstance.value;
+    const presetId = modalEl.aiPreset.value || null;
+    if (!cdpInstanceId) { showToast("请选择 CDP 实例", true); return; }
+
+    // 检查 CDP daemon 运行状态
+    let daemonRunning = false;
+    try {
+      const statusRes = await request(`/api/cdp/instances/${encodeURIComponent(cdpInstanceId)}/daemon-status`);
+      daemonRunning = statusRes.running === true;
+    } catch {}
+    if (!daemonRunning) {
+      showToast("CDP 守护进程未运行，正在自动启动...");
+      try {
+        await request(`/api/cdp/instances/${encodeURIComponent(cdpInstanceId)}/daemon-start`, { method: "POST" });
+        let retries = 0;
+        while (retries < 10) {
+          await new Promise(r => setTimeout(r, 2000));
+          try {
+            const recheck = await request(`/api/cdp/instances/${encodeURIComponent(cdpInstanceId)}/daemon-status`);
+            if (recheck.running === true) { daemonRunning = true; break; }
+          } catch {}
+          retries++;
+        }
+        if (!daemonRunning) { showToast("CDP 守护进程启动失败", true); return; }
+        showToast("CDP 守护进程已启动");
+        await new Promise(r => setTimeout(r, 2000));
+      } catch (e) {
+        showToast(`CDP 守护进程启动失败: ${e.message}`, true);
+        return;
+      }
+    }
+
+    // 收集所有选中的视频（跨所有tab）
+    const matrixIds = [...modalState.selectedMatrixIds];
+    let totalCount = 0;
+    for (const matrixId of matrixIds) {
+      const tab = modalState.tabs[matrixId];
+      if (!tab?.creatorId || tab.videoIds.size === 0) continue;
+      const videoIds = [...tab.videoIds];
+      const res = await request("/api/remix/ai-remix-task", {
+        method: "POST",
+        body: JSON.stringify({ matrixIds: [matrixId], creatorId: tab.creatorId, videoIds, cdpInstanceId, ratio, presetId, multiVideoMode: true }),
+      });
+      totalCount += res.count || 1;
+      if (matrixId !== matrixIds[matrixIds.length - 1]) {
+        await new Promise(r => setTimeout(r, 60000));
+      }
+    }
+    modalEl.overlay.classList.add("hidden");
+    showToast(`已创建 ${totalCount} 个多条混剪任务`);
+  } catch (e) {
+    showToast(e.message, true);
+  } finally {
+    modalEl.startMulti.disabled = false;
+    modalEl.startMulti.textContent = origText;
+    if (modalEl.start) { modalEl.start.disabled = false; modalEl.start.textContent = "开始视频混剪任务"; }
   }
 });
 fetchRemixCreators();

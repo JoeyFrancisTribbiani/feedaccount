@@ -2448,6 +2448,35 @@ export function createMonitorServer({
 
           // 为每个视频创建 remix task（快速创建，预压缩和穿搭取图交给队列异步处理）
           const tasks = [];
+          if (body.multiVideoMode && selectedVideos.length > 1) {
+            // 多条混剪模式：所有选中视频作为一个任务上传给 ChatGPT
+            const allVideoUrls = selectedVideos.map(v => v.url);
+            const allVideoPaths = selectedVideos.map(v => resolveLocal(v.url)).filter(p => p);
+            const creatorName = store.getRemixCreator(creatorId)?.name || "";
+            const title = `多条混剪 · ${selectedVideos.length}个视频 · ${creatorName} → ${matrixIds.length}个矩阵`;
+            const task = store.createRemixTask({
+              title, mode: "ai-remix", videoUrls: allVideoUrls,
+              sourceVideos: selectedVideos.map(v => ({ url: v.url, title: v.title, creatorName })),
+              ratio: ratio || "9:16",
+              creatorId, matrixIds, presetId, prompt,
+              cdpInstanceId,
+            });
+            if (presetId) {
+              const preset = store.getAiRemixPreset(presetId);
+              if (preset?.resourceTypes) {
+                store.updateRemixTask(task.id, { resourceTypes: preset.resourceTypes });
+              }
+            }
+            aiRemixQueue.push({
+              taskId: task.id, daemonUrl, filesToUpload: allVideoPaths, prompt: prompt || "",
+              matrixIds, creatorId, sourceVideoId: null, videoTitle: title,
+              presetId: presetId || null,
+              mainVideoLocalPath: allVideoPaths[0],
+              multiVideoMode: true,
+            });
+            processAiRemixQueue();
+            tasks.push(task);
+          } else {
           for (const video of selectedVideos) {
             const title = `AI混剪 · ${video.title || "未命名"} → ${matrixIds.length}个矩阵`;
             const task = store.createRemixTask({
@@ -2477,6 +2506,7 @@ export function createMonitorServer({
             processAiRemixQueue();
 
             tasks.push(task);
+          }
           }
 
           sendJson(response, 200, { tasks, count: tasks.length });
