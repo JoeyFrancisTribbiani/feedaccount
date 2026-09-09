@@ -502,7 +502,6 @@ export function createMonitorServer({
       // 异步执行单个任务（不阻塞队列调度）
       processSingleAiRemixTask(taskData).finally(() => {
         aiRemixActiveCount--;
-        // 任务完成后尝试启动下一个
         processAiRemixQueue();
       });
 
@@ -832,12 +831,9 @@ export function createMonitorServer({
 
             // ★ 图片下载完成，AI 部分结束。提前释放队列，允许下一个 AI 任务开始
             store.logCdpEvent(null, "info", `图片下载完成(${imagePaths.length}张)，开始本地拼接，释放AI队列`, null, taskId);
-            aiRemixActiveCount--;
-            processAiRemixQueue();
-
-            // 本地拼接在后台异步执行（不阻塞 AI 队列）
+            // 本地拼接在后台异步执行（不阻塞 AI 队列，aiRemixActiveCount 由 finally 统一减）
             composeAiRemixVideoAsync(taskId, uploadMainVideoPath || mainVideoLocalPath, imagePaths, presetId, matrixIds, creatorId, sourceVideoId, videoTitle);
-            return; // processSingleAiRemixTask 到此结束，finally 中不再减 aiRemixActiveCount（已提前减了）
+            return;
         } else if (hasVideos) {
           // 视频输出：下载视频
           const fileOutput = fileOutputs.find((o) => o.type === "file");
@@ -865,9 +861,6 @@ export function createMonitorServer({
 
             // 单视频模式：AI 返回的视频走本地拼接（去重/片头片尾/音乐）
             store.logCdpEvent(null, "info", `AI 返回视频，开始本地拼接`, null, taskId);
-            // 提前释放 AI 队列
-            aiRemixActiveCount--;
-            processAiRemixQueue();
             composeAiRemixVideoAsync(taskId, aiVideoPath, [], presetId, matrixIds, creatorId, sourceVideoId, videoTitle);
             return;
           }
@@ -891,8 +884,6 @@ export function createMonitorServer({
 
                 // 走本地拼接（分段打乱+去重+片头片尾+音乐）
                 store.logCdpEvent(null, "info", `分段脚本模式，开始本地拼接`, null, taskId);
-                aiRemixActiveCount--;
-                processAiRemixQueue();
                 composeAiRemixVideoAsync(taskId, uploadMainVideoPath || mainVideoLocalPath, [], presetId, matrixIds, creatorId, sourceVideoId, videoTitle);
                 return;
               } else {
@@ -923,7 +914,7 @@ export function createMonitorServer({
       } catch (e) {
         console.error(`[AI混剪] 任务失败: ${taskId}`, e.message, e.stack);
         store.updateRemixTask(taskId, { status: "FAILED", errorMessage: e.message, completedAt: nowIso(), durationMs: Date.now() - taskStartTime });
-        store.logCdpEvent(null, "error", `AI混剪任务失败: ${e.message}`, null, taskId);
+        store.logCdpEvent(null, "info", `AI混剪任务失败: ${e.message}`, null, taskId);
       }
     console.log(`[AI混剪] 任务结束: ${taskId}`);
     activeDaemonTasks.delete(taskId);

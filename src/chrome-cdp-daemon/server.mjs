@@ -1348,11 +1348,13 @@ async function downloadVideoByClickButton(destDir) {
   // 等待 Playwright download 事件
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
+      page.off('download', downloadHandler);
       reject(new Error('下载超时（60s）'));
     }, 60000);
 
-    page.on('download', async (download) => {
+    const downloadHandler = async (download) => {
       clearTimeout(timeout);
+      page.off('download', downloadHandler);
       try {
         const filename = download.suggestedFilename() || `download_${Date.now()}.mp4`;
         const savePath = join(destDir, filename);
@@ -1362,7 +1364,9 @@ async function downloadVideoByClickButton(destDir) {
       } catch (e) {
         reject(new Error(`下载保存失败: ${e.message}`));
       }
-    });
+    };
+
+    page.on('download', downloadHandler);
   });
 }
 
