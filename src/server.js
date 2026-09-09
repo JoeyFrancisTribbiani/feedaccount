@@ -912,12 +912,13 @@ export function createMonitorServer({
 
                   try {
                     // 1. 建立 source_id → 本地文件路径映射
-                    // 用 uploadFiles（可能被预压缩修改过），因为上传给 ChatGPT 的是这些文件
-                    // JSON 中的 start/end 是基于这些文件的切点
+                    // 上传给 ChatGPT 的是压缩后视频(uploadFiles)，但裁剪用原始视频(filesToUpload)
+                    // 压缩不改变时间轴，切点时间对原始视频同样有效
+                    // 用原始视频裁剪质量更高
                     const sourceMap = {};
                     for (let i = 0; i < scriptData.sources.length; i++) {
                       const src = scriptData.sources[i];
-                      const localPath = uploadFiles[i];
+                      const localPath = filesToUpload[i];
                       if (localPath && existsSync(localPath)) {
                         sourceMap[src.source_id] = localPath;
                         store.logCdpEvent(null, "info", `源视频 ${src.source_id}: ${path.basename(localPath)} (${src.duration?.toFixed(1)}s, speech=${src.speech_present})`, null, taskId);
