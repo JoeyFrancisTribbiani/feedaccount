@@ -567,8 +567,14 @@ export function createMonitorServer({
                 stepIdx++;
               }
               store.logCdpEvent(null, "info", `预压缩完成: ${Math.round(currentSize / 1024 / 1024)}MB (${stepIdx}轮)`, null, taskId);
+              // 多视频模式：只替换第一个视频路径，其他视频保留
+              const idx = uploadFiles.indexOf(uploadMainVideoPath);
+              if (idx >= 0) {
+                uploadFiles[idx] = compressedPath;
+              } else {
+                uploadFiles = [compressedPath];
+              }
               uploadMainVideoPath = compressedPath;
-              uploadFiles = [compressedPath];
             }
           } catch (e) { store.logCdpEvent(null, "warning", `预压缩失败，使用原文件: ${e.message}`, null, taskId); }
         }
@@ -862,6 +868,10 @@ export function createMonitorServer({
             // 单视频模式：AI 返回的视频走本地拼接（去重/片头片尾/音乐）
             store.logCdpEvent(null, "info", `AI 返回视频，开始本地拼接`, null, taskId);
             composeAiRemixVideoAsync(taskId, aiVideoPath, [], presetId, matrixIds, creatorId, sourceVideoId, videoTitle);
+            return;
+          } else {
+            store.logCdpEvent(null, "error", `AI 返回视频下载失败: HTTP ${downloadRes.status}`, null, taskId);
+            store.updateRemixTask(taskId, { status: "FAILED", errorMessage: `AI 返回视频下载失败: HTTP ${downloadRes.status}`, completedAt: nowIso(), durationMs: Date.now() - taskStartTime });
             return;
           }
         }
