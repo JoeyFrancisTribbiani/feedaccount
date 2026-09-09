@@ -1115,6 +1115,22 @@ async function handleChatGptAiRemix(taskNo, params) {
 
   const videoLinks = extractVideoLinks(response.text)
 
+  // 多视频混剪模式：ChatGPT 回复中没有文本链接，但有"下载最终 MP4"按钮
+  if (!videoLinks.length && expectVideo) {
+    log('未找到视频文本链接，尝试点击下载按钮...')
+    try {
+      const dlResult = await downloadVideoByClickButton(OUTPUTS_DIR)
+      if (dlResult) {
+        log(`通过按钮下载视频成功: ${dlResult.filename}`)
+        const result = { ok: true, text: response.text, duration: response.duration, fileOutputs: [{ type: 'video', path: dlResult.path, filename: dlResult.filename, url: dlResult.url }] }
+        log(`=== AI 完成，下载了 1 个视频 ===`)
+        return result
+      }
+    } catch (e) {
+      log(`按钮下载失败: ${e.message}`)
+    }
+  }
+
   if (!videoLinks.length || !expectVideo) {
     // 没有视频链接，或不期望视频，按需下载其他资源
     const outputs = [{ type: 'text', content: response.text }]
@@ -1268,6 +1284,73 @@ async function handleChatGptAiRemix(taskNo, params) {
 /**
  * 从文本中提取视频下载链接
  */
+/**
+ * 通过点击页面上的"下载"按钮触发文件下载
+ * 适用于 ChatGPT 多视频混剪回复中的"下载最终 MP4"按钮
+ */
+async function downloadVideoByClickButton(destDir) {
+  const { mkdirSync } = await import('fs');
+  mkdirSync(destDir, { recursive: true });
+
+  // 找到"下载"相关的 button
+  const found = await page.evaluate(() => {
+    const turns = document.querySelectorAll('[data-testid^="conversation-turn-"]');
+    let lastTurn = null;
+    for (let i = turns.length - 1; i >= 0; i--) {
+      if (turns[i].getAttribute('data-message-author-role') !== 'user') { lastTurn = turns[i]; break; }
+      // 也检查子元素
+      const child = turns[i].querySelector('[data-message-author-role]:not([data-message-author-role="user"])');
+      if (child) { lastTurn = turns[i]; break; }
+    }
+    if (!lastTurn) return { found: false };
+
+    // 找包含"下载"且包含视频格式或 MP4 文字的 button
+    const btns = [...lastTurn.querySelectorAll('button')];
+    const dlBtn = btns.find(b => {
+      const t = (b.textContent || '').trim();
+      const a = b.getAttribute('aria-label') || '';
+      return (t.includes('下载') || t.includes('Download') || t.includes('下载'))
+        && (t.includes('MP4') || t.includes('mp4') || t.includes('视频') || t.includes('video') || a.includes('下载') || a.includes('Download'));
+    });
+    // 如果没找到精确匹配，找任何包含"下载"+文件名/扩展名的 button
+    const fallbackBtn = !dlBtn ? btns.find(b => {
+      const t = (b.textContent || '').trim();
+      return (t.includes('下载') || t.includes('Download')) && t.length < 100;
+    }) : null;
+
+    const target = dlBtn || fallbackBtn;
+    if (target) {
+      target.click();
+      return { found: true, text: target.textContent?.trim()?.substring(0, 100) };
+    }
+    return { found: false };
+  });
+
+  if (!found.found) return null;
+
+  log(`点击下载按钮: ${found.text}`);
+
+  // 等待 Playwright download 事件
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      reject(new Error('下载超时（60s）'));
+    }, 60000);
+
+    page.on('download', async (download) => {
+      clearTimeout(timeout);
+      try {
+        const filename = download.suggestedFilename() || `download_${Date.now()}.mp4`;
+        const savePath = join(destDir, filename);
+        await download.saveAs(savePath);
+        log(`下载完成: ${filename}`);
+        resolve({ path: savePath, filename, url: download.url() });
+      } catch (e) {
+        reject(new Error(`下载保存失败: ${e.message}`));
+      }
+    });
+  });
+}
+
 function extractVideoLinks(text) {
   const links = []
   // 匹配沙盒下载链接（oaiusercontent.com, chatgpt.com/ddm/files 等）
