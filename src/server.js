@@ -852,7 +852,8 @@ export function createMonitorServer({
             if (multiVideoMode) {
               // 多视频混剪模式：ChatGPT 返回的已经是成品视频，直接标记完成
               store.logCdpEvent(null, "info", `多视频混剪模式，视频直接作为成品`, null, taskId);
-              const finalOutputName = `${sanitizeFilename(videoTitle || "ai_remix")}_${taskId.substring(0, 8)}.mp4`;
+              const safeName = (videoTitle || "ai_remix").replace(/[<>:"/\\|?*]/g, '_').substring(0, 100);
+              const finalOutputName = `${safeName}_${taskId.substring(0, 8)}.mp4`;
               const finalOutputPath = path.join(getOutputDir(), finalOutputName);
               const { copyFile } = await import("fs/promises");
               await copyFile(aiVideoPath, finalOutputPath);
