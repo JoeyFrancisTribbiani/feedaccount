@@ -2460,6 +2460,7 @@ export function createMonitorServer({
               ratio: ratio || "9:16",
               creatorId, matrixIds, presetId, prompt,
               cdpInstanceId,
+              multiVideoMode: true,
             });
             if (presetId) {
               const preset = store.getAiRemixPreset(presetId);
@@ -3056,6 +3057,7 @@ export function createMonitorServer({
               outroId: origTask.outroId,
               musicId: origTask.musicId,
               cdpInstanceId: origTask.cdpInstanceId,
+              multiVideoMode: origTask.multiVideoMode === true,
             });
 
             if (origTask.mode === "ai-remix") {
@@ -3114,7 +3116,7 @@ export function createMonitorServer({
                 }
               } catch (e) { store.logCdpEvent(null, "warning", `重试: 预压缩失败: ${e.message}`, null, newTask.id); }
               // 多视频混剪重试：上传所有视频
-              const isMultiVideo = origTask.videoUrls.length > 1;
+              const isMultiVideo = origTask.multiVideoMode === true;
               let filesToUpload;
               if (isMultiVideo) {
                 filesToUpload = origTask.videoUrls.map(url => resolveRetryLocal(url)).filter(p => p);

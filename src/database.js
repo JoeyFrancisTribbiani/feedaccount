@@ -451,6 +451,7 @@ export class LocalDatabase {
     this.#ensureColumn("remix_tasks", "resource_types_json", "TEXT");
     this.#ensureColumn("remix_tasks", "outfit_task_ids_json", "TEXT");
     this.#ensureColumn("remix_tasks", "duration_ms", "INTEGER");
+    this.#ensureColumn("remix_tasks", "multi_video_mode", "INTEGER DEFAULT 0");
     // 穿搭图库索引
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS outfit_library (
@@ -2028,16 +2029,15 @@ export class LocalDatabase {
   }
 
   // --- Remix 任务管理 ---
-  createRemixTask({ title, mode, videoUrls, sourceVideos = null, ratio = "9:16", creatorId = null, matrixIds = null, presetId = null, prompt = null, introEnabled = true, outroEnabled = true, musicEnabled = true, introId = null, outroId = null, musicId = null, cdpInstanceId = null }) {
+  createRemixTask({ title, mode, videoUrls, sourceVideos = null, ratio = "9:16", creatorId = null, matrixIds = null, presetId = null, prompt = null, introEnabled = true, outroEnabled = true, musicEnabled = true, introId = null, outroId = null, musicId = null, cdpInstanceId = null, multiVideoMode = false }) {
     const id = `rt_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     const ts = nowIso();
-    // 生成自增编号
     const maxSeq = this.db.prepare("SELECT COALESCE(MAX(seq_num), 0) as m FROM remix_tasks").get();
     const seqNum = maxSeq.m + 1;
     this.db.prepare(`
-      INSERT INTO remix_tasks (id, seq_num, title, status, mode, video_urls_json, source_videos_json, video_count, ratio, created_at, creator_id, matrix_ids_json, preset_id, prompt, intro_enabled, outro_enabled, music_enabled, intro_id, outro_id, music_id, cdp_instance_id)
-      VALUES (?, ?, ?, 'PENDING', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(id, seqNum, title, mode, JSON.stringify(videoUrls), sourceVideos ? JSON.stringify(sourceVideos) : null, videoUrls.length, ratio, ts, creatorId, matrixIds ? JSON.stringify(matrixIds) : null, presetId, prompt, introEnabled ? 1 : 0, outroEnabled ? 1 : 0, musicEnabled ? 1 : 0, introId, outroId, musicId, cdpInstanceId);
+      INSERT INTO remix_tasks (id, seq_num, title, status, mode, video_urls_json, source_videos_json, video_count, ratio, created_at, creator_id, matrix_ids_json, preset_id, prompt, intro_enabled, outro_enabled, music_enabled, intro_id, outro_id, music_id, cdp_instance_id, multi_video_mode)
+      VALUES (?, ?, ?, 'PENDING', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, seqNum, title, mode, JSON.stringify(videoUrls), sourceVideos ? JSON.stringify(sourceVideos) : null, videoUrls.length, ratio, ts, creatorId, matrixIds ? JSON.stringify(matrixIds) : null, presetId, prompt, introEnabled ? 1 : 0, outroEnabled ? 1 : 0, musicEnabled ? 1 : 0, introId, outroId, musicId, cdpInstanceId, multiVideoMode ? 1 : 0);
     return this.getRemixTask(id);
   }
 
@@ -2061,6 +2061,7 @@ export class LocalDatabase {
       downloaded: Boolean(r.downloaded),
       createdAt: r.created_at, completedAt: r.completed_at,
       durationMs: r.duration_ms || null,
+      multiVideoMode: r.multi_video_mode === 1,
       creatorId: r.creator_id || null,
       matrixIds: parseJson(r.matrix_ids_json, null),
       presetId: r.preset_id || null,
