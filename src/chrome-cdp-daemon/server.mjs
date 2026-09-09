@@ -795,6 +795,16 @@ async function chatgptWaitForResponse(opts = {}) {
             log(`文件回复完成 (${currentFileLinkCount}个文件链接, ${Math.round(duration / 1000)}s)`)
             return { ok: true, text: currentText, duration }
           }
+        } else if (expectFileOutput && !stillGenerating && currentText.length > 0) {
+          // 期望文件输出但没检测到文件链接，且不在生成中，文本不为空
+          // 可能是下载按钮形式的回复（如"下载最终 MP4"），稳定后完成
+          stableIterations++
+          const requiredStable = currentText.length < 50 ? 5 : stableCount
+          if (stableIterations >= requiredStable) {
+            const duration = Date.now() - startTime
+            log(`回复完成 (${(currentText.length / 1000).toFixed(1)}K chars, ${Math.round(duration / 1000)}s)`)
+            return { ok: true, text: currentText, duration }
+          }
         } else if (minResponseLength > 0 && currentText.length < minResponseLength) {
           if (DEBUG) log(`响应过短, 继续等待...`)
         } else if (minResponseLength > 0 && !expectFileOutput && !currentText.includes('{')) {
