@@ -526,57 +526,53 @@ export function createMonitorServer({
         // 预压缩：方案开启压缩开关且文件超过20MB才压缩
         const presetForCompress = presetId ? store.getAiRemixPreset(presetId) : null;
         const shouldCompress = presetForCompress?.compress === true;
-        if (uploadMainVideoPath && existsSync(uploadMainVideoPath)) {
-          try {
-            const { statSync } = await import('fs');
-            const fileSize = statSync(uploadMainVideoPath).size;
-            if (shouldCompress && fileSize > 20 * 1024 * 1024) {
-              store.logCdpEvent(null, "info", `原视频 ${Math.round(fileSize / 1024 / 1024)}MB 超过20MB，预压缩...`, null, taskId);
-              const { execFileSync } = await import('child_process');
-              const { renameSync, unlinkSync } = await import('fs');
-              const compressedPath = path.join(path.dirname(getOutputDir()), 'remix-tmp', `precompressed_${Date.now()}.mp4`);
-              const compress = (input, output, crf, scale) => {
-                execFileSync('ffmpeg', ['-err_detect', 'ignore_err', '-y', '-threads', '2', '-i', input, '-c:v', 'libx264', '-crf', String(crf), '-preset', 'fast', '-threads', '2', '-vf', `scale=${scale}`, '-c:a', 'copy', '-movflags', '+faststart', output], { stdio: 'pipe', timeout: 300000 });
-              };
-              // 循环压缩直到 ≤50MB，音频直通不重编码
-              const steps = [
-                { crf: 32, scale: '-2:720' },
-                { crf: 35, scale: '-2:540' },
-                { crf: 38, scale: '-2:480' },
-                { crf: 40, scale: '-2:360' },
-              ];
-              let currentInput = uploadMainVideoPath;
-              let currentSize = fileSize;
-              let stepIdx = 0;
-              while (currentSize > 20 * 1024 * 1024 && stepIdx < steps.length) {
-                const step = steps[stepIdx];
-                const outputPath = stepIdx === 0 ? compressedPath : compressedPath.replace('.mp4', `_${stepIdx + 1}.mp4`);
-                store.logCdpEvent(null, "info", `压缩第${stepIdx + 1}轮: CRF=${step.crf}, 分辨率=${step.scale}`, null, taskId);
-                compress(currentInput, outputPath, step.crf, step.scale);
-                // 如果不是第一轮，删掉上一轮的临时文件
-                if (stepIdx > 0) {
-                  try { unlinkSync(currentInput); } catch {}
-                  // 重命名最终文件为 compressedPath
-                  if (outputPath !== compressedPath) {
-                    try { unlinkSync(compressedPath); } catch {}
-                    renameSync(outputPath, compressedPath);
+        if (shouldCompress) {
+          // 多视频模式：循环检查每个视频，超20MB的都压缩
+          for (let vIdx = 0; vIdx < uploadFiles.length; vIdx++) {
+            const vPath = uploadFiles[vIdx];
+            if (!vPath || !existsSync(vPath)) continue;
+            try {
+              const { statSync } = await import('fs');
+              const vSize = statSync(vPath).size;
+              if (vSize > 20 * 1024 * 1024) {
+                store.logCdpEvent(null, "info", `视频 ${vIdx+1}/${uploadFiles.length} ${path.basename(vPath)} ${Math.round(vSize / 1024 / 1024)}MB 超过20MB，预压缩...`, null, taskId);
+                const { execFileSync } = await import('child_process');
+                const { renameSync, unlinkSync } = await import('fs');
+                const vCompressedPath = path.join(path.dirname(getOutputDir()), 'remix-tmp', `precompressed_${Date.now()}_${vIdx}.mp4`);
+                const compressOne = (input, output, crf, scale) => {
+                  execFileSync('ffmpeg', ['-err_detect', 'ignore_err', '-y', '-threads', '2', '-i', input, '-c:v', 'libx264', '-crf', String(crf), '-preset', 'fast', '-threads', '2', '-vf', `scale=${scale}`, '-c:a', 'copy', '-movflags', '+faststart', output], { stdio: 'pipe', timeout: 300000 });
+                };
+                const steps = [
+                  { crf: 32, scale: '-2:720' },
+                  { crf: 35, scale: '-2:540' },
+                  { crf: 38, scale: '-2:480' },
+                  { crf: 40, scale: '-2:360' },
+                ];
+                let vCurrentInput = vPath;
+                let vCurrentSize = vSize;
+                let vStepIdx = 0;
+                while (vCurrentSize > 20 * 1024 * 1024 && vStepIdx < steps.length) {
+                  const step = steps[vStepIdx];
+                  const vOutputPath = vStepIdx === 0 ? vCompressedPath : vCompressedPath.replace('.mp4', `_${vStepIdx + 1}.mp4`);
+                  store.logCdpEvent(null, "info", `视频${vIdx+1} 压缩第${vStepIdx + 1}轮: CRF=${step.crf}, 分辨率=${step.scale}`, null, taskId);
+                  compressOne(vCurrentInput, vOutputPath, step.crf, step.scale);
+                  if (vStepIdx > 0) {
+                    try { unlinkSync(vCurrentInput); } catch {}
+                    if (vOutputPath !== vCompressedPath) {
+                      try { unlinkSync(vCompressedPath); } catch {}
+                      renameSync(vOutputPath, vCompressedPath);
+                    }
                   }
+                  vCurrentInput = vCompressedPath;
+                  vCurrentSize = statSync(vCompressedPath).size;
+                  vStepIdx++;
                 }
-                currentInput = compressedPath;
-                currentSize = statSync(compressedPath).size;
-                stepIdx++;
+                store.logCdpEvent(null, "info", `视频${vIdx+1} 压缩完成: ${Math.round(vCurrentSize / 1024 / 1024)}MB (${vStepIdx}轮)`, null, taskId);
+                uploadFiles[vIdx] = vCompressedPath;
+                if (vIdx === 0) uploadMainVideoPath = vCompressedPath;
               }
-              store.logCdpEvent(null, "info", `预压缩完成: ${Math.round(currentSize / 1024 / 1024)}MB (${stepIdx}轮)`, null, taskId);
-              // 多视频模式：只替换第一个视频路径，其他视频保留
-              const idx = uploadFiles.indexOf(uploadMainVideoPath);
-              if (idx >= 0) {
-                uploadFiles[idx] = compressedPath;
-              } else {
-                uploadFiles = [compressedPath];
-              }
-              uploadMainVideoPath = compressedPath;
-            }
-          } catch (e) { store.logCdpEvent(null, "warning", `预压缩失败，使用原文件: ${e.message}`, null, taskId); }
+            } catch (e) { store.logCdpEvent(null, "warning", `视频${vIdx+1} 预压缩失败，使用原文件: ${e.message}`, null, taskId); }
+          }
         }
 
         // 穿搭指南取图
@@ -1014,11 +1010,17 @@ export function createMonitorServer({
                       // concat copy 失败（不同编码/分辨率），重编码拼接
                       store.logCdpEvent(null, "info", `concat copy 失败，重编码拼接`, null, taskId);
                       const concatInputs = segFiles.flatMap(f => ["-i", f]);
-                      const filterComplex = segFiles.map((_, i) => `[${i}:v:0][${i}:a:0]`).join("") + `concat=n=${segFiles.length}:v=1:a=1[v][a]`;
+                      // 统一分辨率避免拼接失败，用第一个分段的分辨率
+                      const { probeVideo } = await import("./video-remix.js");
+                      const probeMeta = await probeVideo(segFiles[0]).catch(() => null);
+                      const targetW = probeMeta?.width || 1080;
+                      const targetH = probeMeta?.height || 1920;
+                      const scaleFilter = segFiles.map((_, i) => `[${i}:v:0]scale=${targetW}:${targetH}:force_original_aspect_ratio=decrease,pad=${targetW}:${targetH}:(ow-iw)/2:(oh-ih)/2,setsar=1[v${i}];[${i}:a:0]aresample=44100[a${i}]`).join(";");
+                      const concatFilter = segFiles.map((_, i) => `[v${i}][a${i}]`).join("") + `concat=n=${segFiles.length}:v=1:a=1[v][a]`;
                       execFileSync("ffmpeg", [
                         "-err_detect", "ignore_err", "-y",
                         ...concatInputs,
-                        "-filter_complex", filterComplex,
+                        "-filter_complex", `${scaleFilter};${concatFilter}`,
                         "-map", "[v]", "-map", "[a]",
                         "-c:v", "libx264", "-crf", "23", "-preset", "veryfast",
                         "-c:a", "aac", "-b:a", "128k",

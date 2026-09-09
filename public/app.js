@@ -7065,6 +7065,7 @@ modalEl.startMulti?.addEventListener("click", async () => {
       const tab = modalState.tabs[matrixId];
       if (!tab?.creatorId || tab.videoIds.size === 0) continue;
       const videoIds = [...tab.videoIds];
+      if (videoIds.length < 2) { showToast("多条混剪需要选择至少 2 个视频", true); return; }
       const res = await request("/api/remix/ai-remix-task", {
         method: "POST",
         body: JSON.stringify({ matrixIds: [matrixId], creatorId: tab.creatorId, videoIds, cdpInstanceId, ratio, presetId, multiVideoMode: true }),
