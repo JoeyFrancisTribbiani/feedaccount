@@ -514,7 +514,7 @@ export function createMonitorServer({
   }
 
   async function processSingleAiRemixTask(taskData) {
-    const { taskId, daemonUrl, filesToUpload, prompt, matrixIds, creatorId, sourceVideoId, videoTitle, presetId, mainVideoLocalPath } = taskData;
+    const { taskId, daemonUrl, filesToUpload, prompt, matrixIds, creatorId, sourceVideoId, videoTitle, presetId, mainVideoLocalPath, multiVideoMode } = taskData;
     console.log(`[AI混剪] 任务开始: ${taskId}, daemonUrl=${daemonUrl}, files=${filesToUpload?.length}, prompt=${(prompt||'').slice(0,50)}`);
     store.updateRemixTask(taskId, { status: "PROCESSING" });
     store.logCdpEvent(null, "info", `AI混剪任务开始: ${taskId}`, null, taskId);
@@ -839,7 +839,7 @@ export function createMonitorServer({
             composeAiRemixVideoAsync(taskId, uploadMainVideoPath || mainVideoLocalPath, imagePaths, presetId, matrixIds, creatorId, sourceVideoId, videoTitle);
             return; // processSingleAiRemixTask 到此结束，finally 中不再减 aiRemixActiveCount（已提前减了）
         } else if (hasVideos) {
-          // 视频输出：下载后走本地拼接流程（去重/片头片尾/背景音乐）
+          // 视频输出：下载视频
           const fileOutput = fileOutputs.find((o) => o.type === "file");
           const downloadRes = await fetch(`${daemonUrl}${fileOutput.url}`);
           if (downloadRes.ok) {
@@ -849,7 +849,20 @@ export function createMonitorServer({
             writeFileSync(aiVideoPath, buffer);
             store.logCdpEvent(null, "info", `AI 返回视频已下载: ${aiVideoFileName}`, null, taskId);
 
-            // AI 返回的视频作为主视频走本地拼接（去重/片头片尾/音乐）
+            if (multiVideoMode) {
+              // 多视频混剪模式：ChatGPT 返回的已经是成品视频，直接标记完成
+              store.logCdpEvent(null, "info", `多视频混剪模式，视频直接作为成品`, null, taskId);
+              const finalOutputName = `${sanitizeFilename(videoTitle || "ai_remix")}_${taskId.substring(0, 8)}.mp4`;
+              const finalOutputPath = path.join(getOutputDir(), finalOutputName);
+              const { copyFile } = await import("fs/promises");
+              await copyFile(aiVideoPath, finalOutputPath);
+              const finalUrl = `/data/remix-output/${finalOutputName}`;
+              store.logCdpEvent(null, "info", `AI 混剪成品: ${finalUrl}`, null, taskId);
+              store.updateRemixTask(taskId, { status: "DONE", outputUrl: finalUrl, completedAt: nowIso(), durationMs: Date.now() - taskStartTime });
+              return;
+            }
+
+            // 单视频模式：AI 返回的视频走本地拼接（去重/片头片尾/音乐）
             store.logCdpEvent(null, "info", `AI 返回视频，开始本地拼接`, null, taskId);
             // 提前释放 AI 队列
             aiRemixActiveCount--;
@@ -3122,15 +3135,20 @@ export function createMonitorServer({
                 filesToUpload = origTask.videoUrls.map(url => resolveRetryLocal(url)).filter(p => p);
                 // 预压缩每个视频（如果开启）
                 if (retryShouldCompress) {
+                  const { execFileSync: execFF2 } = await import('child_process');
+                  const { statSync: statSync2 } = await import('fs');
+                  const compressOne = (input, output, crf, scale) => {
+                    execFF2('ffmpeg', ['-err_detect', 'ignore_err', '-y', '-threads', '2', '-i', input, '-c:v', 'libx264', '-crf', String(crf), '-preset', 'fast', '-threads', '2', '-vf', `scale=${scale}`, '-c:a', 'copy', '-movflags', '+faststart', output], { stdio: 'pipe', timeout: 300000 });
+                  };
                   const compressedFiles = [];
                   for (const vPath of filesToUpload) {
                     let p = vPath;
                     try {
-                      const fSize = statSync(vPath).size;
+                      const fSize = statSync2(vPath).size;
                       if (fSize > 20 * 1024 * 1024) {
                         store.logCdpEvent(null, "info", `重试: 多视频压缩 ${path.basename(vPath)} ${Math.round(fSize / 1024 / 1024)}MB`, null, newTask.id);
                         const compPath = path.join(path.dirname(getOutputDir()), 'remix-tmp', `precomp_${Date.now()}.mp4`);
-                        compress(vPath, compPath, 32, '-2:720');
+                        compressOne(vPath, compPath, 32, '-2:720');
                         p = compPath;
                       }
                     } catch {}

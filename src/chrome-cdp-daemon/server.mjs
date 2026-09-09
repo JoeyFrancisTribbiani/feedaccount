@@ -1132,9 +1132,14 @@ async function handleChatGptAiRemix(taskNo, params) {
       const dlResult = await downloadVideoByClickButton(OUTPUTS_DIR)
       if (dlResult) {
         log(`通过按钮下载视频成功: ${dlResult.filename}`)
-        const result = { ok: true, text: response.text, duration: response.duration, fileOutputs: [{ type: 'video', path: dlResult.path, filename: dlResult.filename, url: dlResult.url }] }
-        log(`=== AI 完成，下载了 1 个视频 ===`)
-        return result
+        // 设置 taskStore 为 completed，并返回 outputs 给 server.js
+        const outputs = [{ type: 'file', filename: dlResult.filename, url: `/outputs/${dlResult.filename}`, content: response.text }]
+        taskStore.set(taskNo, {
+          status: 'completed', outputs, error: null, progress: '100%',
+          startedAt: taskStore.get(taskNo).startedAt, completedAt: Date.now(),
+        })
+        log('=== AI 完成，下载了 1 个视频 ===')
+        return { ok: true, text: response.text, duration: response.duration, fileOutputs: outputs }
       }
     } catch (e) {
       log(`按钮下载失败: ${e.message}`)
