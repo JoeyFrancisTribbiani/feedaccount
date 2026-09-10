@@ -3239,8 +3239,11 @@ export function createMonitorServer({
               };
               let retryVideoPath = resolveRetryLocal(origTask.videoUrls[0]);
               // 重试也预检压缩（检查方案compress开关）
+              // 仅单视频模式在此预压缩，多视频模式在 processSingleAiRemixTask 中统一处理
               const retryPreset = origTask.presetId ? store.getAiRemixPreset(origTask.presetId) : null;
               const retryShouldCompress = retryPreset?.compress === true;
+              const isMultiVideo = origTask.multiVideoMode === true;
+              if (!isMultiVideo) {
               try {
                 const { statSync } = await import('fs');
                 const fileSize = statSync(retryVideoPath).size;
@@ -3281,8 +3284,8 @@ export function createMonitorServer({
                   retryVideoPath = compressedPath;
                 }
               } catch (e) { store.logCdpEvent(null, "warning", `重试: 预压缩失败: ${e.message}`, null, newTask.id); }
+              }
               // 多视频混剪重试：上传所有视频
-              const isMultiVideo = origTask.multiVideoMode === true;
               // 原始路径传给queue，预压缩在processSingleAiRemixTask中统一处理
               const originalPaths = origTask.videoUrls.map(url => resolveRetryLocal(url)).filter(p => p);
               let filesToUpload;
