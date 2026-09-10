@@ -3283,31 +3283,53 @@ export function createMonitorServer({
               } catch (e) { store.logCdpEvent(null, "warning", `重试: 预压缩失败: ${e.message}`, null, newTask.id); }
               // 多视频混剪重试：上传所有视频
               const isMultiVideo = origTask.multiVideoMode === true;
+              // 原始路径用于sourceMap裁剪，压缩后路径用于上传
+              const originalPaths = origTask.videoUrls.map(url => resolveRetryLocal(url)).filter(p => p);
               let filesToUpload;
               if (isMultiVideo) {
-                filesToUpload = origTask.videoUrls.map(url => resolveRetryLocal(url)).filter(p => p);
-                // 预压缩每个视频（如果开启）
+                filesToUpload = [...originalPaths];
+                // 预压缩每个视频（如果开启），压缩后的路径替换到filesToUpload
                 if (retryShouldCompress) {
                   const { execFileSync: execFF2 } = await import('child_process');
-                  const { statSync: statSync2 } = await import('fs');
-                  const compressOne = (input, output, crf, scale) => {
+                  const { statSync: statSync2, renameSync: rRenameSync, unlinkSync: rUnlinkSync } = await import('fs');
+                  const compressRetry = (input, output, crf, scale) => {
                     execFF2('ffmpeg', ['-err_detect', 'ignore_err', '-y', '-threads', '2', '-i', input, '-c:v', 'libx264', '-crf', String(crf), '-preset', 'fast', '-threads', '2', '-vf', `scale=${scale}`, '-c:a', 'copy', '-movflags', '+faststart', output], { stdio: 'pipe', timeout: 300000 });
                   };
-                  const compressedFiles = [];
-                  for (const vPath of filesToUpload) {
-                    let p = vPath;
+                  const retrySteps = [
+                    { crf: 32, scale: '-2:720' },
+                    { crf: 35, scale: '-2:540' },
+                    { crf: 38, scale: '-2:480' },
+                    { crf: 40, scale: '-2:360' },
+                  ];
+                  for (let vIdx = 0; vIdx < filesToUpload.length; vIdx++) {
+                    let vPath = filesToUpload[vIdx];
                     try {
-                      const fSize = statSync2(vPath).size;
-                      if (fSize > 20 * 1024 * 1024) {
-                        store.logCdpEvent(null, "info", `重试: 多视频压缩 ${path.basename(vPath)} ${Math.round(fSize / 1024 / 1024)}MB`, null, newTask.id);
-                        const compPath = path.join(path.dirname(getOutputDir()), 'remix-tmp', `precomp_${Date.now()}.mp4`);
-                        compressOne(vPath, compPath, 32, '-2:720');
-                        p = compPath;
+                      let vSize = statSync2(vPath).size;
+                      if (vSize > 20 * 1024 * 1024) {
+                        store.logCdpEvent(null, "info", `重试: 视频${vIdx+1} ${path.basename(vPath)} ${Math.round(vSize / 1024 / 1024)}MB 压缩...`, null, newTask.id);
+                        const vCompressedPath = path.join(path.dirname(getOutputDir()), 'remix-tmp', `recomp_${Date.now()}_${vIdx}.mp4`);
+                        let rCurrentInput = vPath;
+                        let rStepIdx = 0;
+                        while (vSize > 20 * 1024 * 1024 && rStepIdx < retrySteps.length) {
+                          const step = retrySteps[rStepIdx];
+                          const rOutputPath = rStepIdx === 0 ? vCompressedPath : vCompressedPath.replace('.mp4', `_${rStepIdx + 1}.mp4`);
+                          compressRetry(rCurrentInput, rOutputPath, step.crf, step.scale);
+                          if (rStepIdx > 0) {
+                            try { rUnlinkSync(rCurrentInput); } catch {}
+                            if (rOutputPath !== vCompressedPath) {
+                              try { rUnlinkSync(vCompressedPath); } catch {}
+                              rRenameSync(rOutputPath, vCompressedPath);
+                            }
+                          }
+                          rCurrentInput = vCompressedPath;
+                          vSize = statSync2(vCompressedPath).size;
+                          rStepIdx++;
+                        }
+                        store.logCdpEvent(null, "info", `重试: 视频${vIdx+1} 压缩完成 ${Math.round(vSize / 1024 / 1024)}MB (${rStepIdx}轮)`, null, newTask.id);
+                        filesToUpload[vIdx] = vCompressedPath;
                       }
                     } catch {}
-                    compressedFiles.push(p);
                   }
-                  filesToUpload = compressedFiles;
                 }
               } else {
                 filesToUpload = [retryVideoPath];
@@ -3370,14 +3392,14 @@ export function createMonitorServer({
               }
 
               aiRemixQueue.push({
-                taskId: newTask.id, daemonUrl, filesToUpload,
+                taskId: newTask.id, daemonUrl, filesToUpload: originalPaths,
                 prompt: retryPrompt || origTask.prompt || "",
                 matrixIds: origTask.matrixIds || [],
                 creatorId: origTask.creatorId,
                 sourceVideoId: null,
                 videoTitle: origTask.title,
                 presetId: origTask.presetId,
-                mainVideoLocalPath: filesToUpload[0],
+                mainVideoLocalPath: originalPaths[0],
                 multiVideoMode: isMultiVideo,
               });
               processAiRemixQueue();
