@@ -958,29 +958,17 @@ export function createMonitorServer({
                       store.logCdpEvent(null, "info", `裁剪 ${segId}: ${seg.source_id} ${startTime}s→${endTime}s (${seg.content?.substring(0, 40) || ""})`, null, taskId);
 
                       const { execFileSync } = await import("child_process");
-                      // 用 -c copy 流复制（快），如果失败则重编码
-                      try {
-                        execFileSync("ffmpeg", [
-                          "-err_detect", "ignore_err", "-y",
-                          "-i", srcPath,
-                          "-ss", startTime, "-to", endTime,
-                          "-c", "copy",
-                          "-movflags", "+faststart",
-                          segPath,
-                        ], { stdio: "pipe", timeout: 60000 });
-                      } catch {
-                        // 流复制失败（可能关键帧不在边界），重编码
-                        execFileSync("ffmpeg", [
-                          "-err_detect", "ignore_err", "-y",
-                          "-i", srcPath,
-                          "-ss", startTime, "-to", endTime,
-                          "-c:v", "libx264", "-crf", "23", "-preset", "veryfast",
-                          "-c:a", "aac", "-b:a", "128k",
-                          "-pix_fmt", "yuv420p", "-movflags", "+faststart",
-                          "-shortest",
-                          segPath,
-                        ], { stdio: "pipe", timeout: 120000 });
-                      }
+                      // 直接重编码统一编码参数，避免不同源视频 concat copy 时视频流丢失
+                      execFileSync("ffmpeg", [
+                        "-err_detect", "ignore_err", "-y",
+                        "-i", srcPath,
+                        "-ss", startTime, "-to", endTime,
+                        "-c:v", "libx264", "-crf", "23", "-preset", "veryfast",
+                        "-c:a", "aac", "-b:a", "128k",
+                        "-pix_fmt", "yuv420p", "-movflags", "+faststart",
+                        "-shortest",
+                        segPath,
+                      ], { stdio: "pipe", timeout: 120000 });
                       segFiles.push(segPath);
                     }
 
