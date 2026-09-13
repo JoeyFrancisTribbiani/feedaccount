@@ -1165,7 +1165,10 @@
                   <div>
                     <p id="remix-video-count" class="muted-activity" style="font-size: 12px;">在左侧选择达人查看视频</p>
                   </div>
-                  <button id="remix-add-video-btn" class="button button-secondary" type="button" disabled>添加视频</button>
+                  <div style="display:flex;gap:6px;">
+                    <button id="remix-tiktok-download-btn" class="button button-secondary" type="button" style="font-size:12px;padding:4px 10px;">TikTok下载</button>
+                    <button id="remix-add-video-btn" class="button button-secondary" type="button" disabled>添加视频</button>
+                  </div>
                 </div>
                 <input type="file" id="remix-video-file" accept="video/*" multiple class="hidden" />
                 <div class="remix-video-toolbar">
@@ -1238,9 +1241,49 @@
             </div>
           </div>
         </div>
-      </section>
 
-      <!-- Chrome CDP 管理面板 -->
+        <!-- TikTok 无水印下载弹窗 -->
+        <div id="tiktok-download-modal" class="modal-overlay hidden">
+          <div class="modal-content" style="max-width:700px;width:90vw;">
+            <div class="modal-header">
+              <h3>TikTok 无水印高清下载</h3>
+              <button id="tiktok-download-close" class="modal-close" type="button">×</button>
+            </div>
+            <div class="modal-body">
+              <div style="margin-bottom:12px;">
+                <p class="muted-activity" style="font-size:12px;margin-bottom:6px;">粘贴 TikTok 视频链接（每行一条）或达人主页链接：</p>
+                <textarea id="tiktok-url-input" rows="5" style="width:100%;font-size:13px;padding:8px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--text);resize:vertical;" placeholder="https://www.tiktok.com/@username/video/123456&#10;https://vm.tiktok.com/xxxxx/&#10;https://www.tiktok.com/@username"></textarea>
+              </div>
+              <div style="display:flex;gap:8px;margin-bottom:12px;">
+                <button id="tiktok-parse-btn" class="button button-primary" type="button">解析链接</button>
+                <button id="tiktok-clear-btn" class="button button-secondary" type="button">清空</button>
+              </div>
+              <div id="tiktok-progress" style="display:none;margin-bottom:12px;padding:10px;border-radius:6px;background:var(--bg-alt);font-size:12px;">
+                <span id="tiktok-progress-text">准备中...</span>
+              </div>
+              <!-- 主页解析后的视频卡片列表 -->
+              <div id="tiktok-video-list" style="display:none;">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+                  <label style="font-size:12px;display:flex;align-items:center;gap:4px;cursor:pointer;">
+                    <input type="checkbox" id="tiktok-select-all" style="width:14px;height:14px;" />
+                    全选
+                  </label>
+                  <span id="tiktok-video-count" class="muted-activity" style="font-size:12px;"></span>
+                </div>
+                <div id="tiktok-video-grid" style="max-height:350px;overflow-y:auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;"></div>
+                <div style="margin-top:12px;">
+                  <button id="tiktok-batch-download-btn" class="button button-primary" type="button" disabled>开始下载选中视频</button>
+                </div>
+              </div>
+              <!-- 下载结果列表 -->
+              <div id="tiktok-results" style="display:none;margin-top:12px;">
+                <h4 style="font-size:13px;margin-bottom:8px;">下载结果</h4>
+                <div id="tiktok-results-list" style="max-height:200px;overflow-y:auto;"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
       <section class="cdp-panel cdp-tab hidden">
         <!-- 一键启动 Chrome 调试实例 -->
         <article class="panel cdp-launch-panel">

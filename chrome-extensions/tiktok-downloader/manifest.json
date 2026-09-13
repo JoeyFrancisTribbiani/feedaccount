@@ -1,0 +1,53 @@
+{
+  "manifest_version": 3,
+  "name": "TikTok 无水印高清下载器",
+  "version": "1.0.0",
+  "description": "三策略获取最高码率无水印 TikTok 视频，支持单视频下载和达人主页批量下载",
+  "author": "WILLLUXE",
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "permissions": [
+    "downloads",
+    "storage",
+    "activeTab",
+    "scripting"
+  ],
+  "host_permissions": [
+    "https://www.tiktok.com/*",
+    "https://*.tiktok.com/*",
+    "https://*.tiktokcdn.com/*",
+    "https://*.tiktokcdn-us.com/*",
+    "https://*.byteoversea.com/*",
+    "https://www.tikwm.com/*",
+    "https://*.v16-web.com/*",
+    "https://*.v19-web.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.tiktok.com/*",
+        "https://*.tiktok.com/*"
+      ],
+      "js": ["content.js"],
+      "css": ["content.css"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    },
+    "default_title": "TikTok 无水印下载器"
+  }
+}

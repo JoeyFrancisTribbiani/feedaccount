@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TikTok 无水印下载器</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <header class="header">
+      <div class="logo">
+        <svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor">
+          <path d="M16 6c0 2.2 1.8 4 4 4v3c-1.5 0-2.9-.4-4-1.1V17c0 3.3-2.7 6-6 6s-6-2.7-6-6 2.7-6 6-6v3c-1.7 0-3 1.3-3 3s1.3 3 3 3 3-1.3 3-3V3h3v3z"/>
+        </svg>
+        <span>TikTok 下载器</span>
+      </div>
+      <div class="status-badge" id="pageStatus">检测中...</div>
+    </header>
+
+    <!-- 视频页面 -->
+    <section id="videoSection" class="section" style="display:none">
+      <div class="video-card" id="videoCard">
+        <img class="video-cover" id="videoCover" alt="封面" />
+        <div class="video-info">
+          <div class="video-desc" id="videoDesc"></div>
+          <div class="video-meta">
+            <span id="videoAuthor"></span>
+            <span id="videoDuration"></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="strategy-info" id="strategyInfo">
+        <div class="strategy-row">
+          <span class="strategy-label">策略1 (bitrateInfo)</span>
+          <span class="strategy-status" id="strat1">待检测</span>
+        </div>
+        <div class="strategy-row">
+          <span class="strategy-label">策略2 (TikWM API)</span>
+          <span class="strategy-status" id="strat2">待检测</span>
+        </div>
+        <div class="strategy-row">
+          <span class="strategy-label">策略3 (playAddr兜底)</span>
+          <span class="strategy-status" id="strat3">待检测</span>
+        </div>
+      </div>
+
+      <button class="btn-primary" id="downloadBtn">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+          <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/>
+        </svg>
+        下载无水印高清
+      </button>
+      <button class="btn-secondary" id="downloadAllStrategies">三策略全部获取</button>
+    </section>
+
+    <!-- 达人主页 -->
+    <section id="profileSection" class="section" style="display:none">
+      <div class="profile-header">
+        <img class="profile-avatar" id="profileAvatar" alt="头像" />
+        <div class="profile-info">
+          <div class="profile-name" id="profileName"></div>
+          <div class="profile-stats" id="profileStats"></div>
+        </div>
+      </div>
+
+      <div class="batch-toolbar">
+        <label class="select-all">
+          <input type="checkbox" id="selectAll" />
+          <span>全选</span>
+        </label>
+        <span class="selected-count">已选 <span id="selectedCount">0</span> 个</span>
+        <button class="btn-batch" id="batchDownloadBtn">批量下载选中</button>
+      </div>
+
+      <div class="video-list" id="videoList">
+        <div class="loading">加载视频列表中...</div>
+      </div>
+    </section>
+
+    <!-- 非TikTok页面 -->
+    <section id="otherSection" class="section" style="display:none">
+      <div class="empty-state">
+        <svg viewBox="0 0 24 24" width="48" height="48" fill="currentColor" opacity="0.3">
+          <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93C7.05 19.44 4 16.08 4 12c0-.61.08-1.21.21-1.78L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41C17.93 5.78 20 8.65 20 12c0 2.08-.81 3.98-2.1 5.39z"/>
+        </svg>
+        <p>请在 TikTok 视频页面或达人主页使用</p>
+        <a href="https://www.tiktok.com" class="link" target="_blank">前往 TikTok</a>
+      </div>
+    </section>
+
+    <!-- 下载进度 -->
+    <div class="progress-container" id="progressContainer" style="display:none">
+      <div class="progress-header">
+        <span>下载进度</span>
+        <span id="progressText">0 / 0</span>
+      </div>
+      <div class="progress-bar">
+        <div class="progress-fill" id="progressFill"></div>
+      </div>
+      <div class="progress-log" id="progressLog"></div>
+    </div>
+
+    <!-- 设置 -->
+    <footer class="footer">
+      <label class="toggle">
+        <input type="checkbox" id="autoRetry" checked />
+        <span>自动重试 TikWM</span>
+      </label>
+      <label class="toggle">
+        <input type="checkbox" id="highQuality" checked />
+        <span>优先最高码率</span>
+      </label>
+    </footer>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>

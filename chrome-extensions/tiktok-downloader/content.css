@@ -1,0 +1,83 @@
+/* TikTok Downloader - Content Script Styles */
+
+.tt-dl-wrapper {
+  position: fixed;
+  z-index: 9999999;
+  bottom: 24px;
+  right: 24px;
+}
+
+.tt-dl-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 20px;
+  border: none;
+  border-radius: 30px;
+  background: linear-gradient(135deg, #fe2c55 0%, #ff0050 100%);
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 600;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  cursor: pointer;
+  transition: all 0.25s ease;
+  box-shadow: 0 4px 16px rgba(254, 44, 85, 0.4);
+  user-select: none;
+  white-space: nowrap;
+}
+
+.tt-dl-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 24px rgba(254, 44, 85, 0.6);
+  background: linear-gradient(135deg, #ff0050 0%, #fe2c55 100%);
+}
+
+.tt-dl-btn:active {
+  transform: translateY(0);
+}
+
+.tt-dl-icon {
+  flex-shrink: 0;
+}
+
+.tt-dl-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tt-dl-loading {
+  background: linear-gradient(135deg, #6979ff 0%, #25f4ee 100%);
+  box-shadow: 0 4px 16px rgba(37, 244, 238, 0.4);
+  cursor: wait;
+}
+
+.tt-dl-loading .tt-dl-icon {
+  animation: tt-dl-spin 1s linear infinite;
+}
+
+@keyframes tt-dl-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.tt-dl-success {
+  background: linear-gradient(135deg, #00c853 0%, #00e676 100%);
+  box-shadow: 0 4px 16px rgba(0, 200, 83, 0.4);
+}
+
+.tt-dl-error {
+  background: linear-gradient(135deg, #f44336 0%, #ff1744 100%);
+  box-shadow: 0 4px 16px rgba(244, 67, 54, 0.4);
+  animation: tt-dl-shake 0.4s ease;
+}
+
+@keyframes tt-dl-shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-6px); }
+  75% { transform: translateX(6px); }
+}
+
+/* 隐藏按钮（非TikTok视频页时） */
+.tt-dl-hidden {
+  display: none !important;
+}

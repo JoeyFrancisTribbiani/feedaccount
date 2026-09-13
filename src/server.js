@@ -2935,6 +2935,308 @@ export function createMonitorServer({
           return;
         }
 
+        // ---- TikTok 无水印高清视频下载 ----
+        // 辅助：解析 TikTok URL 类型
+        function parseTiktokUrl(rawUrl) {
+          const url = (rawUrl || "").trim();
+          // 短链 vm.tiktok.com/xxxxx/ 或 vt.tiktok.com/xxxxx/
+          if (/^https?:\/\/(vm|vt)\.tiktok\.com\//i.test(url)) {
+            return { type: "short", url };
+          }
+          // 主页 https://www.tiktok.com/@username
+          const profileMatch = url.match(/^https?:\/\/(?:www\.)?tiktok\.com\/@([^/]+)\/?$/i);
+          if (profileMatch) {
+            return { type: "profile", url, username: profileMatch[1] };
+          }
+          // 视频 https://www.tiktok.com/@username/video/123456
+          const videoMatch = url.match(/^https?:\/\/(?:www\.)?tiktok\.com\/@([^/]+)\/video\/(\d+)/i);
+          if (videoMatch) {
+            return { type: "video", url, username: videoMatch[1], videoId: videoMatch[2] };
+          }
+          // 其他 www.tiktok.com 链接按视频处理
+          if (/^https?:\/\/(?:www\.)?tiktok\.com\//i.test(url)) {
+            return { type: "video", url };
+          }
+          return { type: "unknown", url };
+        }
+
+        // 辅助：解析短链获取真实 URL
+        async function resolveTiktokShortUrl(url) {
+          try {
+            const res = await fetch(url, { method: "HEAD", redirect: "follow", signal: AbortSignal.timeout(15000) });
+            return res.url || url;
+          } catch {
+            try {
+              const res = await fetch(url, { redirect: "follow", signal: AbortSignal.timeout(15000) });
+              return res.url || url;
+            } catch { return url; }
+          }
+        }
+
+        // 辅助：调用 TikWM API
+        async function callTikwm(tiktokUrl) {
+          const apiUrl = `https://www.tikwm.com/api/?url=${encodeURIComponent(tiktokUrl)}`;
+          const res = await fetch(apiUrl, {
+            headers: {
+              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+              "Accept": "application/json",
+            },
+            signal: AbortSignal.timeout(30000),
+          });
+          if (!res.ok) throw new Error(`TikWM HTTP ${res.status}`);
+          const data = await res.json();
+          if (data.code !== 0) throw new Error(data.msg || "TikWM API 返回错误");
+          return data.data;
+        }
+
+        // 辅助：下载视频文件到本地
+        async function downloadTiktokVideo(playUrl, filename) {
+          const uploadDir = getUploadDir();
+          mkdirSync(uploadDir, { recursive: true });
+          const filePath = path.join(uploadDir, filename);
+          const res = await fetch(playUrl, {
+            headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
+            signal: AbortSignal.timeout(120000),
+          });
+          if (!res.ok) throw new Error(`下载失败 HTTP ${res.status}`);
+          const arrayBuf = await res.arrayBuffer();
+          writeFileSync(filePath, Buffer.from(arrayBuf));
+          return filePath;
+        }
+
+        // 辅助：查找或创建达人
+        function findOrCreateCreator(name, platform) {
+          const existing = store.listRemixCreators().find((c) => c.name === name);
+          if (existing) return existing;
+          return store.createRemixCreator({ name, platform });
+        }
+
+        // 辅助：检查视频是否已存在（按 URL 或标题+达人）
+        function findExistingVideo(creatorId, url) {
+          const videos = store.listRemixVideos(creatorId);
+          return videos.find((v) => v.url === url) || null;
+        }
+
+        // POST /api/tiktok/download — 单条视频下载
+        if (request.method === "POST" && pathname === "/api/tiktok/download") {
+          const body = await readJson(request);
+          const rawUrl = (body.url || "").trim();
+          if (!rawUrl) { sendJson(response, 400, { error: "缺少 url 参数" }); return; }
+
+          let tiktokUrl = rawUrl;
+          const parsed = parseTiktokUrl(rawUrl);
+          if (parsed.type === "short") {
+            tiktokUrl = await resolveTiktokShortUrl(rawUrl);
+          }
+          if (parsed.type === "profile") {
+            sendJson(response, 400, { error: "主页链接请使用 /api/tiktok/parse-profile 接口" });
+            return;
+          }
+
+          try {
+            const tkData = await callTikwm(tiktokUrl);
+            if (!tkData.play) throw new Error("TikWM 未返回视频播放地址");
+            const author = tkData.author || {};
+            const username = author.id || parsed.username || "unknown";
+            const nickname = author.nickname || username;
+            const videoId = tkData.id || String(Date.now());
+            const title = (tkData.title || "").substring(0, 200);
+            const filename = `${Date.now()}_${username}_${videoId}.mp4`;
+
+            // 检查是否已下载
+            const creator = findOrCreateCreator(nickname, "TikTok");
+            const videoUrl = `/data/remix-videos/${filename}`;
+            if (findExistingVideo(creator.id, videoUrl)) {
+              sendJson(response, 200, { ok: true, filename, filePath: videoUrl, title, author: nickname, alreadyExists: true });
+              return;
+            }
+
+            const localPath = await downloadTiktokVideo(tkData.play, filename);
+
+            // 创建视频记录
+            const video = store.createRemixVideo({ creatorId: creator.id, url: videoUrl, title: title || null });
+
+            // 更新文件大小和时长
+            try {
+              const { statSync: statFn } = await import("fs");
+              const fSize = statFn(localPath).size;
+              store.db.prepare("UPDATE remix_videos SET file_size = ? WHERE id = ?").run(fSize, video.id);
+              video.fileSize = fSize;
+            } catch {}
+            if (tkData.duration) {
+              store.updateRemixVideoDuration(video.id, tkData.duration);
+              video.duration = tkData.duration;
+            }
+
+            // 下载封面图作为缩略图
+            if (tkData.cover) {
+              try {
+                const thumbDir = path.join(getUploadDir(), "thumbs");
+                mkdirSync(thumbDir, { recursive: true });
+                const thumbName = `thumb_${video.id}.jpg`;
+                const thumbPath = path.join(thumbDir, thumbName);
+                const thumbRes = await fetch(tkData.cover, {
+                  headers: { "User-Agent": "Mozilla/5.0" },
+                  signal: AbortSignal.timeout(15000),
+                });
+                if (thumbRes.ok) {
+                  const thumbBuf = await thumbRes.arrayBuffer();
+                  writeFileSync(thumbPath, Buffer.from(thumbBuf));
+                  video.thumbUrl = `/data/remix-videos/thumbs/${thumbName}`;
+                }
+              } catch {}
+            }
+
+            sendJson(response, 200, {
+              ok: true,
+              filename,
+              filePath: videoUrl,
+              title,
+              author: nickname,
+              videoId: video.id,
+              duration: tkData.duration || null,
+            });
+          } catch (e) {
+            sendJson(response, 500, { error: `TikTok 下载失败: ${e.message}` });
+          }
+          return;
+        }
+
+        // POST /api/tiktok/parse-profile — 解析达人主页获取视频列表
+        if (request.method === "POST" && pathname === "/api/tiktok/parse-profile") {
+          const body = await readJson(request);
+          const rawUrl = (body.url || "").trim();
+          if (!rawUrl) { sendJson(response, 400, { error: "缺少 url 参数" }); return; }
+
+          const parsed = parseTiktokUrl(rawUrl);
+          let profileUrl = rawUrl;
+          if (parsed.type === "short") {
+            profileUrl = await resolveTiktokShortUrl(rawUrl);
+          }
+
+          // 从 URL 提取用户名
+          let username = parsed.username;
+          if (!username) {
+            const m = profileUrl.match(/tiktok\.com\/@([^/]+)/i);
+            username = m ? m[1] : "unknown";
+          }
+
+          try {
+            // TikWM 用户视频列表 API
+            const apiUrl = `https://www.tikwm.com/api/user/posts?username=${encodeURIComponent(username)}&count=30`;
+            const res = await fetch(apiUrl, {
+              headers: {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Accept": "application/json",
+              },
+              signal: AbortSignal.timeout(30000),
+            });
+            if (!res.ok) throw new Error(`TikWM HTTP ${res.status}`);
+            const data = await res.json();
+            if (data.code !== 0) throw new Error(data.msg || "TikWM API 返回错误");
+
+            const feed = data.data?.videos || data.data || [];
+            const videos = feed.map((v) => ({
+              id: v.video_id || v.id,
+              url: `https://www.tiktok.com/@${username}/video/${v.video_id || v.id}`,
+              title: (v.title || "").substring(0, 200),
+              cover: v.cover || v.origin_cover,
+              duration: v.duration || null,
+              author: username,
+              playUrl: v.play,
+              size: v.size || null,
+            }));
+
+            sendJson(response, 200, {
+              ok: true,
+              username,
+              videos,
+            });
+          } catch (e) {
+            sendJson(response, 500, { error: `解析主页失败: ${e.message}` });
+          }
+          return;
+        }
+
+        // POST /api/tiktok/batch-download — 批量下载
+        if (request.method === "POST" && pathname === "/api/tiktok/batch-download") {
+          const body = await readJson(request);
+          const urls = Array.isArray(body.urls) ? body.urls : [];
+          if (!urls.length) { sendJson(response, 400, { error: "缺少 urls 参数" }); return; }
+
+          const results = [];
+          for (const rawUrl of urls) {
+            const url = (rawUrl || "").trim();
+            if (!url) { results.push({ ok: false, url, error: "空链接" }); continue; }
+
+            let tiktokUrl = url;
+            const parsed = parseTiktokUrl(url);
+            if (parsed.type === "short") {
+              tiktokUrl = await resolveTiktokShortUrl(url);
+            }
+            if (parsed.type === "profile" || parsed.type === "unknown") {
+              results.push({ ok: false, url, error: "不支持的主页或无效链接，请使用视频链接" });
+              continue;
+            }
+
+            try {
+              const tkData = await callTikwm(tiktokUrl);
+              if (!tkData.play) throw new Error("未返回视频播放地址");
+              const author = tkData.author || {};
+              const username = author.id || parsed.username || "unknown";
+              const nickname = author.nickname || username;
+              const videoId = tkData.id || String(Date.now());
+              const title = (tkData.title || "").substring(0, 200);
+              const filename = `${Date.now()}_${username}_${videoId}.mp4`;
+              const videoUrl = `/data/remix-videos/${filename}`;
+
+              // 查找或创建达人
+              const creator = findOrCreateCreator(nickname, "TikTok");
+              if (findExistingVideo(creator.id, videoUrl)) {
+                results.push({ ok: true, url, filename, filePath: videoUrl, title, author: nickname, alreadyExists: true });
+                continue;
+              }
+
+              const localPath = await downloadTiktokVideo(tkData.play, filename);
+              const video = store.createRemixVideo({ creatorId: creator.id, url: videoUrl, title: title || null });
+
+              try {
+                const { statSync: statFn } = await import("fs");
+                const fSize = statFn(localPath).size;
+                store.db.prepare("UPDATE remix_videos SET file_size = ? WHERE id = ?").run(fSize, video.id);
+              } catch {}
+              if (tkData.duration) store.updateRemixVideoDuration(video.id, tkData.duration);
+
+              // 下载封面
+              if (tkData.cover) {
+                try {
+                  const thumbDir = path.join(getUploadDir(), "thumbs");
+                  mkdirSync(thumbDir, { recursive: true });
+                  const thumbName = `thumb_${video.id}.jpg`;
+                  const thumbPath = path.join(thumbDir, thumbName);
+                  const thumbRes = await fetch(tkData.cover, {
+                    headers: { "User-Agent": "Mozilla/5.0" },
+                    signal: AbortSignal.timeout(15000),
+                  });
+                  if (thumbRes.ok) {
+                    const thumbBuf = await thumbRes.arrayBuffer();
+                    writeFileSync(thumbPath, Buffer.from(thumbBuf));
+                  }
+                } catch {}
+              }
+
+              results.push({ ok: true, url, filename, filePath: videoUrl, title, author: nickname, videoId: video.id });
+            } catch (e) {
+              results.push({ ok: false, url, error: e.message });
+            }
+            // 每条间隔 2 秒，避免被封
+            await new Promise((r) => setTimeout(r, 2000));
+          }
+
+          sendJson(response, 200, { ok: true, results });
+          return;
+        }
+
         // 穿搭图库索引
         if (request.method === "POST" && pathname === "/api/outfit-library/index") {
           const OUTFIT_DIR = path.resolve(THIS_DIR, "..", "data", "luxury-image-library", "images");
