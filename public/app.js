@@ -3984,7 +3984,8 @@ function hideTiktokProgress() {
 }
 
 function isProfileUrl(url) {
-  return /^https?:\/\/(?:www\.)?tiktok\.com\/@([^/]+)\/?$/i.test(url.trim());
+  const clean = url.trim().split(/[?#]/)[0];
+  return /^https?:\/\/(?:www\.)?tiktok\.com\/@([^/]+)\/?$/i.test(clean);
 }
 
 function isVideoUrl(url) {
@@ -4088,7 +4089,7 @@ function renderTiktokVideoList(videos, username) {
     return `
       <div class="tiktok-video-card" data-index="${i}" style="border:1px solid var(--line);border-radius:8px;overflow:hidden;cursor:pointer;position:relative;">
         <div style="position:relative;width:100%;padding-top:177%;background:var(--bg-subtle);">
-          ${v.cover ? `<img src="${escapeHtml(v.cover)}" style="position:absolute;top:0;left:0;width:100%;height:100%;object-fit:cover;" loading="lazy" />` : '<div style="position:absolute;top:0;left:0;width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:var(--text-muted);font-size:11px;">无封面</div>'}
+          ${v.cover ? `<img src="${v.cover}" style="position:absolute;top:0;left:0;width:100%;height:100%;object-fit:cover;" loading="lazy" onerror="this.style.display='none'" />` : '<div style="position:absolute;top:0;left:0;width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:var(--text-muted);font-size:11px;">无封面</div>'}
           <div class="tiktok-check" style="position:absolute;top:6px;right:6px;width:20px;height:20px;border-radius:50%;background:rgba(0,0,0,0.5);border:2px solid #fff;display:flex;align-items:center;justify-content:center;color:#fff;font-size:12px;"></div>
           ${dur ? `<span style="position:absolute;bottom:4px;right:4px;background:rgba(0,0,0,0.7);color:#fff;font-size:10px;padding:1px 4px;border-radius:3px;">${escapeHtml(dur)}</span>` : ""}
         </div>
@@ -4193,6 +4194,7 @@ function renderTiktokResults(results) {
       return `<div style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-bottom:1px solid var(--line);font-size:12px;">
         <span style="color:#22c55e;">✓</span>
         <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(r.title || r.filename || "未命名")}</span>
+        ${r.fileSize ? `<span class="muted-activity" style="font-size:10px;">${(r.fileSize / 1024 / 1024).toFixed(1)}MB</span>` : ""}
         <span class="muted-activity" style="font-size:11px;">${escapeHtml(r.author || "")}</span>
         ${r.alreadyExists ? '<span style="color:var(--text-muted);font-size:10px;">已存在</span>' : ""}
       </div>`;
