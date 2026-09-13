@@ -7437,7 +7437,7 @@ const autoPublish = {
     try {
       // 获取所有已添加的达人（复用 remix 的 creator 列表）
       const data = await request('/api/remix/creators');
-      const allCreators = Array.isArray(data) ? data : [];
+      const allCreators = Array.isArray(data) ? data : (data?.creators || []);
       // 为每个达人获取自动发布配置
       const enriched = await Promise.all(
         allCreators.map(async (c) => {
@@ -7450,9 +7450,9 @@ const autoPublish = {
               ...c,
               autoPublishConfig: {
                 enabled: 0,
-                preset: 'stitch',
-                dailyLimit: 3,
-                monitorInterval: 360,
+                presetId: null,
+                dailyLimitPerProfile: 3,
+                monitorIntervalHours: 6,
               },
             };
           }
@@ -7664,19 +7664,19 @@ const autoPublish = {
     // 绑定配置变更事件
     container.querySelectorAll('[data-config-preset]').forEach((sel) => {
       sel.addEventListener('change', () => {
-        this.saveCreatorConfig(sel.dataset.configPreset, { preset: sel.value });
+        this.saveCreatorConfig(sel.dataset.configPreset, { presetId: sel.value });
       });
     });
     container.querySelectorAll('[data-config-daily]').forEach((inp) => {
       inp.addEventListener('change', () => {
         const val = parseInt(inp.value, 10) || 0;
-        this.saveCreatorConfig(inp.dataset.configDaily, { dailyLimit: val });
+        this.saveCreatorConfig(inp.dataset.configDaily, { dailyLimitPerProfile: val });
       });
     });
     container.querySelectorAll('[data-config-interval]').forEach((inp) => {
       inp.addEventListener('change', () => {
-        const val = parseInt(inp.value, 10) || 0;
-        this.saveCreatorConfig(inp.dataset.configInterval, { monitorInterval: val });
+        const val = parseInt(inp.value, 10) || 1;
+        this.saveCreatorConfig(inp.dataset.configInterval, { monitorIntervalHours: val });
       });
     });
 
@@ -7704,7 +7704,7 @@ const autoPublish = {
     const cfg = c.autoPublishConfig || {};
     const bindings = c.bindings || [];
     const presetOptions = this.presets
-      .map((p) => `<option value="${p.value}" ${cfg.preset === p.value ? 'selected' : ''}>${escapeHtml(p.label)}</option>`)
+      .map((p) => `<option value="${p.value}" ${cfg.presetId === p.value ? 'selected' : ''}>${escapeHtml(p.label)}</option>`)
       .join('');
     const bindingsHtml = bindings.length
       ? bindings.map((b) => {
@@ -7733,13 +7733,13 @@ const autoPublish = {
         <div class="ap-config-row">
           <span class="ap-config-label">每实例每日发布</span>
           <div class="ap-config-value">
-            <input type="number" min="0" max="50" value="${escapeHtml(String(cfg.dailyLimit ?? 3))}" data-config-daily="${escapeHtml(c.id)}" style="width:60px;" /> 条
+            <input type="number" min="0" max="50" value="${escapeHtml(String(cfg.dailyLimitPerProfile ?? 3))}" data-config-daily="${escapeHtml(c.id)}" style="width:60px;" /> 条
           </div>
         </div>
         <div class="ap-config-row">
           <span class="ap-config-label">监控间隔</span>
           <div class="ap-config-value">
-            <input type="number" min="60" max="86400" value="${escapeHtml(String(cfg.monitorInterval ?? 360))}" data-config-interval="${escapeHtml(c.id)}" style="width:70px;" /> 秒
+            <input type="number" min="1" max="168" value="${escapeHtml(String(cfg.monitorIntervalHours ?? 6))}" data-config-interval="${escapeHtml(c.id)}" style="width:70px;" /> 小时
           </div>
         </div>
         <div class="ap-bindings-area">
@@ -7780,18 +7780,18 @@ const autoPublish = {
 
   _bindCardEvents(scope) {
     scope.querySelectorAll('[data-config-preset]').forEach((sel) => {
-      sel.addEventListener('change', () => this.saveCreatorConfig(sel.dataset.configPreset, { preset: sel.value }));
+      sel.addEventListener('change', () => this.saveCreatorConfig(sel.dataset.configPreset, { presetId: sel.value }));
     });
     scope.querySelectorAll('[data-config-daily]').forEach((inp) => {
       inp.addEventListener('change', () => {
         const val = parseInt(inp.value, 10) || 0;
-        this.saveCreatorConfig(inp.dataset.configDaily, { dailyLimit: val });
+        this.saveCreatorConfig(inp.dataset.configDaily, { dailyLimitPerProfile: val });
       });
     });
     scope.querySelectorAll('[data-config-interval]').forEach((inp) => {
       inp.addEventListener('change', () => {
-        const val = parseInt(inp.value, 10) || 0;
-        this.saveCreatorConfig(inp.dataset.configInterval, { monitorInterval: val });
+        const val = parseInt(inp.value, 10) || 1;
+        this.saveCreatorConfig(inp.dataset.configInterval, { monitorIntervalHours: val });
       });
     });
     scope.querySelectorAll('[data-bind-btn]').forEach((btn) => {
@@ -7859,34 +7859,29 @@ const autoPublish = {
     const tbody = this.el.pipelineTbody();
     if (!tbody) return;
     if (!this.pipelineTasks.length) {
-      tbody.innerHTML = '<tr><td colspan="8" class="empty-state compact" style="padding:16px;">暂无流水线任务</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="7" class="empty-state compact" style="padding:16px;">暂无流水线任务</td></tr>';
       return;
     }
     tbody.innerHTML = this.pipelineTasks.map((t) => {
-      const creator = this.creators.find((c) => c.id === t.creatorId);
-      const creatorName = creator?.name || t.creatorName || t.creatorId || '—';
-      const remixStatus = t.remixStatus || t.status || 'pending';
-      const publishStatus = t.publishStatus || '—';
-      const targetProfile = t.profileName || t.targetProfile || '—';
-      const attempts = t.attempts ?? 0;
-      const maxAttempts = t.maxAttempts ?? 3;
+      const creatorName = t.creatorName || t.creatorId || '—';
+      const status = t.status || 'pending';
+      const profileId = t.profileId || '—';
+      const attempts = t.attemptCount ?? 0;
+      const maxAttempts = 3;
       const createdAt = t.createdAt ? formatDateTime(t.createdAt) : '—';
-      const isFailed = remixStatus === 'failed' || publishStatus === 'failed';
-      const failReason = t.failReason || t.error || '';
-      const canRetry = remixStatus === 'failed' || remixStatus === 'retry';
+      const isFailed = status === 'failed';
+      const failReason = t.failReason || '';
+      const canRetry = status === 'failed' || status === 'retry';
 
       return `
         <tr class="${isFailed ? 'failed-row' : ''}">
           <td class="col-creator">${escapeHtml(creatorName)}</td>
-          <td class="col-source" title="${escapeHtml(t.sourceVideo || t.videoTitle || '')}">${escapeHtml(t.sourceVideo || t.videoTitle || '—')}</td>
+          <td class="col-source" title="${escapeHtml(t.sourceVideoId || '')}">${escapeHtml(t.sourceVideoId || '—')}</td>
           <td>
-            <span class="ap-status-badge ${this.statusClass(remixStatus)}">${escapeHtml(remixStatus)}</span>
+            <span class="ap-status-badge ${this.statusClass(status)}">${escapeHtml(status)}</span>
             ${failReason && isFailed ? `<span class="ap-fail-reason">${escapeHtml(failReason)}</span>` : ''}
           </td>
-          <td>
-            ${publishStatus !== '—' ? `<span class="ap-status-badge ${this.statusClass(publishStatus)}">${escapeHtml(publishStatus)}</span>` : '—'}
-          </td>
-          <td>${escapeHtml(targetProfile)}</td>
+          <td>${escapeHtml(profileId)}</td>
           <td class="col-attempts">${attempts}/${maxAttempts}</td>
           <td class="col-time">${escapeHtml(createdAt)}</td>
           <td class="col-action">
