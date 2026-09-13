@@ -22,6 +22,7 @@ import { checkIpGeoViaSocks5 } from "./socks5-check.js";
 import { DEDUP_PRESETS, dedupVideo, stitchVideos, probeVideo, remixVideoWithResources, composeAiRemixVideo, antiAiProcessImage, setOutputDir, setUploadDir, getOutputDir, getUploadDir, OUTPUT_DIR as REMIX_OUTPUT_DIR } from "./video-remix.js";
 import { handleComfyuiEdit, updateComfyuiConfig, handleV1Models, handleV1ImagesGenerations, handleV1ChatCompletions, handleV1VideosGenerations } from "./comfyui-gateway.js";
 import { ImageGenTaskManager } from "./image-gen-task-manager.js";
+import { AutoPublishScheduler } from "./auto-publish-scheduler.js";
 
 const THIS_DIR = path.dirname(fileURLToPath(import.meta.url));
 const CDP_DAEMON_DIR = path.resolve(THIS_DIR, "chrome-cdp-daemon");
@@ -429,6 +430,19 @@ export function createMonitorServer({
   const tiktokJobs = new TiktokJobManager({ bitBrowserApi: api, persistence: store });
   const tiktokPublisherManager = new TiktokPublishManager({ bitBrowserApi: api, persistence: store });
   tiktokPublisherManager.startScheduler();
+
+  // 自动混剪发布调度器
+  const autoScheduler = new AutoPublishScheduler({
+    persistence: store,
+    bitBrowserApi: api,
+    serverUrl: `http://127.0.0.1:${process.env.PORT || DEFAULT_SERVER_PORT}`,
+  });
+  const onAutoPublishChange = (event) => {
+    const frame = `event: auto-publish\ndata: ${JSON.stringify(event.detail || {})}\n\n`;
+    for (const client of sseClients.keys()) client.write(frame);
+  };
+  autoScheduler.addEventListener("change", onAutoPublishChange);
+
   const sseClients = new Map();
 
   const remixQueue = [];
@@ -3856,6 +3870,251 @@ export function createMonitorServer({
           return;
         }
 
+        // ---- 自动混剪发布流水线 API ----
+
+        // 获取达人自动发布配置
+        // ---- 自动发布 API（/api/auto-publish/* 别名，兼容前端调用） ----
+        // GET/PUT /api/auto-publish/config/:creatorId
+        const apConfigMatch = pathname.match(/^\/api\/auto-publish\/config\/([^/]+)$/);
+        if (apConfigMatch) {
+          const creatorId = decodeURIComponent(apConfigMatch[1]);
+          if (request.method === "GET") {
+            sendJson(response, 200, store.getAutoPublishConfig(creatorId) || { creatorId, enabled: false, presetId: null, dailyLimitPerProfile: 3, monitorIntervalHours: 6 });
+            return;
+          }
+          if (request.method === "PUT") {
+            const body = await readJson(request);
+            const updated = store.upsertAutoPublishConfig(creatorId, {
+              enabled: body.enabled, presetId: body.presetId,
+              dailyLimitPerProfile: body.dailyLimitPerProfile, monitorIntervalHours: body.monitorIntervalHours,
+            });
+            sendJson(response, 200, updated);
+            return;
+          }
+        }
+
+        // GET /api/auto-publish/creators
+        if (request.method === "GET" && pathname === "/api/auto-publish/creators") {
+          sendJson(response, 200, store.listAutoPublishCreators());
+          return;
+        }
+
+        // GET /api/auto-publish/bindings/:creatorId  (注意：creatorId 在路径末尾)
+        const apBindingsGetMatch = pathname.match(/^\/api\/auto-publish\/bindings\/([^/]+)$/);
+        if (apBindingsGetMatch && request.method === "GET") {
+          const creatorId = decodeURIComponent(apBindingsGetMatch[1]);
+          sendJson(response, 200, store.listProfileBindings(creatorId));
+          return;
+        }
+
+        // POST /api/auto-publish/bindings
+        if (request.method === "POST" && pathname === "/api/auto-publish/bindings") {
+          const body = await readJson(request);
+          if (!body.creatorId || !body.profileId) { sendJson(response, 400, { error: "缺少 creatorId / profileId" }); return; }
+          sendJson(response, 200, store.addProfileBinding(body.creatorId, body.profileId, body.dailyLimit || 3));
+          return;
+        }
+
+        // DELETE /api/auto-publish/bindings/:id
+        const apBindingDelMatch = pathname.match(/^\/api\/auto-publish\/bindings\/([^/]+)$/);
+        if (apBindingDelMatch && request.method === "DELETE") {
+          store.removeProfileBinding(decodeURIComponent(apBindingDelMatch[1]));
+          sendJson(response, 200, { ok: true });
+          return;
+        }
+
+        // PUT /api/auto-publish/bindings/:id
+        if (apBindingDelMatch && request.method === "PUT") {
+          const body = await readJson(request);
+          const updated = store.updateProfileBinding(decodeURIComponent(apBindingDelMatch[1]), {
+            dailyLimit: body.dailyLimit, enabled: body.enabled,
+          });
+          sendJson(response, 200, updated);
+          return;
+        }
+
+        // GET /api/auto-publish/pipeline
+        if (request.method === "GET" && pathname === "/api/auto-publish/pipeline") {
+          const url = new URL(request.url, "http://localhost");
+          const creatorId = url.searchParams.get("creatorId");
+          const status = url.searchParams.get("status");
+          const limit = url.searchParams.get("limit");
+          sendJson(response, 200, store.listPipelineTasks({ creatorId, status, limit: limit ? Number(limit) : 100 }));
+          return;
+        }
+
+        // POST /api/auto-publish/pipeline/retry/:id
+        const apRetryMatch = pathname.match(/^\/api\/auto-publish\/pipeline\/retry\/([^/]+)$/);
+        if (apRetryMatch && request.method === "POST") {
+          const taskId = decodeURIComponent(apRetryMatch[1]);
+          store.updatePipelineTask(taskId, { status: "retry", failReason: null, updatedAt: new Date().toISOString() });
+          sendJson(response, 200, { ok: true, message: "已标记为重试" });
+          return;
+        }
+
+        // POST /api/auto-publish/monitor/:creatorId
+        const apMonitorMatch = pathname.match(/^\/api\/auto-publish\/monitor\/([^/]+)$/);
+        if (apMonitorMatch && request.method === "POST") {
+          // 手动触发监控，通过事件通知调度器
+          autoScheduler?.monitorCreatorVideos?.().catch(() => {});
+          sendJson(response, 200, { ok: true, message: "监控已触发" });
+          return;
+        }
+
+        // ---- 自动发布 API（原有 /api/remix/* 路径） ----
+        const autoPublishConfigMatch = pathname.match(/^\/api\/remix\/creators\/([^/]+)\/auto-publish-config$/);
+        if (autoPublishConfigMatch) {
+          const creatorId = decodeURIComponent(autoPublishConfigMatch[1]);
+          if (request.method === "GET") {
+            sendJson(response, 200, store.getAutoPublishConfig(creatorId) || { creatorId, enabled: false });
+            return;
+          }
+          if (request.method === "PUT") {
+            const body = await readJson(request);
+            const updated = store.upsertAutoPublishConfig(creatorId, {
+              enabled: body.enabled,
+              presetId: body.presetId,
+              dailyLimitPerProfile: body.dailyLimitPerProfile,
+              monitorIntervalHours: body.monitorIntervalHours,
+            });
+            sendJson(response, 200, updated);
+            return;
+          }
+        }
+
+        // 获取所有已启用自动发布的达人列表
+        if (request.method === "GET" && pathname === "/api/remix/auto-publish/creators") {
+          sendJson(response, 200, store.listAutoPublishCreators());
+          return;
+        }
+
+        // 达人绑定指纹浏览器实例
+        const profileBindingMatch = pathname.match(/^\/api\/remix\/creators\/([^/]+)\/profile-bindings$/);
+        if (profileBindingMatch) {
+          const creatorId = decodeURIComponent(profileBindingMatch[1]);
+          if (request.method === "GET") {
+            sendJson(response, 200, store.listProfileBindings(creatorId));
+            return;
+          }
+          if (request.method === "POST") {
+            const body = await readJson(request);
+            if (!body.profileId) { sendJson(response, 400, { error: "缺少 profileId" }); return; }
+            sendJson(response, 200, store.addProfileBinding(creatorId, body.profileId, body.dailyLimit || 3));
+            return;
+          }
+        }
+
+        // 更新/删除单个绑定
+        const profileBindingItemMatch = pathname.match(/^\/api\/remix\/profile-bindings\/([^/]+)$/);
+        if (profileBindingItemMatch) {
+          const bindingId = decodeURIComponent(profileBindingItemMatch[1]);
+          if (request.method === "PATCH") {
+            const body = await readJson(request);
+            const updated = store.updateProfileBinding(bindingId, {
+              dailyLimit: body.dailyLimit,
+              enabled: body.enabled,
+              lastPublishAt: body.lastPublishAt,
+            });
+            sendJson(response, 200, updated);
+            return;
+          }
+          if (request.method === "DELETE") {
+            store.removeProfileBinding(bindingId);
+            sendJson(response, 200, { ok: true });
+            return;
+          }
+        }
+
+        // 视频监控记录
+        const monitoredVideosMatch = pathname.match(/^\/api\/remix\/creators\/([^/]+)\/monitored-videos$/);
+        if (monitoredVideosMatch) {
+          const creatorId = decodeURIComponent(monitoredVideosMatch[1]);
+          if (request.method === "GET") {
+            sendJson(response, 200, store.listMonitoredVideos(creatorId));
+            return;
+          }
+          if (request.method === "POST") {
+            const body = await readJson(request);
+            if (!body.tiktokUrl) { sendJson(response, 400, { error: "缺少 tiktokUrl" }); return; }
+            sendJson(response, 200, store.addMonitoredVideo(creatorId, body.tiktokUrl, body.videoId || null));
+            return;
+          }
+        }
+
+        // 标记视频已下载
+        if (request.method === "POST" && pathname === "/api/remix/monitored-videos/mark-downloaded") {
+          const body = await readJson(request);
+          if (!body.tiktokUrl) { sendJson(response, 400, { error: "缺少 tiktokUrl" }); return; }
+          sendJson(response, 200, store.markMonitoredVideoDownloaded(body.tiktokUrl, body.remixVideoId || null));
+          return;
+        }
+
+        // 检查视频是否已监控
+        const checkMonitoredMatch = pathname.match(/^\/api\/remix\/creators\/([^/]+)\/monitored-videos\/check$/);
+        if (request.method === "POST" && checkMonitoredMatch) {
+          const creatorId = decodeURIComponent(checkMonitoredMatch[1]);
+          const body = await readJson(request);
+          if (!body.tiktokUrl) { sendJson(response, 400, { error: "缺少 tiktokUrl" }); return; }
+          sendJson(response, 200, { monitored: store.isVideoMonitored(creatorId, body.tiktokUrl) });
+          return;
+        }
+
+        // 流水线任务管理
+        if (request.method === "GET" && pathname === "/api/remix/pipeline/tasks") {
+          const url = new URL(request.url, "http://localhost");
+          const creatorId = url.searchParams.get("creatorId");
+          const status = url.searchParams.get("status");
+          const profileId = url.searchParams.get("profileId");
+          const limit = url.searchParams.get("limit");
+          sendJson(response, 200, store.listPipelineTasks({
+            creatorId, status, profileId,
+            limit: limit ? Number(limit) : 100,
+          }));
+          return;
+        }
+
+        if (request.method === "POST" && pathname === "/api/remix/pipeline/tasks") {
+          const body = await readJson(request);
+          if (!body.creatorId || !body.sourceVideoId || !body.profileId) {
+            sendJson(response, 400, { error: "缺少 creatorId / sourceVideoId / profileId" });
+            return;
+          }
+          sendJson(response, 200, store.createPipelineTask({
+            creatorId: body.creatorId,
+            sourceVideoId: body.sourceVideoId,
+            remixTaskId: body.remixTaskId,
+            profileId: body.profileId,
+            publishJobId: body.publishJobId,
+            status: body.status,
+            failReason: body.failReason,
+            attemptCount: body.attemptCount,
+          }));
+          return;
+        }
+
+        const pipelineTaskMatch = pathname.match(/^\/api\/remix\/pipeline\/tasks\/([^/]+)$/);
+        if (pipelineTaskMatch) {
+          const taskId = decodeURIComponent(pipelineTaskMatch[1]);
+          if (request.method === "GET") {
+            const task = store.getPipelineTask(taskId);
+            if (!task) { sendJson(response, 404, { error: "流水线任务不存在" }); return; }
+            sendJson(response, 200, task);
+            return;
+          }
+          if (request.method === "PATCH") {
+            const body = await readJson(request);
+            const updated = store.updatePipelineTask(taskId, {
+              status: body.status,
+              remixTaskId: body.remixTaskId,
+              publishJobId: body.publishJobId,
+              failReason: body.failReason,
+              attemptCount: body.attemptCount,
+            });
+            sendJson(response, 200, updated);
+            return;
+          }
+        }
+
         sendJson(response, 404, { error: "接口不存在" });
         return;
       }
@@ -4281,7 +4540,7 @@ export function createMonitorServer({
     store.close();
   });
 
-  return { server, api, jobs, tiktokJobs, scheduler, database: store };
+  return { server, api, jobs, tiktokJobs, scheduler, autoScheduler, database: store };
 }
 
 function openDashboard(url) {
@@ -4302,7 +4561,8 @@ if (isMain) {
   const databasePath = process.env.DATABASE_PATH
     ? path.resolve(process.env.DATABASE_PATH)
     : DEFAULT_DATABASE_PATH;
-  const { server, jobs } = createMonitorServer({ bitBrowserApiUrl, databasePath });
+  const { server, jobs, autoScheduler } = createMonitorServer({ bitBrowserApiUrl, databasePath });
+  autoScheduler.start();
 
   // 自动启动 ngrok
   const ngrokCfg = loadNgrokConfig();
@@ -4336,6 +4596,7 @@ if (isMain) {
 
   const shutdown = async () => {
     if (ngrokProc) { ngrokProc.kill("SIGTERM"); ngrokProc = null; }
+    autoScheduler?.stop();
     await jobs.stopAll().catch(() => {});
     server.close(() => process.exit(0));
     setTimeout(() => process.exit(1), 3000).unref();

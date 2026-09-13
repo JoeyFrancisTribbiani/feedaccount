@@ -2640,9 +2640,11 @@ for (const btn of document.querySelectorAll(".platform-tab")) {
     document.querySelectorAll(".cdp-tab").forEach((el) => el.classList.toggle("hidden", platform !== "cdp"));
     document.querySelectorAll(".matrix-tab").forEach((el) => el.classList.toggle("hidden", platform !== "matrix"));
     document.querySelectorAll(".scheduler-tab").forEach((el) => el.classList.toggle("hidden", platform !== "scheduler"));
+    document.querySelectorAll(".auto-publish-tab").forEach((el) => el.classList.toggle("hidden", platform !== "auto-publish"));
     if (platform === "cdp") { refreshCdpInstances(); refreshNgrokStatus(); }
     if (platform === "matrix") { fetchMatrices(); }
     if (platform === "tiktok") { refreshTkMaterials(); refreshTkImages(); }
+    if (platform === "auto-publish") { autoPublish.init(); }
   });
 }
 
@@ -7345,3 +7347,580 @@ fetchRemixTasks();
 
 // 初始化默认显示第一个 tab（视频去重与混剪）
 document.querySelector('.platform-tab[data-platform="remix"]')?.click();
+
+// ==========================================================================
+// 自动发布流水线
+// ==========================================================================
+const autoPublish = {
+  creators: [],
+  pipelineTasks: [],
+  profiles: [],
+  monitorData: [],
+  filterCreator: '',
+  filterStatus: '',
+  expandedCreatorId: null,
+  _initialized: false,
+  _pollTimer: null,
+
+  // 混剪方案列表（与后端 preset 对应）
+  presets: [
+    { value: 'stitch', label: '拼接混剪' },
+    { value: 'ai', label: 'AI混剪' },
+    { value: 'dedup', label: '去重处理' },
+  ],
+
+  // 状态颜色映射
+  statusClass(status) {
+    const map = {
+      pending: 'ap-status-pending',
+      remixing: 'ap-status-remixing',
+      remixed: 'ap-status-remixed',
+      publishing: 'ap-status-publishing',
+      published: 'ap-status-published',
+      failed: 'ap-status-failed',
+      retry: 'ap-status-retry',
+    };
+    return map[status] || 'ap-status-pending';
+  },
+
+  // ---- DOM 引用 ----
+  el: {
+    creatorsList: () => document.querySelector('#ap-creators-list'),
+    pipelineTbody: () => document.querySelector('#ap-pipeline-tbody'),
+    monitorList: () => document.querySelector('#ap-monitor-list'),
+    filterCreator: () => document.querySelector('#ap-filter-creator'),
+    filterStatus: () => document.querySelector('#ap-filter-status'),
+    refreshCreators: () => document.querySelector('#ap-refresh-creators'),
+    refreshPipeline: () => document.querySelector('#ap-refresh-pipeline'),
+    refreshMonitor: () => document.querySelector('#ap-refresh-monitor'),
+  },
+
+  // ---- 初始化 ----
+  init() {
+    if (!this._initialized) {
+      this._bindEvents();
+      this._initialized = true;
+    }
+    this.fetchCreators();
+    this.fetchPipelineTasks();
+    this.fetchProfiles();
+    this.fetchMonitorData();
+    this._startPolling();
+  },
+
+  _bindEvents() {
+    this.el.refreshCreators()?.addEventListener('click', () => this.fetchCreators());
+    this.el.refreshPipeline()?.addEventListener('click', () => this.fetchPipelineTasks());
+    this.el.refreshMonitor()?.addEventListener('click', () => this.fetchMonitorData());
+    this.el.filterCreator()?.addEventListener('change', (e) => {
+      this.filterCreator = e.target.value;
+      this.renderPipeline();
+    });
+    this.el.filterStatus()?.addEventListener('change', (e) => {
+      this.filterStatus = e.target.value;
+      this.renderPipeline();
+    });
+  },
+
+  _startPolling() {
+    if (this._pollTimer) clearInterval(this._pollTimer);
+    this._pollTimer = setInterval(() => {
+      // 仅在 auto-publish tab 可见时轮询
+      if (!document.querySelector('.auto-publish-tab')?.classList.contains('hidden')) {
+        this.fetchPipelineTasks({ quiet: true });
+      }
+    }, 10000);
+  },
+
+  // ---- 加载数据 ----
+  async fetchCreators() {
+    try {
+      // 获取所有已添加的达人（复用 remix 的 creator 列表）
+      const data = await request('/api/remix/creators');
+      const allCreators = Array.isArray(data) ? data : [];
+      // 为每个达人获取自动发布配置
+      const enriched = await Promise.all(
+        allCreators.map(async (c) => {
+          try {
+            const cfg = await request(`/api/auto-publish/config/${encodeURIComponent(c.id)}`);
+            return { ...c, autoPublishConfig: cfg || {} };
+          } catch {
+            // 后端可能尚未实现，返回默认配置
+            return {
+              ...c,
+              autoPublishConfig: {
+                enabled: 0,
+                preset: 'stitch',
+                dailyLimit: 3,
+                monitorInterval: 360,
+              },
+            };
+          }
+        })
+      );
+      this.creators = enriched;
+      this.renderCreators();
+      this._updateFilterOptions();
+    } catch (e) {
+      this.creators = [];
+      this.renderCreators();
+      if (this.el.creatorsList()) {
+        this.el.creatorsList().innerHTML = `<div class="empty-state compact" style="padding:16px;">加载失败：${escapeHtml(e.message)}</div>`;
+      }
+    }
+  },
+
+  async fetchPipelineTasks(opts = {}) {
+    const { quiet = false } = opts;
+    try {
+      const params = new URLSearchParams();
+      if (this.filterCreator) params.set('creatorId', this.filterCreator);
+      if (this.filterStatus) params.set('status', this.filterStatus);
+      params.set('limit', '100');
+      const data = await request(`/api/auto-publish/pipeline?${params}`);
+      this.pipelineTasks = Array.isArray(data) ? data : (data?.tasks || []);
+      this.renderPipeline();
+    } catch (e) {
+      if (!quiet) {
+        this.pipelineTasks = [];
+        this.renderPipeline();
+      }
+    }
+  },
+
+  async fetchProfiles() {
+    try {
+      const res = await request('/api/profiles');
+      this.profiles = res.profiles || [];
+    } catch {
+      this.profiles = [];
+    }
+  },
+
+  async fetchMonitorData() {
+    try {
+      // 获取所有 enabled 的达人监控状态
+      const data = await request('/api/auto-publish/creators');
+      const enabledCreators = Array.isArray(data) ? data : [];
+      this.monitorData = enabledCreators;
+      this.renderMonitor();
+    } catch {
+      this.monitorData = [];
+      this.renderMonitor();
+    }
+  },
+
+  // ---- 达人配置操作 ----
+  async toggleAutoPublish(creatorId, enabled) {
+    try {
+      await request(`/api/auto-publish/config/${encodeURIComponent(creatorId)}`, {
+        method: 'PUT',
+        body: JSON.stringify({ enabled: enabled ? 1 : 0 }),
+      });
+      showToast(enabled ? '已开启自动发布' : '已关闭自动发布');
+      // 更新本地状态
+      const c = this.creators.find((x) => x.id === creatorId);
+      if (c) c.autoPublishConfig.enabled = enabled ? 1 : 0;
+    } catch (e) {
+      showToast(`切换失败: ${e.message}`, true);
+      // 回滚开关
+      const c = this.creators.find((x) => x.id === creatorId);
+      if (c) c.autoPublishConfig.enabled = enabled ? 0 : 1;
+      this.renderCreators();
+    }
+  },
+
+  async saveCreatorConfig(creatorId, config) {
+    try {
+      await request(`/api/auto-publish/config/${encodeURIComponent(creatorId)}`, {
+        method: 'PUT',
+        body: JSON.stringify(config),
+      });
+      showToast('配置已保存');
+      const c = this.creators.find((x) => x.id === creatorId);
+      if (c) Object.assign(c.autoPublishConfig, config);
+    } catch (e) {
+      showToast(`保存失败: ${e.message}`, true);
+    }
+  },
+
+  // ---- 实例绑定操作 ----
+  async addProfileBinding(creatorId, profileId, dailyLimit) {
+    try {
+      await request('/api/auto-publish/bindings', {
+        method: 'POST',
+        body: JSON.stringify({ creatorId, profileId, dailyLimit }),
+      });
+      showToast('实例绑定成功');
+      await this.fetchBindings(creatorId);
+    } catch (e) {
+      showToast(`绑定失败: ${e.message}`, true);
+    }
+  },
+
+  async removeProfileBinding(bindingId, creatorId) {
+    if (!confirm('确认删除此实例绑定？')) return;
+    try {
+      await request(`/api/auto-publish/bindings/${encodeURIComponent(bindingId)}`, {
+        method: 'DELETE',
+      });
+      showToast('已删除绑定');
+      await this.fetchBindings(creatorId);
+    } catch (e) {
+      showToast(`删除失败: ${e.message}`, true);
+    }
+  },
+
+  async fetchBindings(creatorId) {
+    try {
+      const data = await request(`/api/auto-publish/bindings/${encodeURIComponent(creatorId)}`);
+      const bindings = Array.isArray(data) ? data : (data?.bindings || []);
+      const c = this.creators.find((x) => x.id === creatorId);
+      if (c) {
+        c.bindings = bindings;
+        this.renderCreatorBody(creatorId);
+      }
+      return bindings;
+    } catch {
+      return [];
+    }
+  },
+
+  // ---- 流水线操作 ----
+  async retryPipelineTask(taskId) {
+    try {
+      await request(`/api/auto-publish/pipeline/retry/${encodeURIComponent(taskId)}`, {
+        method: 'POST',
+      });
+      showToast('已提交重试');
+      await this.fetchPipelineTasks({ quiet: true });
+    } catch (e) {
+      showToast(`重试失败: ${e.message}`, true);
+    }
+  },
+
+  // ---- 手动触发监控 ----
+  async triggerMonitor(creatorId) {
+    try {
+      showToast('正在触发监控…');
+      await request(`/api/auto-publish/monitor/${encodeURIComponent(creatorId)}`, {
+        method: 'POST',
+      });
+      showToast('监控已触发');
+      await this.fetchMonitorData();
+    } catch (e) {
+      showToast(`监控触发失败: ${e.message}`, true);
+    }
+  },
+
+  // ---- 渲染：达人列表 ----
+  renderCreators() {
+    const container = this.el.creatorsList();
+    if (!container) return;
+    if (!this.creators.length) {
+      container.innerHTML = '<div class="empty-state compact" style="padding:16px;">暂无达人，请先在「视频混剪」中添加</div>';
+      return;
+    }
+    container.innerHTML = this.creators.map((c) => {
+      const cfg = c.autoPublishConfig || {};
+      const enabled = cfg.enabled === 1 || cfg.enabled === true;
+      const expanded = this.expandedCreatorId === c.id;
+      return `
+        <div class="ap-creator-card" data-creator-id="${escapeHtml(c.id)}">
+          <div class="ap-creator-header ${expanded ? 'expanded' : ''}" data-toggle="${escapeHtml(c.id)}">
+            <span class="ap-creator-toggle ${expanded ? 'expanded' : ''}">▶</span>
+            <div class="ap-creator-info">
+              <strong>${escapeHtml(c.name)}</strong>
+              <span class="ap-creator-platform">${escapeHtml(c.platform || '—')}</span>
+            </div>
+            <label class="ap-switch ap-creator-enabled" data-stop-prop>
+              <input type="checkbox" data-enabled="${escapeHtml(c.id)}" ${enabled ? 'checked' : ''} />
+              <span class="ap-switch-slider"></span>
+            </label>
+          </div>
+          ${expanded ? this._renderCreatorBodyHtml(c) : ''}
+        </div>
+      `;
+    }).join('');
+
+    // 绑定事件
+    container.querySelectorAll('[data-toggle]').forEach((header) => {
+      header.addEventListener('click', (e) => {
+        if (e.target.closest('[data-stop-prop]')) return;
+        const id = header.dataset.toggle;
+        this.expandedCreatorId = this.expandedCreatorId === id ? null : id;
+        if (this.expandedCreatorId) this.fetchBindings(this.expandedCreatorId);
+        this.renderCreators();
+      });
+    });
+
+    container.querySelectorAll('[data-enabled]').forEach((sw) => {
+      sw.addEventListener('change', (e) => {
+        e.stopPropagation();
+        this.toggleAutoPublish(sw.dataset.enabled, sw.checked);
+      });
+    });
+
+    // 绑定配置变更事件
+    container.querySelectorAll('[data-config-preset]').forEach((sel) => {
+      sel.addEventListener('change', () => {
+        this.saveCreatorConfig(sel.dataset.configPreset, { preset: sel.value });
+      });
+    });
+    container.querySelectorAll('[data-config-daily]').forEach((inp) => {
+      inp.addEventListener('change', () => {
+        const val = parseInt(inp.value, 10) || 0;
+        this.saveCreatorConfig(inp.dataset.configDaily, { dailyLimit: val });
+      });
+    });
+    container.querySelectorAll('[data-config-interval]').forEach((inp) => {
+      inp.addEventListener('change', () => {
+        const val = parseInt(inp.value, 10) || 0;
+        this.saveCreatorConfig(inp.dataset.configInterval, { monitorInterval: val });
+      });
+    });
+
+    // 绑定实例操作
+    container.querySelectorAll('[data-bind-btn]').forEach((btn) => {
+      btn.addEventListener('click', () => this._showBindingForm(btn.dataset.bindBtn));
+    });
+    container.querySelectorAll('[data-bind-confirm]').forEach((btn) => {
+      btn.addEventListener('click', () => this._confirmBinding(btn.dataset.bindConfirm));
+    });
+    container.querySelectorAll('[data-bind-cancel]').forEach((btn) => {
+      btn.addEventListener('click', () => this._hideBindingForm(btn.dataset.bindCancel));
+    });
+    container.querySelectorAll('[data-del-binding]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        this.removeProfileBinding(btn.dataset.delBinding, btn.dataset.creatorId);
+      });
+    });
+    container.querySelectorAll('[data-monitor-trigger]').forEach((btn) => {
+      btn.addEventListener('click', () => this.triggerMonitor(btn.dataset.monitorTrigger));
+    });
+  },
+
+  _renderCreatorBodyHtml(c) {
+    const cfg = c.autoPublishConfig || {};
+    const bindings = c.bindings || [];
+    const presetOptions = this.presets
+      .map((p) => `<option value="${p.value}" ${cfg.preset === p.value ? 'selected' : ''}>${escapeHtml(p.label)}</option>`)
+      .join('');
+    const bindingsHtml = bindings.length
+      ? bindings.map((b) => {
+          const prof = this.profiles.find((p) => p.id === b.profileId);
+          const seq = prof?.seq ?? '?';
+          const name = prof?.name || b.profileId;
+          return `
+            <div class="ap-binding-item">
+              <span class="ap-binding-seq">#${escapeHtml(String(seq))}</span>
+              <span class="ap-binding-name">${escapeHtml(name)}</span>
+              <span class="ap-binding-limit">${escapeHtml(String(b.dailyLimit || 0))}条/日</span>
+              <button class="ap-binding-del" data-del-binding="${escapeHtml(b.id)}" data-creator-id="${escapeHtml(c.id)}" title="删除">×</button>
+            </div>
+          `;
+        }).join('')
+      : '<div style="font-size:11px;color:var(--text-muted,#94a3b8);padding:4px 0;">暂未绑定实例</div>';
+
+    return `
+      <div class="ap-creator-body" data-body="${escapeHtml(c.id)}">
+        <div class="ap-config-row">
+          <span class="ap-config-label">混剪方案</span>
+          <div class="ap-config-value">
+            <select data-config-preset="${escapeHtml(c.id)}">${presetOptions}</select>
+          </div>
+        </div>
+        <div class="ap-config-row">
+          <span class="ap-config-label">每实例每日发布</span>
+          <div class="ap-config-value">
+            <input type="number" min="0" max="50" value="${escapeHtml(String(cfg.dailyLimit ?? 3))}" data-config-daily="${escapeHtml(c.id)}" style="width:60px;" /> 条
+          </div>
+        </div>
+        <div class="ap-config-row">
+          <span class="ap-config-label">监控间隔</span>
+          <div class="ap-config-value">
+            <input type="number" min="60" max="86400" value="${escapeHtml(String(cfg.monitorInterval ?? 360))}" data-config-interval="${escapeHtml(c.id)}" style="width:70px;" /> 秒
+          </div>
+        </div>
+        <div class="ap-bindings-area">
+          <div class="ap-bindings-head">
+            <span>绑定的指纹浏览器实例 (${bindings.length})</span>
+            <button class="button button-secondary" type="button" data-bind-btn="${escapeHtml(c.id)}" style="font-size:11px;padding:2px 10px;">+ 绑定</button>
+          </div>
+          <div class="ap-binding-form hidden" data-bind-form="${escapeHtml(c.id)}">
+            <select data-bind-select="${escapeHtml(c.id)}" style="flex:1;">
+              <option value="">选择实例…</option>
+            </select>
+            <input type="number" min="1" max="50" value="3" data-bind-limit="${escapeHtml(c.id)}" style="width:50px;" title="每日发布条数" />
+            <button class="button button-primary" type="button" data-bind-confirm="${escapeHtml(c.id)}" style="font-size:11px;padding:2px 10px;">确认</button>
+            <button class="button button-secondary" type="button" data-bind-cancel="${escapeHtml(c.id)}" style="font-size:11px;padding:2px 10px;">取消</button>
+          </div>
+          ${bindingsHtml}
+        </div>
+        <div class="ap-config-row">
+          <span class="ap-config-label">手动操作</span>
+          <button class="button button-secondary" type="button" data-monitor-trigger="${escapeHtml(c.id)}" style="font-size:11px;padding:2px 10px;">立即监控</button>
+        </div>
+      </div>
+    `;
+  },
+
+  // 刷新某个达人展开区（绑定列表更新后）
+  renderCreatorBody(creatorId) {
+    const c = this.creators.find((x) => x.id === creatorId);
+    if (!c) return;
+    const bodyEl = document.querySelector(`[data-body="${CSS.escape(creatorId)}"]`);
+    if (bodyEl) {
+      const parent = bodyEl.parentElement;
+      parent.innerHTML = this._renderCreatorBodyHtml(c);
+      // 重新绑定该卡片内的事件
+      this._bindCardEvents(parent);
+    }
+  },
+
+  _bindCardEvents(scope) {
+    scope.querySelectorAll('[data-config-preset]').forEach((sel) => {
+      sel.addEventListener('change', () => this.saveCreatorConfig(sel.dataset.configPreset, { preset: sel.value }));
+    });
+    scope.querySelectorAll('[data-config-daily]').forEach((inp) => {
+      inp.addEventListener('change', () => {
+        const val = parseInt(inp.value, 10) || 0;
+        this.saveCreatorConfig(inp.dataset.configDaily, { dailyLimit: val });
+      });
+    });
+    scope.querySelectorAll('[data-config-interval]').forEach((inp) => {
+      inp.addEventListener('change', () => {
+        const val = parseInt(inp.value, 10) || 0;
+        this.saveCreatorConfig(inp.dataset.configInterval, { monitorInterval: val });
+      });
+    });
+    scope.querySelectorAll('[data-bind-btn]').forEach((btn) => {
+      btn.addEventListener('click', () => this._showBindingForm(btn.dataset.bindBtn));
+    });
+    scope.querySelectorAll('[data-bind-confirm]').forEach((btn) => {
+      btn.addEventListener('click', () => this._confirmBinding(btn.dataset.bindConfirm));
+    });
+    scope.querySelectorAll('[data-bind-cancel]').forEach((btn) => {
+      btn.addEventListener('click', () => this._hideBindingForm(btn.dataset.bindCancel));
+    });
+    scope.querySelectorAll('[data-del-binding]').forEach((btn) => {
+      btn.addEventListener('click', () => this.removeProfileBinding(btn.dataset.delBinding, btn.dataset.creatorId));
+    });
+    scope.querySelectorAll('[data-monitor-trigger]').forEach((btn) => {
+      btn.addEventListener('click', () => this.triggerMonitor(btn.dataset.monitorTrigger));
+    });
+  },
+
+  _showBindingForm(creatorId) {
+    const form = document.querySelector(`[data-bind-form="${CSS.escape(creatorId)}"]`);
+    if (!form) return;
+    form.classList.remove('hidden');
+    const select = form.querySelector(`[data-bind-select="${CSS.escape(creatorId)}"]`);
+    const c = this.creators.find((x) => x.id === creatorId);
+    const boundIds = new Set((c?.bindings || []).map((b) => b.profileId));
+    const available = this.profiles.filter((p) => !boundIds.has(p.id));
+    if (!available.length) {
+      select.innerHTML = '<option value="">无可用实例</option>';
+    } else {
+      select.innerHTML = available
+        .map((p) => `<option value="${escapeHtml(p.id)}">#${escapeHtml(String(p.seq))} ${escapeHtml(p.name)}</option>`)
+        .join('');
+    }
+  },
+
+  _hideBindingForm(creatorId) {
+    const form = document.querySelector(`[data-bind-form="${CSS.escape(creatorId)}"]`);
+    form?.classList.add('hidden');
+  },
+
+  _confirmBinding(creatorId) {
+    const form = document.querySelector(`[data-bind-form="${CSS.escape(creatorId)}"]`);
+    if (!form) return;
+    const profileId = form.querySelector(`[data-bind-select="${CSS.escape(creatorId)}"]`).value;
+    const dailyLimit = parseInt(form.querySelector(`[data-bind-limit="${CSS.escape(creatorId)}"]`).value, 10) || 3;
+    if (!profileId) {
+      showToast('请选择实例', true);
+      return;
+    }
+    this.addProfileBinding(creatorId, profileId, dailyLimit);
+    this._hideBindingForm(creatorId);
+  },
+
+  _updateFilterOptions() {
+    const sel = this.el.filterCreator();
+    if (!sel) return;
+    const current = this.filterCreator;
+    sel.innerHTML = '<option value="">全部达人</option>' +
+      this.creators.map((c) => `<option value="${escapeHtml(c.id)}" ${current === c.id ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('');
+  },
+
+  // ---- 渲染：流水线表格 ----
+  renderPipeline() {
+    const tbody = this.el.pipelineTbody();
+    if (!tbody) return;
+    if (!this.pipelineTasks.length) {
+      tbody.innerHTML = '<tr><td colspan="8" class="empty-state compact" style="padding:16px;">暂无流水线任务</td></tr>';
+      return;
+    }
+    tbody.innerHTML = this.pipelineTasks.map((t) => {
+      const creator = this.creators.find((c) => c.id === t.creatorId);
+      const creatorName = creator?.name || t.creatorName || t.creatorId || '—';
+      const remixStatus = t.remixStatus || t.status || 'pending';
+      const publishStatus = t.publishStatus || '—';
+      const targetProfile = t.profileName || t.targetProfile || '—';
+      const attempts = t.attempts ?? 0;
+      const maxAttempts = t.maxAttempts ?? 3;
+      const createdAt = t.createdAt ? formatDateTime(t.createdAt) : '—';
+      const isFailed = remixStatus === 'failed' || publishStatus === 'failed';
+      const failReason = t.failReason || t.error || '';
+      const canRetry = remixStatus === 'failed' || remixStatus === 'retry';
+
+      return `
+        <tr class="${isFailed ? 'failed-row' : ''}">
+          <td class="col-creator">${escapeHtml(creatorName)}</td>
+          <td class="col-source" title="${escapeHtml(t.sourceVideo || t.videoTitle || '')}">${escapeHtml(t.sourceVideo || t.videoTitle || '—')}</td>
+          <td>
+            <span class="ap-status-badge ${this.statusClass(remixStatus)}">${escapeHtml(remixStatus)}</span>
+            ${failReason && isFailed ? `<span class="ap-fail-reason">${escapeHtml(failReason)}</span>` : ''}
+          </td>
+          <td>
+            ${publishStatus !== '—' ? `<span class="ap-status-badge ${this.statusClass(publishStatus)}">${escapeHtml(publishStatus)}</span>` : '—'}
+          </td>
+          <td>${escapeHtml(targetProfile)}</td>
+          <td class="col-attempts">${attempts}/${maxAttempts}</td>
+          <td class="col-time">${escapeHtml(createdAt)}</td>
+          <td class="col-action">
+            ${canRetry ? `<button class="button button-secondary" type="button" data-retry="${escapeHtml(t.id)}" style="font-size:11px;padding:2px 10px;">重试</button>` : ''}
+          </td>
+        </tr>
+      `;
+    }).join('');
+
+    // 绑定重试按钮
+    tbody.querySelectorAll('[data-retry]').forEach((btn) => {
+      btn.addEventListener('click', () => this.retryPipelineTask(btn.dataset.retry));
+    });
+  },
+
+  // ---- 渲染：监控状态 ----
+  renderMonitor() {
+    const container = this.el.monitorList();
+    if (!container) return;
+    if (!this.monitorData.length) {
+      container.innerHTML = '<div class="empty-state compact" style="padding:12px;">暂无监控数据</div>';
+      return;
+    }
+    container.innerHTML = this.monitorData.map((m) => {
+      const lastMonitor = m.lastMonitorAt ? formatDateTime(m.lastMonitorAt) : '从未监控';
+      const newCount = m.newVideoCount ?? 0;
+      const hasNew = newCount > 0;
+      return `
+        <div class="ap-monitor-item">
+          <span class="ap-monitor-name">${escapeHtml(m.name || m.creatorName || '—')}</span>
+          <span class="ap-monitor-time">${escapeHtml(lastMonitor)}</span>
+          <span class="ap-monitor-count ${hasNew ? 'has-new' : ''}">${hasNew ? `新发现 ${newCount}` : '无新视频'}</span>
+        </div>
+      `;
+    }).join('');
+  },
+};

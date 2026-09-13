@@ -80,6 +80,12 @@
           </svg>
           Chrome CDP
         </button>
+        <button class="platform-tab" data-platform="auto-publish" role="tab" aria-selected="false" type="button">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 6px; vertical-align: -2px;">
+            <path d="M12 2v20M2 12h20" />
+          </svg>
+          自动发布
+        </button>
       </nav>
 
       <!-- Scheduler / Automation Rotation Panel (独立 Tab) -->
@@ -1530,6 +1536,78 @@
                 </div>
               </div>
               <div id="mx-videos-list" class="matrix-videos-list"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ======================== 自动发布面板 ======================== -->
+      <section class="auto-publish-panel auto-publish-tab hidden">
+        <div class="ap-layout">
+          <!-- ========== 左栏：达人配置 ========== -->
+          <aside class="ap-creators-col">
+            <div class="ap-section-head">
+              <h3>达人自动发布配置</h3>
+              <button id="ap-refresh-creators" class="link-btn" type="button">刷新</button>
+            </div>
+            <div id="ap-creators-list" class="ap-creators-list">
+              <div class="empty-state compact" style="padding:16px;">加载中…</div>
+            </div>
+          </aside>
+
+          <!-- ========== 右栏：流水线看板 + 监控 ========== -->
+          <div class="ap-main-col">
+            <!-- 视频监控状态 -->
+            <div class="ap-monitor-section">
+              <div class="ap-section-head">
+                <h3>视频监控状态</h3>
+                <button id="ap-refresh-monitor" class="link-btn" type="button">刷新</button>
+              </div>
+              <div id="ap-monitor-list" class="ap-monitor-list">
+                <div class="empty-state compact" style="padding:12px;">暂无监控数据</div>
+              </div>
+            </div>
+
+            <!-- 流水线状态看板 -->
+            <div class="ap-pipeline-section">
+              <div class="ap-section-head">
+                <h3>流水线任务看板</h3>
+                <div style="display:flex;gap:8px;align-items:center;">
+                  <select id="ap-filter-creator" class="ap-filter-select">
+                    <option value="">全部达人</option>
+                  </select>
+                  <select id="ap-filter-status" class="ap-filter-select">
+                    <option value="">全部状态</option>
+                    <option value="pending">pending</option>
+                    <option value="remixing">remixing</option>
+                    <option value="remixed">remixed</option>
+                    <option value="publishing">publishing</option>
+                    <option value="published">published</option>
+                    <option value="failed">failed</option>
+                    <option value="retry">retry</option>
+                  </select>
+                  <button id="ap-refresh-pipeline" class="link-btn" type="button">刷新</button>
+                </div>
+              </div>
+              <div class="ap-table-wrap">
+                <table class="ap-table">
+                  <thead>
+                    <tr>
+                      <th>达人</th>
+                      <th>源视频</th>
+                      <th>混剪状态</th>
+                      <th>发布状态</th>
+                      <th>目标实例</th>
+                      <th>尝试</th>
+                      <th>创建时间</th>
+                      <th>操作</th>
+                    </tr>
+                  </thead>
+                  <tbody id="ap-pipeline-tbody">
+                    <tr><td colspan="8" class="empty-state compact" style="padding:16px;">加载中…</td></tr>
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
         </div>

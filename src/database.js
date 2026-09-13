@@ -397,6 +397,67 @@ export class LocalDatabase {
       );
 
       CREATE INDEX IF NOT EXISTS idx_cdp_logs_instance ON cdp_logs(instance_id, created_at DESC);
+
+      -- 达人自动发布配置
+      CREATE TABLE IF NOT EXISTS creator_auto_publish_config (
+        creator_id TEXT PRIMARY KEY,
+        enabled INTEGER DEFAULT 0,
+        preset_id TEXT,
+        daily_limit_per_profile INTEGER DEFAULT 3,
+        monitor_interval_hours INTEGER DEFAULT 6,
+        last_monitor_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (creator_id) REFERENCES remix_creators(id) ON DELETE CASCADE
+      );
+
+      -- 达人绑定指纹浏览器实例
+      CREATE TABLE IF NOT EXISTS creator_profile_bindings (
+        id TEXT PRIMARY KEY,
+        creator_id TEXT NOT NULL,
+        profile_id TEXT NOT NULL,
+        daily_limit INTEGER DEFAULT 3,
+        last_publish_at TEXT,
+        enabled INTEGER DEFAULT 1,
+        created_at TEXT NOT NULL,
+        UNIQUE (creator_id, profile_id),
+        FOREIGN KEY (creator_id) REFERENCES remix_creators(id) ON DELETE CASCADE
+      );
+
+      -- 视频监控记录（记录达人已下载的视频，避免重复下载）
+      CREATE TABLE IF NOT EXISTS creator_video_monitor (
+        id TEXT PRIMARY KEY,
+        creator_id TEXT NOT NULL,
+        tiktok_url TEXT NOT NULL,
+        video_id TEXT,
+        downloaded INTEGER DEFAULT 0,
+        remix_video_id TEXT,
+        monitored_at TEXT NOT NULL,
+        UNIQUE (creator_id, tiktok_url),
+        FOREIGN KEY (creator_id) REFERENCES remix_creators(id) ON DELETE CASCADE
+      );
+
+      -- 自动混剪发布流水线
+      CREATE TABLE IF NOT EXISTS auto_remix_publish_pipeline (
+        id TEXT PRIMARY KEY,
+        creator_id TEXT NOT NULL,
+        source_video_id TEXT NOT NULL,
+        remix_task_id TEXT,
+        profile_id TEXT NOT NULL,
+        publish_job_id TEXT,
+        status TEXT DEFAULT 'pending',
+        fail_reason TEXT,
+        attempt_count INTEGER DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (creator_id) REFERENCES remix_creators(id) ON DELETE CASCADE
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_creator_auto_publish_config_enabled ON creator_auto_publish_config(enabled);
+      CREATE INDEX IF NOT EXISTS idx_creator_profile_bindings_creator ON creator_profile_bindings(creator_id);
+      CREATE INDEX IF NOT EXISTS idx_creator_video_monitor_creator ON creator_video_monitor(creator_id);
+      CREATE INDEX IF NOT EXISTS idx_auto_remix_publish_pipeline_status ON auto_remix_publish_pipeline(status);
+      CREATE INDEX IF NOT EXISTS idx_auto_remix_publish_pipeline_creator ON auto_remix_publish_pipeline(creator_id);
     `);
 
     this.#ensureColumn("cdp_logs", "task_id", "TEXT");
@@ -516,6 +577,33 @@ export class LocalDatabase {
     this.#ensureColumn("remix_videos", "file_size", "INTEGER DEFAULT 0");
     this.#ensureColumn("matrix_videos", "file_size", "INTEGER DEFAULT 0");
     this.#ensureColumn("matrix_videos", "duration", "REAL");
+
+    // 兼容新列：自动混剪发布流水线相关表
+    this.#ensureColumn("creator_auto_publish_config", "enabled", "INTEGER DEFAULT 0");
+    this.#ensureColumn("creator_auto_publish_config", "preset_id", "TEXT");
+    this.#ensureColumn("creator_auto_publish_config", "daily_limit_per_profile", "INTEGER DEFAULT 3");
+    this.#ensureColumn("creator_auto_publish_config", "monitor_interval_hours", "INTEGER DEFAULT 6");
+    this.#ensureColumn("creator_auto_publish_config", "last_monitor_at", "TEXT");
+    this.#ensureColumn("creator_auto_publish_config", "created_at", "TEXT NOT NULL DEFAULT ''");
+    this.#ensureColumn("creator_auto_publish_config", "updated_at", "TEXT NOT NULL DEFAULT ''");
+
+    this.#ensureColumn("creator_profile_bindings", "daily_limit", "INTEGER DEFAULT 3");
+    this.#ensureColumn("creator_profile_bindings", "last_publish_at", "TEXT");
+    this.#ensureColumn("creator_profile_bindings", "enabled", "INTEGER DEFAULT 1");
+    this.#ensureColumn("creator_profile_bindings", "created_at", "TEXT NOT NULL DEFAULT ''");
+
+    this.#ensureColumn("creator_video_monitor", "video_id", "TEXT");
+    this.#ensureColumn("creator_video_monitor", "downloaded", "INTEGER DEFAULT 0");
+    this.#ensureColumn("creator_video_monitor", "remix_video_id", "TEXT");
+    this.#ensureColumn("creator_video_monitor", "monitored_at", "TEXT NOT NULL DEFAULT ''");
+
+    this.#ensureColumn("auto_remix_publish_pipeline", "remix_task_id", "TEXT");
+    this.#ensureColumn("auto_remix_publish_pipeline", "publish_job_id", "TEXT");
+    this.#ensureColumn("auto_remix_publish_pipeline", "status", "TEXT DEFAULT 'pending'");
+    this.#ensureColumn("auto_remix_publish_pipeline", "fail_reason", "TEXT");
+    this.#ensureColumn("auto_remix_publish_pipeline", "attempt_count", "INTEGER DEFAULT 0");
+    this.#ensureColumn("auto_remix_publish_pipeline", "created_at", "TEXT NOT NULL DEFAULT ''");
+    this.#ensureColumn("auto_remix_publish_pipeline", "updated_at", "TEXT NOT NULL DEFAULT ''");
   }
 
   #ensureColumn(table, column, definition) {
@@ -1601,6 +1689,286 @@ export class LocalDatabase {
 
   deleteTkPublishJob(id) {
     return this.db.prepare(`DELETE FROM tk_publish_jobs WHERE id = ?`).run(id).changes;
+  }
+
+  // ===== 自动混剪发布流水线 =====
+
+  // --- creator_auto_publish_config ---
+  getAutoPublishConfig(creatorId) {
+    const row = this.db.prepare(`SELECT * FROM creator_auto_publish_config WHERE creator_id = ?`).get(creatorId);
+    if (!row) return null;
+    return {
+      creatorId: row.creator_id,
+      enabled: Boolean(row.enabled),
+      presetId: row.preset_id,
+      dailyLimitPerProfile: Number(row.daily_limit_per_profile || 3),
+      monitorIntervalHours: Number(row.monitor_interval_hours || 6),
+      lastMonitorAt: row.last_monitor_at,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  upsertAutoPublishConfig(creatorId, { enabled = null, presetId = null, dailyLimitPerProfile = null, monitorIntervalHours = null, lastMonitorAt = null } = {}) {
+    const ts = nowIso();
+    const existing = this.db.prepare(`SELECT creator_id FROM creator_auto_publish_config WHERE creator_id = ?`).get(creatorId);
+    if (existing) {
+      const sets = [];
+      const params = [];
+      if (enabled !== null) { sets.push("enabled = ?"); params.push(booleanInt(enabled)); }
+      if (presetId !== null) { sets.push("preset_id = ?"); params.push(presetId); }
+      if (dailyLimitPerProfile !== null) { sets.push("daily_limit_per_profile = ?"); params.push(dailyLimitPerProfile); }
+      if (monitorIntervalHours !== null) { sets.push("monitor_interval_hours = ?"); params.push(monitorIntervalHours); }
+      if (lastMonitorAt !== null) { sets.push("last_monitor_at = ?"); params.push(lastMonitorAt); }
+      sets.push("updated_at = ?"); params.push(ts);
+      params.push(creatorId);
+      this.db.prepare(`UPDATE creator_auto_publish_config SET ${sets.join(", ")} WHERE creator_id = ?`).run(...params);
+    } else {
+      this.db.prepare(`
+        INSERT INTO creator_auto_publish_config (creator_id, enabled, preset_id, daily_limit_per_profile, monitor_interval_hours, last_monitor_at, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        creatorId,
+        booleanInt(enabled ?? false),
+        presetId,
+        dailyLimitPerProfile ?? 3,
+        monitorIntervalHours ?? 6,
+        lastMonitorAt,
+        ts, ts
+      );
+    }
+    return this.getAutoPublishConfig(creatorId);
+  }
+
+  listAutoPublishCreators() {
+    const rows = this.db.prepare(`
+      SELECT c.*, cr.name AS creator_name, cr.platform AS creator_platform, cr.avatar AS creator_avatar
+      FROM creator_auto_publish_config c
+      LEFT JOIN remix_creators cr ON c.creator_id = cr.id
+      WHERE c.enabled = 1
+      ORDER BY c.updated_at DESC
+    `).all();
+    return rows.map(row => ({
+      creatorId: row.creator_id,
+      creatorName: row.creator_name,
+      creatorPlatform: row.creator_platform,
+      creatorAvatar: row.creator_avatar,
+      enabled: Boolean(row.enabled),
+      presetId: row.preset_id,
+      dailyLimitPerProfile: Number(row.daily_limit_per_profile || 3),
+      monitorIntervalHours: Number(row.monitor_interval_hours || 6),
+      lastMonitorAt: row.last_monitor_at,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    }));
+  }
+
+  // --- creator_profile_bindings ---
+  listProfileBindings(creatorId) {
+    const rows = this.db.prepare(`SELECT * FROM creator_profile_bindings WHERE creator_id = ? ORDER BY created_at ASC`).all(creatorId);
+    return rows.map(row => ({
+      id: row.id,
+      creatorId: row.creator_id,
+      profileId: row.profile_id,
+      dailyLimit: Number(row.daily_limit || 3),
+      lastPublishAt: row.last_publish_at,
+      enabled: Boolean(row.enabled),
+      createdAt: row.created_at,
+    }));
+  }
+
+  addProfileBinding(creatorId, profileId, dailyLimit = 3) {
+    const id = `pb_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const ts = nowIso();
+    this.db.prepare(`
+      INSERT INTO creator_profile_bindings (id, creator_id, profile_id, daily_limit, enabled, created_at)
+      VALUES (?, ?, ?, ?, 1, ?)
+    `).run(id, creatorId, profileId, dailyLimit, ts);
+    const row = this.db.prepare(`SELECT * FROM creator_profile_bindings WHERE id = ?`).get(id);
+    return {
+      id: row.id,
+      creatorId: row.creator_id,
+      profileId: row.profile_id,
+      dailyLimit: Number(row.daily_limit || 3),
+      lastPublishAt: row.last_publish_at,
+      enabled: Boolean(row.enabled),
+      createdAt: row.created_at,
+    };
+  }
+
+  removeProfileBinding(id) {
+    return this.db.prepare(`DELETE FROM creator_profile_bindings WHERE id = ?`).run(id).changes;
+  }
+
+  updateProfileBinding(id, { dailyLimit = null, enabled = null, lastPublishAt = null } = {}) {
+    const sets = [];
+    const params = [];
+    if (dailyLimit !== null) { sets.push("daily_limit = ?"); params.push(dailyLimit); }
+    if (enabled !== null) { sets.push("enabled = ?"); params.push(booleanInt(enabled)); }
+    if (lastPublishAt !== null) { sets.push("last_publish_at = ?"); params.push(lastPublishAt); }
+    if (!sets.length) return null;
+    params.push(id);
+    this.db.prepare(`UPDATE creator_profile_bindings SET ${sets.join(", ")} WHERE id = ?`).run(...params);
+    const row = this.db.prepare(`SELECT * FROM creator_profile_bindings WHERE id = ?`).get(id);
+    if (!row) return null;
+    return {
+      id: row.id,
+      creatorId: row.creator_id,
+      profileId: row.profile_id,
+      dailyLimit: Number(row.daily_limit || 3),
+      lastPublishAt: row.last_publish_at,
+      enabled: Boolean(row.enabled),
+      createdAt: row.created_at,
+    };
+  }
+
+  // --- creator_video_monitor ---
+  listMonitoredVideos(creatorId) {
+    const rows = this.db.prepare(`SELECT * FROM creator_video_monitor WHERE creator_id = ? ORDER BY monitored_at DESC`).all(creatorId);
+    return rows.map(row => ({
+      id: row.id,
+      creatorId: row.creator_id,
+      tiktokUrl: row.tiktok_url,
+      videoId: row.video_id,
+      downloaded: Boolean(row.downloaded),
+      remixVideoId: row.remix_video_id,
+      monitoredAt: row.monitored_at,
+    }));
+  }
+
+  addMonitoredVideo(creatorId, tiktokUrl, videoId = null) {
+    const id = `vm_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const ts = nowIso();
+    this.db.prepare(`
+      INSERT INTO creator_video_monitor (id, creator_id, tiktok_url, video_id, downloaded, monitored_at)
+      VALUES (?, ?, ?, ?, 0, ?)
+      ON CONFLICT(creator_id, tiktok_url) DO UPDATE SET video_id = COALESCE(excluded.video_id, video_id)
+    `).run(id, creatorId, tiktokUrl, videoId, ts);
+    const row = this.db.prepare(`SELECT * FROM creator_video_monitor WHERE creator_id = ? AND tiktok_url = ?`).get(creatorId, tiktokUrl);
+    return {
+      id: row.id,
+      creatorId: row.creator_id,
+      tiktokUrl: row.tiktok_url,
+      videoId: row.video_id,
+      downloaded: Boolean(row.downloaded),
+      remixVideoId: row.remix_video_id,
+      monitoredAt: row.monitored_at,
+    };
+  }
+
+  markMonitoredVideoDownloaded(tiktokUrl, remixVideoId) {
+    this.db.prepare(`
+      UPDATE creator_video_monitor
+      SET downloaded = 1, remix_video_id = ?
+      WHERE tiktok_url = ?
+    `).run(remixVideoId, tiktokUrl);
+    const row = this.db.prepare(`SELECT * FROM creator_video_monitor WHERE tiktok_url = ?`).get(tiktokUrl);
+    if (!row) return null;
+    return {
+      id: row.id,
+      creatorId: row.creator_id,
+      tiktokUrl: row.tiktok_url,
+      videoId: row.video_id,
+      downloaded: Boolean(row.downloaded),
+      remixVideoId: row.remix_video_id,
+      monitoredAt: row.monitored_at,
+    };
+  }
+
+  isVideoMonitored(creatorId, tiktokUrl) {
+    const row = this.db.prepare(`SELECT 1 FROM creator_video_monitor WHERE creator_id = ? AND tiktok_url = ?`).get(creatorId, tiktokUrl);
+    return Boolean(row);
+  }
+
+  // --- auto_remix_publish_pipeline ---
+  createPipelineTask(data) {
+    const id = `pl_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const ts = nowIso();
+    this.db.prepare(`
+      INSERT INTO auto_remix_publish_pipeline (id, creator_id, source_video_id, remix_task_id, profile_id, publish_job_id, status, fail_reason, attempt_count, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      id,
+      data.creatorId,
+      data.sourceVideoId,
+      data.remixTaskId || null,
+      data.profileId,
+      data.publishJobId || null,
+      data.status || 'pending',
+      data.failReason || null,
+      data.attemptCount || 0,
+      ts, ts
+    );
+    return this.getPipelineTask(id);
+  }
+
+  getPipelineTask(id) {
+    const row = this.db.prepare(`
+      SELECT p.*, c.name AS creator_name
+      FROM auto_remix_publish_pipeline p
+      LEFT JOIN remix_creators c ON p.creator_id = c.id
+      WHERE p.id = ?
+    `).get(id);
+    if (!row) return null;
+    return {
+      id: row.id,
+      creatorId: row.creator_id,
+      creatorName: row.creator_name,
+      sourceVideoId: row.source_video_id,
+      remixTaskId: row.remix_task_id,
+      profileId: row.profile_id,
+      publishJobId: row.publish_job_id,
+      status: row.status,
+      failReason: row.fail_reason,
+      attemptCount: Number(row.attempt_count || 0),
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  listPipelineTasks({ creatorId = null, status = null, profileId = null, limit = 100 } = {}) {
+    const where = [];
+    const params = [];
+    if (creatorId) { where.push("p.creator_id = ?"); params.push(creatorId); }
+    if (status) { where.push("p.status = ?"); params.push(status); }
+    if (profileId) { where.push("p.profile_id = ?"); params.push(profileId); }
+    const clause = where.length ? `WHERE ${where.join(" AND ")}` : "";
+    const rows = this.db.prepare(`
+      SELECT p.*, c.name AS creator_name
+      FROM auto_remix_publish_pipeline p
+      LEFT JOIN remix_creators c ON p.creator_id = c.id
+      ${clause}
+      ORDER BY p.created_at DESC
+      LIMIT ?
+    `).all(...params, Math.min(Number(limit) || 100, 500));
+    return rows.map(row => ({
+      id: row.id,
+      creatorId: row.creator_id,
+      creatorName: row.creator_name,
+      sourceVideoId: row.source_video_id,
+      remixTaskId: row.remix_task_id,
+      profileId: row.profile_id,
+      publishJobId: row.publish_job_id,
+      status: row.status,
+      failReason: row.fail_reason,
+      attemptCount: Number(row.attempt_count || 0),
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    }));
+  }
+
+  updatePipelineTask(id, { status = null, remixTaskId = null, publishJobId = null, failReason = null, attemptCount = null, updatedAt = null } = {}) {
+    const sets = [];
+    const params = [];
+    if (status !== null) { sets.push("status = ?"); params.push(status); }
+    if (remixTaskId !== null) { sets.push("remix_task_id = ?"); params.push(remixTaskId); }
+    if (publishJobId !== null) { sets.push("publish_job_id = ?"); params.push(publishJobId); }
+    if (failReason !== null) { sets.push("fail_reason = ?"); params.push(failReason); }
+    if (attemptCount !== null) { sets.push("attempt_count = ?"); params.push(attemptCount); }
+    sets.push("updated_at = ?"); params.push(updatedAt || nowIso());
+    params.push(id);
+    this.db.prepare(`UPDATE auto_remix_publish_pipeline SET ${sets.join(", ")} WHERE id = ?`).run(...params);
+    return this.getPipelineTask(id);
   }
 
   // --- Remix 达人管理 ---
