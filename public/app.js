@@ -3952,6 +3952,259 @@ document.querySelector("#remix-workspace-close")?.addEventListener("click", () =
   document.querySelector("#remix-workspace-modal")?.classList.add("hidden");
 });
 
+// ── TikTok 无水印高清下载功能 ──
+const tiktokDl = {
+  modal: document.querySelector("#tiktok-download-modal"),
+  closeBtn: document.querySelector("#tiktok-download-close"),
+  openBtn: document.querySelector("#remix-tiktok-download-btn"),
+  urlInput: document.querySelector("#tiktok-url-input"),
+  parseBtn: document.querySelector("#tiktok-parse-btn"),
+  clearBtn: document.querySelector("#tiktok-clear-btn"),
+  progress: document.querySelector("#tiktok-progress"),
+  progressText: document.querySelector("#tiktok-progress-text"),
+  videoList: document.querySelector("#tiktok-video-list"),
+  videoGrid: document.querySelector("#tiktok-video-grid"),
+  videoCount: document.querySelector("#tiktok-video-count"),
+  selectAll: document.querySelector("#tiktok-select-all"),
+  batchBtn: document.querySelector("#tiktok-batch-download-btn"),
+  results: document.querySelector("#tiktok-results"),
+  resultsList: document.querySelector("#tiktok-results-list"),
+  parsedVideos: [],
+  selectedVideos: new Set(),
+};
+
+function showTiktokProgress(text) {
+  if (!tiktokDl.progress) return;
+  tiktokDl.progress.style.display = "block";
+  tiktokDl.progressText.textContent = text;
+}
+
+function hideTiktokProgress() {
+  if (tiktokDl.progress) tiktokDl.progress.style.display = "none";
+}
+
+function isProfileUrl(url) {
+  return /^https?:\/\/(?:www\.)?tiktok\.com\/@([^/]+)\/?$/i.test(url.trim());
+}
+
+function isVideoUrl(url) {
+  const u = url.trim();
+  return /^https?:\/\/(?:www\.)?tiktok\.com\/@[^/]+\/video\/\d+/i.test(u) ||
+    /^https?:\/\/(vm|vt)\.tiktok\.com\//i.test(u) ||
+    /^https?:\/\/(?:www\.)?tiktok\.com\/t\//i.test(u);
+}
+
+function formatTkDuration(sec) {
+  if (!sec) return "";
+  const m = Math.floor(sec / 60);
+  const s = Math.round(sec % 60);
+  return m > 0 ? `${m}:${String(s).padStart(2, "0")}` : `${s}s`;
+}
+
+// 打开弹窗
+tiktokDl.openBtn?.addEventListener("click", () => {
+  tiktokDl.modal?.classList.remove("hidden");
+  tiktokDl.urlInput.value = "";
+  tiktokDl.videoList.style.display = "none";
+  tiktokDl.results.style.display = "none";
+  hideTiktokProgress();
+  tiktokDl.parsedVideos = [];
+  tiktokDl.selectedVideos.clear();
+});
+
+// 关闭弹窗
+tiktokDl.closeBtn?.addEventListener("click", () => {
+  tiktokDl.modal?.classList.add("hidden");
+});
+
+// 清空
+tiktokDl.clearBtn?.addEventListener("click", () => {
+  tiktokDl.urlInput.value = "";
+  tiktokDl.videoList.style.display = "none";
+  tiktokDl.results.style.display = "none";
+  hideTiktokProgress();
+  tiktokDl.parsedVideos = [];
+  tiktokDl.selectedVideos.clear();
+});
+
+// 解析链接
+tiktokDl.parseBtn?.addEventListener("click", async () => {
+  const text = tiktokDl.urlInput.value.trim();
+  if (!text) { showToast("请粘贴链接", true); return; }
+
+  const lines = text.split(/\n/).map((l) => l.trim()).filter(Boolean);
+  const profileUrls = lines.filter((l) => isProfileUrl(l));
+  const videoUrls = lines.filter((l) => isVideoUrl(l));
+
+  if (profileUrls.length && videoUrls.length) {
+    showToast("请分开处理主页链接和视频链接", true);
+    return;
+  }
+
+  // 如果是视频链接，直接批量下载
+  if (videoUrls.length) {
+    await tiktokBatchDownload(videoUrls);
+    return;
+  }
+
+  // 如果是主页链接，解析视频列表
+  if (profileUrls.length) {
+    showTiktokProgress(`正在解析主页: ${profileUrls[0]}...`);
+    tiktokDl.videoList.style.display = "none";
+    tiktokDl.results.style.display = "none";
+    try {
+      const data = await request("/api/tiktok/parse-profile", {
+        method: "POST",
+        body: JSON.stringify({ url: profileUrls[0] }),
+      });
+      hideTiktokProgress();
+      if (!data.videos || !data.videos.length) {
+        showToast("未找到视频", true);
+        return;
+      }
+      tiktokDl.parsedVideos = data.videos;
+      tiktokDl.selectedVideos.clear();
+      renderTiktokVideoList(data.videos, data.username);
+      showToast(`解析到 ${data.videos.length} 个视频`);
+    } catch (e) {
+      hideTiktokProgress();
+      showToast(`解析失败: ${e.message}`, true);
+    }
+    return;
+  }
+
+  showToast("未识别到有效的 TikTok 链接", true);
+});
+
+// 渲染视频列表
+function renderTiktokVideoList(videos, username) {
+  tiktokDl.videoList.style.display = "block";
+  tiktokDl.videoCount.textContent = `@${username || "unknown"} · ${videos.length} 个视频`;
+  tiktokDl.selectAll.checked = false;
+  tiktokDl.batchBtn.disabled = true;
+
+  tiktokDl.videoGrid.innerHTML = videos.map((v, i) => {
+    const dur = formatTkDuration(v.duration);
+    return `
+      <div class="tiktok-video-card" data-index="${i}" style="border:1px solid var(--line);border-radius:8px;overflow:hidden;cursor:pointer;position:relative;">
+        <div style="position:relative;width:100%;padding-top:177%;background:var(--bg-subtle);">
+          ${v.cover ? `<img src="${escapeHtml(v.cover)}" style="position:absolute;top:0;left:0;width:100%;height:100%;object-fit:cover;" loading="lazy" />` : '<div style="position:absolute;top:0;left:0;width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:var(--text-muted);font-size:11px;">无封面</div>'}
+          <div class="tiktok-check" style="position:absolute;top:6px;right:6px;width:20px;height:20px;border-radius:50%;background:rgba(0,0,0,0.5);border:2px solid #fff;display:flex;align-items:center;justify-content:center;color:#fff;font-size:12px;"></div>
+          ${dur ? `<span style="position:absolute;bottom:4px;right:4px;background:rgba(0,0,0,0.7);color:#fff;font-size:10px;padding:1px 4px;border-radius:3px;">${escapeHtml(dur)}</span>` : ""}
+        </div>
+        <div style="padding:6px 8px;">
+          <p style="font-size:11px;line-height:1.3;margin:0;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;">${escapeHtml(v.title || "无标题")}</p>
+        </div>
+      </div>
+    `;
+  }).join("");
+
+  tiktokDl.videoGrid.querySelectorAll(".tiktok-video-card").forEach((card) => {
+    card.addEventListener("click", () => {
+      const idx = Number(card.dataset.index);
+      const check = card.querySelector(".tiktok-check");
+      if (tiktokDl.selectedVideos.has(idx)) {
+        tiktokDl.selectedVideos.delete(idx);
+        check.style.background = "rgba(0,0,0,0.5)";
+        check.textContent = "";
+      } else {
+        tiktokDl.selectedVideos.add(idx);
+        check.style.background = "#6366f1";
+        check.textContent = "✓";
+      }
+      tiktokDl.batchBtn.disabled = tiktokDl.selectedVideos.size === 0;
+      tiktokDl.selectAll.checked = tiktokDl.selectedVideos.size === tiktokDl.parsedVideos.length;
+    });
+  });
+}
+
+// 全选
+tiktokDl.selectAll?.addEventListener("change", () => {
+  const checked = tiktokDl.selectAll.checked;
+  tiktokDl.selectedVideos.clear();
+  tiktokDl.videoGrid.querySelectorAll(".tiktok-video-card").forEach((card, i) => {
+    const check = card.querySelector(".tiktok-check");
+    if (checked) {
+      tiktokDl.selectedVideos.add(i);
+      check.style.background = "#6366f1";
+      check.textContent = "✓";
+    } else {
+      check.style.background = "rgba(0,0,0,0.5)";
+      check.textContent = "";
+    }
+  });
+  tiktokDl.batchBtn.disabled = tiktokDl.selectedVideos.size === 0;
+});
+
+// 批量下载选中视频
+tiktokDl.batchBtn?.addEventListener("click", async () => {
+  const urls = [...tiktokDl.selectedVideos].map((i) => tiktokDl.parsedVideos[i].url).filter(Boolean);
+  if (!urls.length) { showToast("请先选择视频", true); return; }
+  await tiktokBatchDownload(urls);
+});
+
+// 批量下载核心逻辑
+async function tiktokBatchDownload(urls) {
+  tiktokDl.videoList.style.display = "none";
+  tiktokDl.results.style.display = "block";
+  tiktokDl.resultsList.innerHTML = "";
+  tiktokDl.parseBtn.disabled = true;
+  tiktokDl.parseBtn.textContent = "下载中...";
+
+  showTiktokProgress(`正在下载 0/${urls.length}...`);
+
+  // 逐条下载（不并发，避免被封）
+  const results = [];
+  for (let i = 0; i < urls.length; i++) {
+    showTiktokProgress(`正在下载 ${i + 1}/${urls.length}: ${urls[i].substring(0, 50)}...`);
+    try {
+      const data = await request("/api/tiktok/download", {
+        method: "POST",
+        body: JSON.stringify({ url: urls[i] }),
+      });
+      results.push({ ok: true, url: urls[i], ...data });
+    } catch (e) {
+      results.push({ ok: false, url: urls[i], error: e.message });
+    }
+    // 更新结果列表
+    renderTiktokResults(results);
+  }
+
+  hideTiktokProgress();
+  tiktokDl.parseBtn.disabled = false;
+  tiktokDl.parseBtn.textContent = "解析链接";
+
+  const okCount = results.filter((r) => r.ok).length;
+  const failCount = results.length - okCount;
+  showToast(`下载完成：成功 ${okCount} 个${failCount ? `，失败 ${failCount} 个` : ""}`, failCount > 0);
+
+  // 刷新达人列表和视频列表
+  await fetchRemixCreators();
+  if (remix.selectedCreatorId) {
+    await fetchRemixVideos(remix.selectedCreatorId);
+  }
+  tiktokDl.urlInput.value = "";
+}
+
+// 渲染下载结果
+function renderTiktokResults(results) {
+  tiktokDl.resultsList.innerHTML = results.map((r) => {
+    if (r.ok) {
+      return `<div style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-bottom:1px solid var(--line);font-size:12px;">
+        <span style="color:#22c55e;">✓</span>
+        <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(r.title || r.filename || "未命名")}</span>
+        <span class="muted-activity" style="font-size:11px;">${escapeHtml(r.author || "")}</span>
+        ${r.alreadyExists ? '<span style="color:var(--text-muted);font-size:10px;">已存在</span>' : ""}
+      </div>`;
+    }
+    return `<div style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-bottom:1px solid var(--line);font-size:12px;">
+      <span style="color:#ef4444;">✗</span>
+      <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(r.url.substring(0, 60))}</span>
+      <span style="color:#ef4444;font-size:11px;">${escapeHtml(r.error || "失败")}</span>
+    </div>`;
+  }).join("");
+}
+
 // 关闭视频预览弹框
 document.querySelector("#video-preview-close")?.addEventListener("click", () => {
   const modal = document.querySelector("#video-preview-modal");
