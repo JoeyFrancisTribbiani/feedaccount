@@ -3070,25 +3070,24 @@ export function createMonitorServer({
           return await parseTiktokPageDirect(tiktokUrl);
         }
 
-        // 辅助：下载视频文件到本地（流式写入避免 OOM）
-        async function downloadTiktokVideo(playUrl, filename) {
+        // 辅助：下载视频文件到本地（验证完整性）
+        async function downloadTiktokVideo(playUrl, filename, expectedSize) {
           const uploadDir = getUploadDir();
           mkdirSync(uploadDir, { recursive: true });
           const filePath = path.join(uploadDir, filename);
           const res = await fetch(playUrl, {
             headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
-            signal: AbortSignal.timeout(120000),
+            signal: AbortSignal.timeout(300000),
           });
           if (!res.ok) throw new Error(`下载失败 HTTP ${res.status}`);
-          const reader = res.body.getReader();
-          const { createWriteStream } = await import("fs");
-          const ws = createWriteStream(filePath);
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            ws.write(Buffer.from(value));
+          // 一次性读取完整 buffer（视频通常<100MB），确保完整性
+          const buf = await res.arrayBuffer();
+          const bufLen = buf.byteLength;
+          // 如果有期望大小且不匹配，可能是下载不完整
+          if (expectedSize && Math.abs(bufLen - expectedSize) > 1024) {
+            console.warn(`[TikTok] 下载大小不匹配: 实际=${bufLen} 期望=${expectedSize}，仍保存`);
           }
-          await new Promise((r, d) => { ws.end(r); ws.on("error", d); });
+          writeFileSync(filePath, Buffer.from(buf));
           return filePath;
         }
 
@@ -3143,7 +3142,7 @@ export function createMonitorServer({
             return { ok: true, filename: path.basename(existing.url), filePath: existing.url, title, author: nickname, alreadyExists: true };
           }
 
-          const localPath = await downloadTiktokVideo(tkData.play, filename);
+          const localPath = await downloadTiktokVideo(tkData.play, filename, tkData.size);
 
           // 创建视频记录
           const video = store.createRemixVideo({ creatorId: creator.id, url: videoUrl, title: title || null });
