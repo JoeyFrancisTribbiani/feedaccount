@@ -2260,7 +2260,11 @@ export function createMonitorServer({
         return;
       }
 
-      if (pathname.startsWith("/api/tiktok/")) {
+      // TikTok catch-all (排除 download/parse-profile/batch-download 等路由，它们在后面定义)
+      if (pathname.startsWith("/api/tiktok/") &&
+          !pathname.startsWith("/api/tiktok/download") &&
+          !pathname.startsWith("/api/tiktok/parse-profile") &&
+          !pathname.startsWith("/api/tiktok/batch-download")) {
         sendJson(response, 404, { error: "TikTok 接口不存在" });
         return;
       }
