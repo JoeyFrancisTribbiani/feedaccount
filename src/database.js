@@ -586,6 +586,14 @@ export class LocalDatabase {
     this.#ensureColumn("creator_auto_publish_config", "last_monitor_at", "TEXT");
     this.#ensureColumn("creator_auto_publish_config", "created_at", "TEXT NOT NULL DEFAULT ''");
     this.#ensureColumn("creator_auto_publish_config", "updated_at", "TEXT NOT NULL DEFAULT ''");
+    // 自动发布新增配置列
+    this.#ensureColumn("creator_auto_publish_config", "tiktok_username", "TEXT");
+    this.#ensureColumn("creator_auto_publish_config", "cdp_instance_id", "TEXT");
+    this.#ensureColumn("creator_auto_publish_config", "matrix_id", "TEXT");
+    this.#ensureColumn("creator_auto_publish_config", "ratio", "TEXT DEFAULT '9:16'");
+    this.#ensureColumn("creator_auto_publish_config", "hashtags_json", "TEXT");
+    this.#ensureColumn("creator_auto_publish_config", "privacy_level", "TEXT DEFAULT 'public'");
+    this.#ensureColumn("creator_auto_publish_config", "publish_time_slots", "TEXT");
 
     this.#ensureColumn("creator_profile_bindings", "daily_limit", "INTEGER DEFAULT 3");
     this.#ensureColumn("creator_profile_bindings", "last_publish_at", "TEXT");
@@ -1704,12 +1712,19 @@ export class LocalDatabase {
       dailyLimitPerProfile: Number(row.daily_limit_per_profile || 3),
       monitorIntervalHours: Number(row.monitor_interval_hours || 6),
       lastMonitorAt: row.last_monitor_at,
+      tiktokUsername: row.tiktok_username || null,
+      cdpInstanceId: row.cdp_instance_id || null,
+      matrixId: row.matrix_id || null,
+      ratio: row.ratio || "9:16",
+      hashtagsJson: row.hashtags_json || null,
+      privacyLevel: row.privacy_level || "public",
+      publishTimeSlots: row.publish_time_slots || null,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     };
   }
 
-  upsertAutoPublishConfig(creatorId, { enabled = null, presetId = null, dailyLimitPerProfile = null, monitorIntervalHours = null, lastMonitorAt = null } = {}) {
+  upsertAutoPublishConfig(creatorId, { enabled = null, presetId = null, dailyLimitPerProfile = null, monitorIntervalHours = null, lastMonitorAt = null, tiktokUsername = null, cdpInstanceId = null, matrixId = null, ratio = null, hashtagsJson = null, privacyLevel = null, publishTimeSlots = null } = {}) {
     const ts = nowIso();
     const existing = this.db.prepare(`SELECT creator_id FROM creator_auto_publish_config WHERE creator_id = ?`).get(creatorId);
     if (existing) {
@@ -1720,13 +1735,20 @@ export class LocalDatabase {
       if (dailyLimitPerProfile !== null) { sets.push("daily_limit_per_profile = ?"); params.push(dailyLimitPerProfile); }
       if (monitorIntervalHours !== null) { sets.push("monitor_interval_hours = ?"); params.push(monitorIntervalHours); }
       if (lastMonitorAt !== null) { sets.push("last_monitor_at = ?"); params.push(lastMonitorAt); }
+      if (tiktokUsername !== null) { sets.push("tiktok_username = ?"); params.push(tiktokUsername); }
+      if (cdpInstanceId !== null) { sets.push("cdp_instance_id = ?"); params.push(cdpInstanceId); }
+      if (matrixId !== null) { sets.push("matrix_id = ?"); params.push(matrixId); }
+      if (ratio !== null) { sets.push("ratio = ?"); params.push(ratio); }
+      if (hashtagsJson !== null) { sets.push("hashtags_json = ?"); params.push(hashtagsJson); }
+      if (privacyLevel !== null) { sets.push("privacy_level = ?"); params.push(privacyLevel); }
+      if (publishTimeSlots !== null) { sets.push("publish_time_slots = ?"); params.push(publishTimeSlots); }
       sets.push("updated_at = ?"); params.push(ts);
       params.push(creatorId);
       this.db.prepare(`UPDATE creator_auto_publish_config SET ${sets.join(", ")} WHERE creator_id = ?`).run(...params);
     } else {
       this.db.prepare(`
-        INSERT INTO creator_auto_publish_config (creator_id, enabled, preset_id, daily_limit_per_profile, monitor_interval_hours, last_monitor_at, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO creator_auto_publish_config (creator_id, enabled, preset_id, daily_limit_per_profile, monitor_interval_hours, last_monitor_at, tiktok_username, cdp_instance_id, matrix_id, ratio, hashtags_json, privacy_level, publish_time_slots, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         creatorId,
         booleanInt(enabled ?? false),
@@ -1734,6 +1756,13 @@ export class LocalDatabase {
         dailyLimitPerProfile ?? 3,
         monitorIntervalHours ?? 6,
         lastMonitorAt,
+        tiktokUsername,
+        cdpInstanceId,
+        matrixId,
+        ratio || "9:16",
+        hashtagsJson,
+        privacyLevel || "public",
+        publishTimeSlots,
         ts, ts
       );
     }

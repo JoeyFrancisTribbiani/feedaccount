@@ -4078,6 +4078,10 @@ export function createMonitorServer({
             const updated = store.upsertAutoPublishConfig(creatorId, {
               enabled: body.enabled, presetId: body.presetId,
               dailyLimitPerProfile: body.dailyLimitPerProfile, monitorIntervalHours: body.monitorIntervalHours,
+              tiktokUsername: body.tiktokUsername, cdpInstanceId: body.cdpInstanceId,
+              matrixId: body.matrixId, ratio: body.ratio,
+              hashtagsJson: body.hashtagsJson, privacyLevel: body.privacyLevel,
+              publishTimeSlots: body.publishTimeSlots,
             });
             sendJson(response, 200, updated);
             return;
@@ -4167,6 +4171,10 @@ export function createMonitorServer({
               presetId: body.presetId,
               dailyLimitPerProfile: body.dailyLimitPerProfile,
               monitorIntervalHours: body.monitorIntervalHours,
+              tiktokUsername: body.tiktokUsername, cdpInstanceId: body.cdpInstanceId,
+              matrixId: body.matrixId, ratio: body.ratio,
+              hashtagsJson: body.hashtagsJson, privacyLevel: body.privacyLevel,
+              publishTimeSlots: body.publishTimeSlots,
             });
             sendJson(response, 200, updated);
             return;

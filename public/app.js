@@ -7355,6 +7355,7 @@ const autoPublish = {
   creators: [],
   pipelineTasks: [],
   profiles: [],
+  cdpInstances: [],
   monitorData: [],
   filterCreator: '',
   filterStatus: '',
@@ -7401,8 +7402,18 @@ const autoPublish = {
     this.fetchCreators();
     this.fetchPipelineTasks();
     this.fetchProfiles();
+    this.fetchCdpInstances();
     this.fetchMonitorData();
     this._startPolling();
+  },
+
+  async fetchCdpInstances() {
+    try {
+      const res = await request('/api/cdp/instances');
+      this.cdpInstances = res.instances || [];
+    } catch {
+      this.cdpInstances = [];
+    }
   },
 
   async fetchPresets() {
@@ -7694,6 +7705,36 @@ const autoPublish = {
       });
     });
 
+    // CDP 实例选择
+    container.querySelectorAll('[data-config-cdp]').forEach((sel) => {
+      sel.addEventListener('change', () => {
+        this.saveCreatorConfig(sel.dataset.configCdp, { cdpInstanceId: sel.value || null });
+      });
+    });
+
+    // 发布时间段保存
+    container.querySelectorAll('[data-config-slots-save]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const creatorId = btn.dataset.configSlotsSave;
+        const input = container.querySelector(`[data-config-slots="${CSS.escape(creatorId)}"]`);
+        if (!input) return;
+        const raw = input.value.trim();
+        if (!raw) {
+          this.saveCreatorConfig(creatorId, { publishTimeSlots: null });
+          return;
+        }
+        // 解析时间段字符串为 JSON 数组
+        const slots = raw.split(',').map((s) => s.trim()).filter(Boolean);
+        // 简单校验格式
+        const valid = slots.every((s) => /^\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}$/.test(s));
+        if (!valid) {
+          showToast('时间段格式有误，请用 HH:MM-HH:MM 格式，逗号分隔', true);
+          return;
+        }
+        this.saveCreatorConfig(creatorId, { publishTimeSlots: JSON.stringify(slots) });
+      });
+    });
+
     // 绑定实例操作
     container.querySelectorAll('[data-bind-btn]').forEach((btn) => {
       btn.addEventListener('click', () => this._showBindingForm(btn.dataset.bindBtn));
@@ -7756,6 +7797,22 @@ const autoPublish = {
             <input type="number" min="1" max="168" value="${escapeHtml(String(cfg.monitorIntervalHours ?? 6))}" data-config-interval="${escapeHtml(c.id)}" style="width:70px;" /> 小时
           </div>
         </div>
+        <div class="ap-config-row">
+          <span class="ap-config-label">CDP实例</span>
+          <div class="ap-config-value">
+            <select data-config-cdp="${escapeHtml(c.id)}" style="min-width:160px;">
+              <option value="">未配置（使用绑定实例）</option>
+              ${this.cdpInstances.map((inst) => `<option value="${escapeHtml(inst.id)}" ${cfg.cdpInstanceId === inst.id ? 'selected' : ''}>${escapeHtml(inst.name)}</option>`).join('')}
+            </select>
+          </div>
+        </div>
+        <div class="ap-config-row">
+          <span class="ap-config-label">发布时间段</span>
+          <div class="ap-config-value">
+            <input type="text" value="${escapeHtml(cfg.publishTimeSlots ? (typeof cfg.publishTimeSlots === 'string' ? (() => { try { return JSON.parse(cfg.publishTimeSlots).join(', '); } catch { return cfg.publishTimeSlots; } })() : cfg.publishTimeSlots.join(', ')) : '')}" data-config-slots="${escapeHtml(c.id)}" style="width:280px;" placeholder="如 09:00-12:00, 14:00-17:00, 19:00-22:00" />
+            <button class="button button-secondary" type="button" data-config-slots-save="${escapeHtml(c.id)}" style="font-size:11px;padding:2px 8px;margin-left:4px;">保存</button>
+          </div>
+        </div>
         <div class="ap-bindings-area">
           <div class="ap-bindings-head">
             <span>绑定的指纹浏览器实例 (${bindings.length})</span>
@@ -7808,6 +7865,35 @@ const autoPublish = {
         this.saveCreatorConfig(inp.dataset.configInterval, { monitorIntervalHours: val });
       });
     });
+
+    // CDP 实例选择
+    scope.querySelectorAll('[data-config-cdp]').forEach((sel) => {
+      sel.addEventListener('change', () => {
+        this.saveCreatorConfig(sel.dataset.configCdp, { cdpInstanceId: sel.value || null });
+      });
+    });
+
+    // 发布时间段保存
+    scope.querySelectorAll('[data-config-slots-save]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const creatorId = btn.dataset.configSlotsSave;
+        const input = scope.querySelector(`[data-config-slots="${CSS.escape(creatorId)}"]`);
+        if (!input) return;
+        const raw = input.value.trim();
+        if (!raw) {
+          this.saveCreatorConfig(creatorId, { publishTimeSlots: null });
+          return;
+        }
+        const slots = raw.split(',').map((s) => s.trim()).filter(Boolean);
+        const valid = slots.every((s) => /^\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}$/.test(s));
+        if (!valid) {
+          showToast('时间段格式有误，请用 HH:MM-HH:MM 格式，逗号分隔', true);
+          return;
+        }
+        this.saveCreatorConfig(creatorId, { publishTimeSlots: JSON.stringify(slots) });
+      });
+    });
+
     scope.querySelectorAll('[data-bind-btn]').forEach((btn) => {
       btn.addEventListener('click', () => this._showBindingForm(btn.dataset.bindBtn));
     });

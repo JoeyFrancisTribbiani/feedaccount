@@ -129,34 +129,41 @@ export class AutoPublishScheduler extends EventTarget {
       return;
     }
 
-    const apiUrl = `https://www.tikwm.com/api/user/posts?username=${encodeURIComponent(username)}&count=30`;
-    const res = await fetch(apiUrl, {
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        Accept: "application/json",
-      },
-      signal: AbortSignal.timeout(30000),
+    // 改用 CDP 方式调用 server 自带的 /api/tiktok/parse-profile 接口
+    // 该接口通过 Chrome CDP 打开达人主页提取视频列表（包括自动刷新重试和滚动加载）
+    const parseRes = await fetch(`${this.serverUrl}/api/tiktok/parse-profile`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url: `https://www.tiktok.com/@${username}` }),
+      signal: AbortSignal.timeout(180000), // CDP 方式可能需要较长时间（滚动加载）
     });
-    if (!res.ok) throw new Error(`TikWM HTTP ${res.status}`);
-    const data = await res.json();
-    if (data.code !== 0) throw new Error(data.msg || "TikWM API 返回错误");
-
-    const feed = data.data?.videos || data.data || [];
+    if (!parseRes.ok) {
+      const errBody = await parseRes.text().catch(() => "");
+      throw new Error(`parse-profile HTTP ${parseRes.status}: ${errBody.slice(0, 200)}`);
+    }
+    const parseData = await parseRes.json();
+    // parse-profile 返回 { ok, username, userInfo, videos }
+    // videos 每项: { url, title, cover, duration }
+    if (parseData.error) throw new Error(parseData.error);
+    const feed = parseData.videos || [];
     if (!Array.isArray(feed) || !feed.length) return;
 
     // 检查 creator_video_monitor 表，发现新视频
     const newVideos = [];
     for (const v of feed) {
-      const videoId = v.video_id || v.id;
-      const tiktokUrl = `https://www.tiktok.com/@${username}/video/${videoId}`;
+      const tiktokUrl = v.url || `https://www.tiktok.com/@${username}/video/${v.video_id}`;
       const monitored = this._getMonitoredVideo(cfg.creator_id, tiktokUrl);
       if (monitored) continue;
 
+      // 从 URL 提取 videoId（CDP 方式返回的是完整 URL）
+      const idMatch = tiktokUrl.match(/\/video\/(\d+)/);
+      const videoId = idMatch ? idMatch[1] : (v.video_id || String(Date.now()));
+
       newVideos.push({
-        videoId: String(videoId),
+        videoId,
         url: tiktokUrl,
         title: (v.title || "").substring(0, 200),
-        cover: v.cover || v.origin_cover || null,
+        cover: v.cover || null,
         duration: v.duration || null,
         playUrl: v.play || null,
         author: username,
@@ -282,23 +289,24 @@ export class AutoPublishScheduler extends EventTarget {
     }
 
     // 需要配置
-    const matrixId = pipeline.matrix_id || cfg.matrix_id;
-    const cdpInstanceId = cfg.cdp_instance_id;
+    const matrixId = pipeline.matrix_id || cfg.matrix_id || null; // matrix_id 改为可选
+    // cdp_instance_id: 优先用 config 的，否则从 binding 关联获取
+    let cdpInstanceId = cfg.cdp_instance_id;
+    if (!cdpInstanceId) {
+      const binding = this._getCreatorBinding(pipeline.creator_id, pipeline.profile_id);
+      cdpInstanceId = binding?.cdp_instance_id || null;
+    }
     const presetId = cfg.preset_id;
     const ratio = cfg.ratio || "9:16";
 
-    if (!matrixId) {
-      this._updatePipeline(pipeline.id, {
-        status: "failed",
-        failReason: "缺少 matrix_id 配置",
-      });
-      this._emitChange();
-      return;
-    }
+    // matrix_id 可选：如果用户不配 matrix，用默认值 "auto" 跳过
+    const effectiveMatrixId = matrixId || "auto";
+
+    // cdp_instance_id 仍需校验（混剪需要 CDP 实例运行 ChatGPT）
     if (!cdpInstanceId) {
       this._updatePipeline(pipeline.id, {
         status: "failed",
-        failReason: "缺少 cdp_instance_id 配置",
+        failReason: "缺少 cdp_instance_id 配置（请在自动发布配置或实例绑定中设置 CDP 实例）",
       });
       this._emitChange();
       return;
@@ -309,7 +317,7 @@ export class AutoPublishScheduler extends EventTarget {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          matrixIds: [matrixId],
+          matrixIds: effectiveMatrixId !== "auto" ? [effectiveMatrixId] : [],
           creatorId: pipeline.creator_id,
           videoIds: [pipeline.source_video_id],
           cdpInstanceId,
@@ -337,7 +345,7 @@ export class AutoPublishScheduler extends EventTarget {
       this.store.logCdpEvent(
         null,
         "info",
-        `自动发布-触发混剪: pipeline=${pipeline.id}, remixTask=${remixTaskId}`,
+        `自动发布-触发混剪: pipeline=${pipeline.id}, remixTask=${remixTaskId}, matrix=${effectiveMatrixId}`,
       );
       this._emitChange();
     } catch (err) {
@@ -454,7 +462,7 @@ export class AutoPublishScheduler extends EventTarget {
     }
 
     // 计算发布时间
-    const scheduledAt = this._calcNextPublishTime(profileId);
+    const scheduledAt = this._calcNextPublishTime(profileId, cfg);
 
     // 创建 tk_video_material（发布需要 material_id）
     const hashtags = cfg?.hashtags_json
@@ -490,10 +498,24 @@ export class AutoPublishScheduler extends EventTarget {
     return true;
   }
 
-  _calcNextPublishTime(profileId) {
+  _calcNextPublishTime(profileId, cfg = null) {
     const now = new Date();
-    const jobs = this.store.listTkPublishJobs({ profileId, limit: 500 });
 
+    // 如果配置了发布时间段，使用时间段逻辑
+    let slots = null;
+    if (cfg?.publish_time_slots) {
+      try {
+        const raw = typeof cfg.publish_time_slots === "string" ? JSON.parse(cfg.publish_time_slots) : cfg.publish_time_slots;
+        if (Array.isArray(raw) && raw.length) slots = raw;
+      } catch { /* 解析失败，回退到默认逻辑 */ }
+    }
+
+    if (slots) {
+      return this._calcNextPublishTimeWithSlots(slots, profileId, now);
+    }
+
+    // 回退：原逻辑（lastTime + 10分钟 + 随机0-30分钟）
+    const jobs = this.store.listTkPublishJobs({ profileId, limit: 500 });
     let lastTime = 0;
     for (const j of jobs) {
       const t = new Date(j.scheduledAt).getTime();
@@ -503,10 +525,87 @@ export class AutoPublishScheduler extends EventTarget {
         if (et > lastTime) lastTime = et;
       }
     }
-
     const minNext = Math.max(now.getTime(), lastTime + PUBLISH_INTERVAL_MIN_MS);
     const randomExtra = Math.floor(Math.random() * 30 * 60 * 1000);
     return new Date(minNext + randomExtra).toISOString();
+  }
+
+  /**
+   * 根据发布时间段计算下次发布时间
+   * @param {string[]} slots — 如 ["09:00-12:00","14:00-17:00","19:00-22:00"]
+   * @param {string} profileId
+   * @param {Date} now
+   */
+  _calcNextPublishTimeWithSlots(slots, profileId, now) {
+    // 解析时间段为 { startMin, endMin } (从当天 00:00 起的分钟数)
+    const parsedSlots = slots.map((s) => {
+      const m = s.match(/(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})/);
+      if (!m) return null;
+      return { startMin: parseInt(m[1], 10) * 60 + parseInt(m[2], 10), endMin: parseInt(m[3], 10) * 60 + parseInt(m[4], 10), raw: s };
+    }).filter(Boolean);
+
+    if (!parsedSlots.length) {
+      // 所有时间段都解析失败，回退到默认逻辑
+      const jobs = this.store.listTkPublishJobs({ profileId, limit: 500 });
+      let lastTime = 0;
+      for (const j of jobs) {
+        const t = new Date(j.scheduledAt).getTime();
+        if (t > lastTime) lastTime = t;
+      }
+      const minNext = Math.max(now.getTime(), lastTime + PUBLISH_INTERVAL_MIN_MS);
+      const randomExtra = Math.floor(Math.random() * 30 * 60 * 1000);
+      return new Date(minNext + randomExtra).toISOString();
+    }
+
+    // 按 startMin 排序
+    parsedSlots.sort((a, b) => a.startMin - b.startMin);
+
+    const nowMin = now.getHours() * 60 + now.getMinutes();
+    const nowMs = now.getTime();
+
+    // 获取今天已排期的最后时间，确保间隔 >= PUBLISH_INTERVAL_MIN_MS
+    const jobs = this.store.listTkPublishJobs({ profileId, limit: 500 });
+    let lastScheduledMs = 0;
+    for (const j of jobs) {
+      const t = new Date(j.scheduledAt).getTime();
+      if (t > lastScheduledMs) lastScheduledMs = t;
+      if (j.executedAt) {
+        const et = new Date(j.executedAt).getTime();
+        if (et > lastScheduledMs) lastScheduledMs = et;
+      }
+    }
+
+    // 尝试今天剩余的时间段，然后明天的
+    for (let dayOffset = 0; dayOffset <= 1; dayOffset++) {
+      const baseDate = new Date(now);
+      baseDate.setDate(baseDate.getDate() + dayOffset);
+      baseDate.setHours(0, 0, 0, 0);
+
+      for (const slot of parsedSlots) {
+        const slotStartMs = baseDate.getTime() + slot.startMin * 60 * 1000;
+        const slotEndMs = baseDate.getTime() + slot.endMin * 60 * 1000;
+
+        // 候选时间 = max(现在, 上次发布 + 最小间隔)
+        let candidateMs = Math.max(nowMs, lastScheduledMs + PUBLISH_INTERVAL_MIN_MS);
+        // 第一天跳过已过的时间段，第二天不限
+        if (dayOffset === 0 && candidateMs >= slotEndMs) continue;
+        // 确保候选时间在时间段内
+        if (candidateMs < slotStartMs) candidateMs = slotStartMs;
+        if (candidateMs >= slotEndMs) continue;
+
+        // 在 [candidateMs, slotEndMs - 5min] 范围内取随机时间
+        const latestMs = Math.max(candidateMs, slotEndMs - 5 * 60 * 1000);
+        const randomMs = candidateMs + Math.floor(Math.random() * Math.max(1, latestMs - candidateMs));
+        return new Date(randomMs).toISOString();
+      }
+    }
+
+    // 兜底：找不到合适时间段，用明天第一个时间段开始
+    const tomorrow = new Date(now);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    tomorrow.setHours(0, 0, 0, 0);
+    const firstSlot = parsedSlots[0];
+    return new Date(tomorrow.getTime() + firstSlot.startMin * 60 * 1000).toISOString();
   }
 
   _countTodayPublishedByProfile(profileId) {
@@ -608,15 +707,24 @@ export class AutoPublishScheduler extends EventTarget {
       return;
     }
 
-    const matrixId = pipeline.matrix_id || cfg.matrix_id;
-    const cdpInstanceId = cfg.cdp_instance_id;
+    const matrixId = pipeline.matrix_id || cfg.matrix_id || null; // matrix_id 改为可选
+    // cdp_instance_id: 优先用 config 的，否则从 binding 关联获取
+    let cdpInstanceId = cfg.cdp_instance_id;
+    if (!cdpInstanceId) {
+      const binding = this._getCreatorBinding(pipeline.creator_id, pipeline.profile_id);
+      cdpInstanceId = binding?.cdp_instance_id || null;
+    }
     const ratio = cfg.ratio || "9:16";
     const presetId = cfg.preset_id;
 
-    if (!matrixId || !cdpInstanceId) {
+    // matrix_id 可选：如果用户不配 matrix，用默认值 "auto" 跳过
+    const effectiveMatrixId = matrixId || "auto";
+
+    // cdp_instance_id 仍需校验
+    if (!cdpInstanceId) {
       this._updatePipeline(pipeline.id, {
         status: "failed",
-        failReason: "重试失败: 缺少 matrix_id 或 cdp_instance_id",
+        failReason: "重试失败: 缺少 cdp_instance_id 配置（请在自动发布配置或实例绑定中设置 CDP 实例）",
       });
       this._emitChange();
       return;
@@ -627,7 +735,7 @@ export class AutoPublishScheduler extends EventTarget {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          matrixIds: [matrixId],
+          matrixIds: effectiveMatrixId !== "auto" ? [effectiveMatrixId] : [],
           creatorId: pipeline.creator_id,
           videoIds: [pipeline.source_video_id],
           cdpInstanceId,
@@ -656,7 +764,7 @@ export class AutoPublishScheduler extends EventTarget {
       this.store.logCdpEvent(
         null,
         "info",
-        `自动发布-重试混剪: pipeline=${pipeline.id}, newRemixTask=${newRemixTaskId}, attempt=${pipeline.attempt_count}`,
+        `自动发布-重试混剪: pipeline=${pipeline.id}, newRemixTask=${newRemixTaskId}, attempt=${pipeline.attempt_count}, matrix=${effectiveMatrixId}`,
       );
       this._emitChange();
     } catch (err) {
@@ -700,6 +808,7 @@ export class AutoPublishScheduler extends EventTarget {
     this._ensureColumn("creator_auto_publish_config", "ratio", "TEXT DEFAULT '9:16'");
     this._ensureColumn("creator_auto_publish_config", "hashtags_json", "TEXT");
     this._ensureColumn("creator_auto_publish_config", "privacy_level", "TEXT DEFAULT 'public'");
+    this._ensureColumn("creator_auto_publish_config", "publish_time_slots", "TEXT");
 
     // 为 creator_profile_bindings 补充列
     this._ensureColumn("creator_profile_bindings", "cdp_instance_id", "TEXT");
@@ -819,6 +928,7 @@ export class AutoPublishScheduler extends EventTarget {
       ratio: r.ratio || "9:16",
       hashtags_json: r.hashtags_json || null,
       privacy_level: r.privacy_level || "public",
+      publish_time_slots: r.publish_time_slots || null,
     };
   }
 
