@@ -3277,14 +3277,28 @@ export function createMonitorServer({
                       await new Promise(r => setTimeout(r, 2000));
                     }
                   }
-                  // 滚动加载更多，直到没有新视频加载
+                  // 滚动加载更多，直到触底无新视频
+                  // 判断标准：连续3次滚动后视频数不增加 且 已到底部(atBottom)
                   let prevCount = 0;
-                  for (let i = 0; i < 30; i++) {
+                  let noChangeRounds = 0;
+                  for (let i = 0; i < 50; i++) {
                     await evalJS(`window.scrollTo(0, document.body.scrollHeight)`);
-                    await new Promise(r => setTimeout(r, 2000));
-                    const countCheck = await evalJS(`document.querySelectorAll('a[href*="/video/"]').length`);
-                    const currentCount = countCheck?.result?.result?.value || 0;
-                    if (currentCount === prevCount) break; // 没有新视频了
+                    await new Promise(r => setTimeout(r, 4000)); // 等4秒让懒加载完成
+                    const check = await evalJS(`
+                      (() => {
+                        const count = document.querySelectorAll('a[href*="/video/"]').length;
+                        const atBottom = (window.innerHeight + window.scrollY) >= document.body.scrollHeight - 10;
+                        return JSON.stringify({ count, atBottom });
+                      })()
+                    `);
+                    const status = JSON.parse(check?.result?.result?.value || '{"count":0,"atBottom":false}');
+                    const currentCount = status.count || 0;
+                    if (currentCount === prevCount) {
+                      noChangeRounds++;
+                      if (noChangeRounds >= 3 && status.atBottom) break;
+                    } else {
+                      noChangeRounds = 0;
+                    }
                     prevCount = currentCount;
                   }
                   // 提取视频列表
