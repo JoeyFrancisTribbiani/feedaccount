@@ -3252,10 +3252,30 @@ export function createMonitorServer({
                   // 等待页面加载
                   await new Promise(r => setTimeout(r, 3000));
                   // 等待视频元素出现（最多等 20 秒）
-                  for (let i = 0; i < 10; i++) {
-                    const check = await evalJS(`document.querySelectorAll('a[href*="/video/"]').length`);
-                    if (check?.result?.result?.value > 0) break;
-                    await new Promise(r => setTimeout(r, 2000));
+                  // 如果页面显示"出错了"，自动刷新重试
+                  for (let i = 0; i < 15; i++) {
+                    const check = await evalJS(`
+                      (() => {
+                        const videoCount = document.querySelectorAll('a[href*="/video/"]').length;
+                        const hasError = document.body.innerText.includes('出错了') || document.body.innerText.includes('Something went wrong') || document.body.innerText.includes('error');
+                        return JSON.stringify({ videoCount, hasError });
+                      })()
+                    `);
+                    const status = JSON.parse(check?.result?.result?.value || '{"videoCount":0,"hasError":false}');
+                    if (status.videoCount > 0) break;
+                    // 如果显示错误或还没加载出来，刷新页面
+                    if (status.hasError || i === 0) {
+                      console.log(`[TikTok] 页面未加载(尝试${i+1})，刷新中...`);
+                      // 尝试点击页面上的刷新按钮，如果没有就 location.reload
+                      await evalJS(`
+                        const refreshBtn = [...document.querySelectorAll('button, a')].find(e => /重试|刷新|retry|reload|try again/i.test(e.textContent));
+                        if (refreshBtn) refreshBtn.click();
+                        else location.reload();
+                      `).catch(() => {});
+                      await new Promise(r => setTimeout(r, 3000));
+                    } else {
+                      await new Promise(r => setTimeout(r, 2000));
+                    }
                   }
                   // 滚动加载更多
                   for (let i = 0; i < 3; i++) {
