@@ -4079,37 +4079,47 @@ tiktokDl.parseBtn?.addEventListener("click", async () => {
 
       // 轮询解析进度
       const taskId = data.taskId;
+      const pollStartedAt = Date.now();
       const pollTimer = setInterval(async () => {
+        // 5分钟超时
+        if (Date.now() - pollStartedAt > 5 * 60 * 1000) {
+          clearInterval(pollTimer);
+          hideTiktokProgress();
+          showToast("解析超时，请稍后查看视频列表", true);
+          return;
+        }
         try {
           const status = await request(`/api/tiktok/parse-status/${encodeURIComponent(taskId)}`);
           const logs = status.logs || [];
           if (!logs.length) return;
 
-          // 找最新进度
           const latest = logs[0];
           const msg = latest.message || "";
-          // 解析进度信息
           const progressMatch = msg.match(/\[TikTok解析\] (\w+): (.+)/);
-          if (progressMatch) {
-            const eventType = progressMatch[1];
-            const info = JSON.parse(progressMatch[2]);
-            if (eventType === "progress") {
-              showTiktokProgress(info.message || "解析中...");
-            } else if (eventType === "done") {
-              clearInterval(pollTimer);
-              hideTiktokProgress();
-              // 从数据库加载该达人的所有视频
-              await fetchRemixCreators();
-              showToast(`解析完成，共 ${info.totalVideos || 0} 个视频已入库`);
-              // 刷新视频列表
-              if (remix.selectedCreatorId) {
-                await fetchRemixVideos(remix.selectedCreatorId);
-              }
-            } else if (eventType === "error") {
-              clearInterval(pollTimer);
-              hideTiktokProgress();
-              showToast(`解析失败: ${info.error || "未知错误"}`, true);
+          if (!progressMatch) return;
+
+          let info;
+          try { info = JSON.parse(progressMatch[2]); } catch { return; }
+
+          const eventType = progressMatch[1];
+          if (eventType === "progress") {
+            showTiktokProgress(info.message || "解析中...");
+          } else if (eventType === "done") {
+            clearInterval(pollTimer);
+            hideTiktokProgress();
+            await fetchRemixCreators();
+            showToast(`解析完成，共 ${info.totalVideos || 0} 个视频已入库`);
+            // 自动选中刚解析的达人
+            const creatorName = info.username || data.username;
+            const creatorEl = [...document.querySelectorAll('.remix-creator-item')].find(el => el.textContent.includes(creatorName));
+            if (creatorEl) creatorEl.click();
+            else if (remix.selectedCreatorId) {
+              await fetchRemixVideos(remix.selectedCreatorId);
             }
+          } else if (eventType === "error") {
+            clearInterval(pollTimer);
+            hideTiktokProgress();
+            showToast(`解析失败: ${info.error || "未知错误"}`, true);
           }
         } catch {}
       }, 3000);

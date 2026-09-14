@@ -3290,7 +3290,7 @@ export function createMonitorServer({
           // 异步执行 CDP 解析
           (async () => {
             const emit = (event, data) => {
-              store.logCdpEvent(null, "info", `[TikTok解析] ${event}: ${JSON.stringify(data).substring(0, 200)}`, null, null);
+              store.logCdpEvent(null, "info", `[TikTok解析] ${event}: ${JSON.stringify(data).substring(0, 200)}`, null, taskId);
             };
             try {
               emit("progress", { taskId, step: "opening", message: `正在打开 @${username} 的主页...` });
@@ -3405,11 +3405,11 @@ export function createMonitorServer({
           return;
         }
 
-        // GET /api/tiktok/parse-status/:taskId — 查询解析进度（通过 cdp_logs）
+        // GET /api/tiktok/parse-status/:taskId — 查询解析进度
         const parseStatusMatch = pathname.match(/^\/api\/tiktok\/parse-status\/(.+)$/);
         if (request.method === "GET" && parseStatusMatch) {
           const taskId = decodeURIComponent(parseStatusMatch[1]);
-          const logs = store.db.prepare("SELECT message, created_at FROM cdp_logs WHERE message LIKE ? ORDER BY created_at DESC LIMIT 50").all(`%${taskId}%`);
+          const logs = store.db.prepare("SELECT message, created_at FROM cdp_logs WHERE task_id = ? ORDER BY created_at DESC LIMIT 50").all(taskId);
           sendJson(response, 200, { taskId, logs });
           return;
         }

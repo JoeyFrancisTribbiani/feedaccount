@@ -2425,7 +2425,7 @@ export class LocalDatabase {
     // 创建新记录
     const id = `rv_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     const ts = nowIso();
-    this.db.prepare(`INSERT INTO remix_videos (id, creator_id, url, title, source_url, thumb_url, duration, downloaded, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)`).run(id, creatorId, sourceUrl, title, sourceUrl, thumbUrl, duration, ts);
+    this.db.prepare(`INSERT INTO remix_videos (id, creator_id, url, title, source_url, thumb_url, duration, downloaded, created_at) VALUES (?, ?, NULL, ?, ?, ?, ?, 0, ?)`).run(id, creatorId, title, sourceUrl, thumbUrl, duration, ts);
     return this.getRemixVideo(id);
   }
 
@@ -2433,7 +2433,9 @@ export class LocalDatabase {
     const rows = this.db.prepare(`SELECT * FROM remix_videos WHERE creator_id = ? ORDER BY created_at DESC`).all(creatorId);
     return rows.map((r) => ({
       id: r.id, creatorId: r.creator_id, url: r.url, title: r.title,
-      duration: r.duration, fileSize: r.file_size, thumbnail: r.thumbnail, createdAt: r.created_at,
+      duration: r.duration, fileSize: r.file_size, thumbnail: r.thumbnail,
+      sourceUrl: r.source_url, thumbUrl: r.thumb_url, downloaded: r.downloaded,
+      createdAt: r.created_at,
     }));
   }
 
@@ -2441,7 +2443,9 @@ export class LocalDatabase {
     const row = this.db.prepare(`SELECT * FROM remix_videos WHERE id = ?`).get(id);
     return row ? {
       id: row.id, creatorId: row.creator_id, url: row.url, title: row.title,
-      duration: row.duration, fileSize: row.file_size, thumbnail: row.thumbnail, createdAt: row.created_at,
+      duration: row.duration, fileSize: row.file_size, thumbnail: row.thumbnail,
+      sourceUrl: row.source_url, thumbUrl: row.thumb_url, downloaded: row.downloaded,
+      createdAt: row.created_at,
     } : null;
   }
 
