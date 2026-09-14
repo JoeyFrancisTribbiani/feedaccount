@@ -3277,10 +3277,15 @@ export function createMonitorServer({
                       await new Promise(r => setTimeout(r, 2000));
                     }
                   }
-                  // 滚动加载更多
-                  for (let i = 0; i < 3; i++) {
+                  // 滚动加载更多，直到没有新视频加载
+                  let prevCount = 0;
+                  for (let i = 0; i < 30; i++) {
                     await evalJS(`window.scrollTo(0, document.body.scrollHeight)`);
                     await new Promise(r => setTimeout(r, 2000));
+                    const countCheck = await evalJS(`document.querySelectorAll('a[href*="/video/"]').length`);
+                    const currentCount = countCheck?.result?.result?.value || 0;
+                    if (currentCount === prevCount) break; // 没有新视频了
+                    prevCount = currentCount;
                   }
                   // 提取视频列表
                   const extractResult = await evalJS(`
