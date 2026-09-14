@@ -3288,7 +3288,7 @@ export function createMonitorServer({
             try {
               // 用 Chrome CDP HTTP API 打开页面
               const cdpBase = 'http://localhost:9222';
-              const newTabRes = await fetch(`${cdpBase}/json/new?${encodeURIComponent(`https://www.tiktok.com/@${username}`)}`, { method: 'PUT', signal: AbortSignal.timeout(10000) });
+              const newTabRes = await fetch(`${cdpBase}/json/new?${encodeURIComponent(`about:blank`)}`, { method: 'PUT', signal: AbortSignal.timeout(10000) });
               if (newTabRes.ok) {
                 const newTab = await newTabRes.json();
                 const wsUrl = newTab.webSocketDebuggerUrl;
@@ -3313,6 +3313,10 @@ export function createMonitorServer({
                   });
                   const evalJS = (expr) => sendCDP('Runtime.evaluate', { expression: expr, returnByValue: true, awaitPromise: true });
 
+                  // 启用 Page 域
+                  await sendCDP('Page.enable', {});
+                  // 主动导航到达人主页
+                  await sendCDP('Page.navigate', { url: `https://www.tiktok.com/@${username}` });
                   // 等待页面加载
                   await new Promise(r => setTimeout(r, 3000));
                   // 等待视频元素出现（最多等 20 秒）
