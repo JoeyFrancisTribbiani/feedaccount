@@ -4894,3 +4894,305 @@ footer span {
     max-height: none;
   }
 }
+
+/* ==========================================================================
+   全局移动端响应式
+   ========================================================================== */
+
+/* 平板及以下 (≤1024px) */
+@media (max-width: 1024px) {
+  .shell {
+    width: calc(100% - 24px);
+    padding: 20px 0 40px;
+  }
+
+  .hero {
+    grid-template-columns: 1fr;
+    gap: 24px;
+  }
+
+  .remix-layout {
+    flex-direction: column;
+    min-height: auto;
+  }
+
+  .remix-sidebar {
+    width: 100%;
+    max-height: 280px;
+    border-right: none;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .modal-content {
+    width: 95%;
+    max-height: 90vh;
+  }
+}
+
+/* 手机 (≤640px) */
+@media (max-width: 640px) {
+  body {
+    font-size: 14px;
+  }
+
+  /* 顶栏 */
+  .topbar {
+    min-height: 52px;
+    padding: 0 12px;
+  }
+
+  .brand-mark {
+    width: 32px;
+    height: 32px;
+  }
+
+  .brand strong {
+    font-size: 13px;
+  }
+
+  .brand small {
+    font-size: 9px;
+  }
+
+  .connection-cluster {
+    gap: 6px;
+  }
+
+  .soft-label,
+  #db-status,
+  #stream-status {
+    display: none;
+  }
+
+  /* 主容器 */
+  .shell {
+    width: calc(100% - 16px);
+    padding: 12px 0 30px;
+  }
+
+  /* Hero 区域 */
+  .hero {
+    gap: 16px;
+    padding: 0 2px 20px;
+  }
+
+  .hero h1 {
+    font-size: clamp(24px, 6vw, 34px);
+  }
+
+  .hero-copy {
+    font-size: 13px;
+  }
+
+  .target-card {
+    grid-template-columns: 1fr;
+    gap: 8px;
+    padding: 14px 16px;
+  }
+
+  /* 平台 Tab 导航 */
+  .platform-tabs {
+    width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    border-radius: 12px;
+  }
+
+  .platform-tabs::-webkit-scrollbar {
+    display: none;
+  }
+
+  .platform-tab {
+    padding: 8px 14px;
+    font-size: 12px;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  /* Remix 布局 */
+  .remix-sidebar {
+    max-height: 200px;
+  }
+
+  .remix-video-area {
+    padding: 12px;
+  }
+
+  .remix-video-head {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  .remix-video-head h3 {
+    font-size: 15px;
+  }
+
+  .remix-video-input-row {
+    width: 100%;
+  }
+
+  .remix-video-grid {
+    grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+    gap: 8px;
+  }
+
+  /* 按钮组 */
+  .remix-controls-bar {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .remix-controls-bar .button {
+    font-size: 11px !important;
+    padding: 4px 10px !important;
+  }
+
+  /* 弹窗 */
+  .modal-overlay {
+    align-items: flex-end;
+  }
+
+  .modal-content {
+    width: 100%;
+    max-width: 100%;
+    max-height: 92vh;
+    border-radius: 16px 16px 0 0;
+  }
+
+  .modal-header {
+    padding: 12px 14px;
+  }
+
+  .modal-header h3 {
+    font-size: 14px;
+  }
+
+  .modal-body {
+    padding: 14px;
+  }
+
+  /* TikTok 下载弹窗 */
+  #tiktok-download-modal .modal-content {
+    width: 100%;
+    max-width: 100%;
+  }
+
+  #tiktok-url-input {
+    font-size: 12px;
+  }
+
+  #tiktok-video-grid {
+    grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+    gap: 8px;
+  }
+
+  /* 自动发布面板 */
+  .ap-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .ap-creator-header {
+    padding: 10px 12px;
+  }
+
+  .ap-creator-info strong {
+    font-size: 13px;
+  }
+
+  .ap-creator-platform {
+    font-size: 10px;
+  }
+
+  .ap-creator-body {
+    padding: 10px 12px;
+  }
+
+  .ap-config-row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+  }
+
+  .ap-config-label {
+    font-size: 11px;
+  }
+
+  .ap-config-value input,
+  .ap-config-value select {
+    width: 100%;
+    font-size: 12px;
+  }
+
+  .ap-binding-item {
+    flex-wrap: wrap;
+    gap: 4px;
+    font-size: 11px;
+  }
+
+  /* 流水线表格 */
+  .ap-table {
+    font-size: 11px;
+  }
+
+  .ap-table th {
+    padding: 6px 4px;
+    font-size: 10px;
+  }
+
+  .ap-table td {
+    padding: 6px 4px;
+  }
+
+  .ap-table-wrap {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* TikTok 养号区 */
+  .tk-account-grid {
+    grid-template-columns: 1fr;
+  }
+
+  /* CDP 日志 */
+  .cdp-log-line {
+    font-size: 11px;
+    flex-wrap: wrap;
+  }
+
+  /* 表格通用 */
+  table {
+    font-size: 12px;
+  }
+
+  /* 视频预览弹窗 */
+  #video-preview-modal .modal-content {
+    max-width: 100%;
+  }
+
+  #video-preview-player {
+    max-height: 60vh;
+  }
+
+  /* 隐藏 ambient 背景球节省性能 */
+  .ambient {
+    display: none;
+  }
+}
+
+/* 超小屏 (≤380px) */
+@media (max-width: 380px) {
+  .remix-video-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  #tiktok-video-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .platform-tab {
+    padding: 7px 10px;
+    font-size: 11px;
+  }
+}
