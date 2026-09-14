@@ -8,11 +8,12 @@ function valueOf(result) {
   return result?.result?.value;
 }
 
-// 发布按钮定位四级降级策略（注入到页面 evaluate 上下文）
-// 优先级: data-e2e > data-testid > 精确文本(排除 Schedule/草稿) > 模糊文本过滤
+// 发布按钮定位策略
+// 优先级: data-e2e="post_video_button" > data-e2e="post-button" > data-testid > 精确文本(排除 Schedule/草稿) > 模糊文本
 const FIND_POST_BTN_EXPR = `
   (function findPostBtn() {
     return (
+      document.querySelector('[data-e2e="post_video_button"]') ||
       document.querySelector('[data-e2e="post-button"]') ||
       document.querySelector('button[data-testid="post-submit"]') ||
       Array.from(document.querySelectorAll('button[type="button"],button[type="submit"],button')).find(b => {
@@ -34,110 +35,124 @@ const FIND_POST_BTN_EXPR = `
 export class TiktokPublisher {
   constructor({ client = new CdpClient() } = {}) {
     this.client = client;
-    this.sessionId = null;
     this.targetId = null;
   }
 
   async connect(wsUrl) {
-    await this.client.connect(wsUrl);
-    const targets = await this.client.call("Target.getTargets");
-    
-    // 优先寻找已有 studio/upload 标签页或 tiktok.com 标签页
-    let tk = (targets.targetInfos || []).find(
-      (t) => t.type === "page" && /tiktok\.com\/(tiktokstudio|upload)/.test(t.url)
-    ) || (targets.targetInfos || []).find(
-      (t) => t.type === "page" && /tiktok\.com/.test(t.url)
-    );
+    // 检测 wsUrl 是 browser-level 还是 page-level
+    // browser-level: ws://host:port/devtools/browser/xxx
+    // page-level: ws://host:port/devtools/page/xxx
+    const isBrowserLevel = /\/devtools\/browser\//.test(wsUrl);
 
-    if (!tk) {
-      // 没找到则新建标签页导航至 tiktokstudio/upload
-      const created = await this.client.call("Target.createTarget", { url: "https://www.tiktok.com/tiktokstudio/upload" });
-      this.targetId = created.targetId;
+    if (isBrowserLevel) {
+      // Browser-level: 通过 HTTP /json 获取 page 列表，找到 TikTok 页面的 page-level WS
+      const httpUrl = wsUrl.replace(/^ws:/, "http:").replace(/\/devtools\/browser\/.*$/, "");
+
+      let pageWsUrl = null;
+      let pageId = null;
+
+      try {
+        const res = await fetch(`${httpUrl}/json`);
+        const tabs = await res.json();
+        // 找已有的 TikTok Studio 上传页
+        let tkTab = tabs.find(t => t.type === "page" && /tiktok\.com\/(tiktokstudio|upload)/.test(t.url));
+        if (!tkTab) {
+          tkTab = tabs.find(t => t.type === "page" && /tiktok\.com/.test(t.url));
+        }
+        if (!tkTab) {
+          // 创建新标签页
+          const createRes = await fetch(`${httpUrl}/json/new?${encodeURIComponent("https://www.tiktok.com/tiktokstudio/upload")}`, { method: "PUT" });
+          tkTab = await createRes.json();
+          await new Promise(r => setTimeout(r, 5000));
+        }
+
+        pageWsUrl = tkTab?.webSocketDebuggerUrl;
+        pageId = tkTab?.id;
+      } catch (e) {
+        throw new Error(`获取 TikTok 页面调试地址失败: ${e.message}`);
+      }
+
+      if (!pageWsUrl) {
+        throw new Error("无法获取 TikTok 页面的调试地址，请确认浏览器已打开 TikTok Studio");
+      }
+
+      // 用 page-level WS 连接
+      await this.client.connect(pageWsUrl);
+      this.targetId = pageId;
     } else {
-      this.targetId = tk.targetId;
+      // Page-level: 直接连接
+      await this.client.connect(wsUrl);
+      const m = wsUrl.match(/\/devtools\/page\/(.+)$/);
+      this.targetId = m ? m[1] : null;
     }
 
-    const attached = await this.client.call("Target.attachToTarget", {
-      targetId: this.targetId,
-      flatten: true,
-    });
-    this.sessionId = attached.sessionId;
-    await this.client.call("Page.enable", {}, this.sessionId);
-    await this.client.call("DOM.enable", {}, this.sessionId);
+    // 启用域
+    await this.client.call("Page.enable", {});
+    await this.client.call("DOM.enable", {});
+    await this.client.call("Runtime.enable", {});
 
     // 检查并导航至上传页面
-    const evalUrl = await this.client.call(
-      "Runtime.evaluate",
-      { expression: "window.location.href", returnByValue: true },
-      this.sessionId
-    );
+    const evalUrl = await this.client.call("Runtime.evaluate", {
+      expression: "window.location.href",
+      returnByValue: true,
+    });
     const currentUrl = valueOf(evalUrl) || "";
     if (!/tiktokstudio\/upload|upload/.test(currentUrl)) {
-      await this.client.call("Page.navigate", { url: "https://www.tiktok.com/tiktokstudio/upload" }, this.sessionId, 30000);
+      await this.client.call("Page.navigate", { url: "https://www.tiktok.com/tiktokstudio/upload" }, null, 30000);
       await this.#waitForReady();
     }
 
-    await new Promise((r) => setTimeout(r, 3000));
+    await new Promise(r => setTimeout(r, 3000));
     return { connected: true, targetId: this.targetId };
   }
 
   async #waitForReady() {
-    await this.client.call(
-      "Runtime.evaluate",
-      {
-        expression: "new Promise(r => document.readyState === 'loading' ? document.addEventListener('DOMContentLoaded', r, {once:true}) : r())",
-        awaitPromise: true,
-        returnByValue: true,
-      },
-      this.sessionId,
-      30000
-    );
+    await this.client.call("Runtime.evaluate", {
+      expression: "new Promise(r => document.readyState === 'loading' ? document.addEventListener('DOMContentLoaded', r, {once:true}) : r())",
+      awaitPromise: true,
+      returnByValue: true,
+    }, null, 30000);
   }
 
   async uploadVideo({ filePath, title, hashtags = [], privacyLevel = "public" }) {
     if (!filePath) throw new Error("缺失视频文件路径");
-    
+
     // 1. 查找页面中的 file input 节点
-    const doc = await this.client.call("DOM.getDocument", { depth: -1 }, this.sessionId);
+    const doc = await this.client.call("DOM.getDocument", { depth: -1 });
     const fileInput = await this.client.call("DOM.querySelector", {
       nodeId: doc.root.nodeId,
-      selector: 'input[type="file"]'
-    }, this.sessionId).catch(() => null);
+      selector: 'input[type="file"]',
+    }).catch(() => null);
 
     if (!fileInput || !fileInput.nodeId) {
       throw new Error("未在 TikTok Studio 上传页面找到 <input type='file'> 元素（请确认已登录账号）");
     }
 
-    // 2. 使用 CDP DOM.setFileInputFiles 命令直接全自动设置文件
+    // 2. 使用 CDP DOM.setFileInputFiles 设置文件
     await this.client.call("DOM.setFileInputFiles", {
       files: [filePath],
-      nodeId: fileInput.nodeId
-    }, this.sessionId);
+      nodeId: fileInput.nodeId,
+    });
 
     // 3. 等待视频上传并解析完成（轮询检测编辑器是否就绪）
     let editorReady = false;
-    for (let i = 0; i < 40; i++) {
-      await new Promise((r) => setTimeout(r, 1000));
-      const res = await this.client.call(
-        "Runtime.evaluate",
-        {
-          expression: `(() => {
-            // 编辑器：优先 Draft.js，回退 textarea
-            const editor = document.querySelector('.public-DraftEditor-content')
-              || document.querySelector('[contenteditable="true"]')
-              || document.querySelector('div[data-e2e="caption-input"]')
-              || document.querySelector('textarea');
-            const postBtn = ${FIND_POST_BTN_EXPR};
-            return JSON.stringify({
-              hasEditor: !!editor,
-              hasPostBtn: !!postBtn,
-              postDisabled: postBtn ? (postBtn.disabled || postBtn.getAttribute('aria-disabled') === 'true') : true
-            });
-          })()`,
-          returnByValue: true
-        },
-        this.sessionId
-      );
+    for (let i = 0; i < 60; i++) {
+      await new Promise(r => setTimeout(r, 1000));
+      const res = await this.client.call("Runtime.evaluate", {
+        expression: `(() => {
+          const editor = document.querySelector('.public-DraftEditor-content')
+            || document.querySelector('[contenteditable="true"]')
+            || document.querySelector('div[data-e2e="caption-input"]')
+            || document.querySelector('textarea');
+          const postBtn = ${FIND_POST_BTN_EXPR};
+          return JSON.stringify({
+            hasEditor: !!editor,
+            hasPostBtn: !!postBtn,
+            postDisabled: postBtn ? (postBtn.disabled || postBtn.getAttribute('aria-disabled') === 'true') : true
+          });
+        })()`,
+        returnByValue: true,
+      });
       const status = JSON.parse(valueOf(res) || "{}");
       if (status.hasEditor && status.hasPostBtn) {
         editorReady = true;
@@ -152,103 +167,85 @@ export class TiktokPublisher {
     // 4. 填写 Title 与 #Hashtags
     const fullCaption = `${title || ''} ${hashtags.map(t => t.startsWith('#') ? t : `#${t}`).join(' ')}`.trim();
     if (fullCaption) {
-      // 聚焦编辑器并输入文案
-      await this.client.call(
-        "Runtime.evaluate",
-        {
-          expression: `(() => {
-            const editor = document.querySelector('.public-DraftEditor-content')
-              || document.querySelector('[contenteditable="true"]')
-              || document.querySelector('div[data-e2e="caption-input"]')
-              || document.querySelector('textarea');
-            if (editor) {
-              editor.focus();
-              return true;
-            }
-            return false;
-          })()`,
-          returnByValue: true
-        },
-        this.sessionId
-      );
-      await new Promise((r) => setTimeout(r, 500));
-      await this.client.call("Input.insertText", { text: fullCaption }, this.sessionId);
-      await new Promise((r) => setTimeout(r, 1000));
+      await this.client.call("Runtime.evaluate", {
+        expression: `(() => {
+          const editor = document.querySelector('.public-DraftEditor-content')
+            || document.querySelector('[contenteditable="true"]')
+            || document.querySelector('div[data-e2e="caption-input"]')
+            || document.querySelector('textarea');
+          if (editor) { editor.focus(); return true; }
+          return false;
+        })()`,
+        returnByValue: true,
+      });
+      await new Promise(r => setTimeout(r, 500));
+      await this.client.call("Input.insertText", { text: fullCaption });
+      await new Promise(r => setTimeout(r, 1000));
     }
 
-    // 5. 等待"发布"按钮进入可用状态（上传进度可能正在转圈）
+    // 5. 等待发布按钮可用
     let canPost = false;
-    for (let i = 0; i < 60; i++) {
-      const res = await this.client.call(
-        "Runtime.evaluate",
-        {
-          expression: `(() => {
-            const postBtn = ${FIND_POST_BTN_EXPR};
-            if (!postBtn) return false;
-            return !(postBtn.disabled || postBtn.getAttribute('aria-disabled') === 'true' || postBtn.classList.contains('disabled'));
-          })()`,
-          returnByValue: true
-        },
-        this.sessionId
-      );
+    for (let i = 0; i < 90; i++) {
+      const res = await this.client.call("Runtime.evaluate", {
+        expression: `(() => {
+          const postBtn = ${FIND_POST_BTN_EXPR};
+          if (!postBtn) return false;
+          return !(postBtn.disabled || postBtn.getAttribute('aria-disabled') === 'true' || postBtn.classList.contains('disabled'));
+        })()`,
+        returnByValue: true,
+      });
       canPost = valueOf(res);
       if (canPost) break;
-      await new Promise((r) => setTimeout(r, 1500));
+      await new Promise(r => setTimeout(r, 1500));
     }
 
     if (!canPost) {
       throw new Error("视频预处理超时，发布按钮未解锁");
     }
 
-    // 6. 点击"Post / 发布"按钮
-    // 同时派发 mousedown/mouseup/click 以触发 React 合成事件
-    const clickRes = await this.client.call(
-      "Runtime.evaluate",
-      {
-        expression: `(() => {
-          const postBtn = ${FIND_POST_BTN_EXPR};
-          if (!postBtn) return false;
-          postBtn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
-          postBtn.dispatchEvent(new MouseEvent('mouseup',   { bubbles: true, cancelable: true }));
-          postBtn.dispatchEvent(new MouseEvent('click',     { bubbles: true, cancelable: true }));
-          return postBtn.innerText.trim() || 'clicked';
-        })()`,
-        returnByValue: true
-      },
-      this.sessionId
-    );
+    // 6. 点击发布按钮
+    const clickRes = await this.client.call("Runtime.evaluate", {
+      expression: `(() => {
+        const postBtn = ${FIND_POST_BTN_EXPR};
+        if (!postBtn) return false;
+        postBtn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+        postBtn.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
+        postBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+        return postBtn.innerText.trim() || 'clicked';
+      })()`,
+      returnByValue: true,
+    });
 
     if (!valueOf(clickRes)) throw new Error("无法触发发布按钮点击");
 
-    // 7. 等待发布成功模态框或反馈
+    // 7. 等待发布成功
     let success = false;
     let publishedVideoUrl = "";
     let publishedVideoId = "";
 
     for (let i = 0; i < 30; i++) {
-      await new Promise((r) => setTimeout(r, 1000));
-      const res = await this.client.call(
-        "Runtime.evaluate",
-        {
-          expression: `(() => {
-            const bodyText = document.body.innerText || '';
-            const isDone = bodyText.includes('Your video is being uploaded to TikTok') ||
-                           bodyText.includes('Manage your posts') ||
-                           bodyText.includes('Upload another video') ||
-                           bodyText.includes('你的视频正在上传') ||
-                           bodyText.includes('管理你的作品');
-            const linkEl = document.querySelector('a[href*="/video/"]');
-            return JSON.stringify({
-              isDone,
-              videoUrl: linkEl ? linkEl.href : ''
-            });
-          })()`,
-          returnByValue: true
-        },
-        this.sessionId
-      );
+      await new Promise(r => setTimeout(r, 1000));
+      const res = await this.client.call("Runtime.evaluate", {
+        expression: `(() => {
+          const bodyText = document.body.innerText || '';
+          const url = window.location.href;
+          const isDone = bodyText.includes('Your video is being uploaded to TikTok') ||
+                         bodyText.includes('Manage your posts') ||
+                         bodyText.includes('Upload another video') ||
+                         bodyText.includes('你的视频正在上传') ||
+                         bodyText.includes('管理你的作品') ||
+                         url.includes('/tiktokstudio/content');
+          const linkEl = document.querySelector('a[href*="/video/"]');
+          return JSON.stringify({
+            isDone,
+            videoUrl: linkEl ? linkEl.href : '',
+            currentUrl: url
+          });
+        })()`,
+        returnByValue: true,
+      });
       const ret = JSON.parse(valueOf(res) || "{}");
-      if (ret.isDone || ret.videoUrl) {
+      if (ret.isDone) {
         success = true;
         publishedVideoUrl = ret.videoUrl;
         if (publishedVideoUrl) {
@@ -269,161 +266,108 @@ export class TiktokPublisher {
 
   /**
    * 上传图片（照片）到 TikTok
-   * 流程与 uploadVideo 类似，但图片不需要等待视频预处理，轮询时间更短。
-   * 同样导航至 /tiktokstudio/upload，file input 用 DOM.setFileInputFiles 设置图片。
    */
   async uploadPhoto({ filePath, title, hashtags = [], privacyLevel = "public" }) {
     if (!filePath) throw new Error("缺失图片文件路径");
 
-    // 1. 查找页面中的 file input 节点
-    const doc = await this.client.call("DOM.getDocument", { depth: -1 }, this.sessionId);
+    const doc = await this.client.call("DOM.getDocument", { depth: -1 });
     const fileInput = await this.client.call("DOM.querySelector", {
       nodeId: doc.root.nodeId,
-      selector: 'input[type="file"]'
-    }, this.sessionId).catch(() => null);
+      selector: 'input[type="file"]',
+    }).catch(() => null);
 
     if (!fileInput || !fileInput.nodeId) {
       throw new Error("未在 TikTok Studio 上传页面找到 <input type='file'> 元素（请确认已登录账号）");
     }
 
-    // 2. 使用 CDP DOM.setFileInputFiles 命令直接设置图片文件
     await this.client.call("DOM.setFileInputFiles", {
       files: [filePath],
-      nodeId: fileInput.nodeId
-    }, this.sessionId);
+      nodeId: fileInput.nodeId,
+    });
 
-    // 3. 等待图片上传并进入编辑界面（图片无需视频预处理，轮询次数少一些）
     let editorReady = false;
     for (let i = 0; i < 20; i++) {
-      await new Promise((r) => setTimeout(r, 1000));
-      const res = await this.client.call(
-        "Runtime.evaluate",
-        {
-          expression: `(() => {
-            const editor = document.querySelector('.public-DraftEditor-content')
-              || document.querySelector('[contenteditable="true"]')
-              || document.querySelector('div[data-e2e="caption-input"]')
-              || document.querySelector('textarea');
-            const postBtn = ${FIND_POST_BTN_EXPR};
-            return JSON.stringify({
-              hasEditor: !!editor,
-              hasPostBtn: !!postBtn,
-              postDisabled: postBtn ? (postBtn.disabled || postBtn.getAttribute('aria-disabled') === 'true') : true
-            });
-          })()`,
-          returnByValue: true
-        },
-        this.sessionId
-      );
+      await new Promise(r => setTimeout(r, 1000));
+      const res = await this.client.call("Runtime.evaluate", {
+        expression: `(() => {
+          const editor = document.querySelector('.public-DraftEditor-content')
+            || document.querySelector('[contenteditable="true"]')
+            || document.querySelector('div[data-e2e="caption-input"]')
+            || document.querySelector('textarea');
+          const postBtn = ${FIND_POST_BTN_EXPR};
+          return JSON.stringify({ hasEditor: !!editor, hasPostBtn: !!postBtn, postDisabled: postBtn ? (postBtn.disabled || postBtn.getAttribute('aria-disabled') === 'true') : true });
+        })()`,
+        returnByValue: true,
+      });
       const status = JSON.parse(valueOf(res) || "{}");
-      if (status.hasEditor && status.hasPostBtn) {
-        editorReady = true;
-        break;
-      }
+      if (status.hasEditor && status.hasPostBtn) { editorReady = true; break; }
     }
 
-    if (!editorReady) {
-      throw new Error("图片上传超时，元数据编辑器未在预期时间内就绪");
-    }
+    if (!editorReady) throw new Error("图片上传超时，元数据编辑器未在预期时间内就绪");
 
-    // 4. 填写 Title 与 #Hashtags
     const fullCaption = `${title || ''} ${hashtags.map(t => t.startsWith('#') ? t : `#${t}`).join(' ')}`.trim();
     if (fullCaption) {
-      await this.client.call(
-        "Runtime.evaluate",
-        {
-          expression: `(() => {
-            const editor = document.querySelector('.public-DraftEditor-content')
-              || document.querySelector('[contenteditable="true"]')
-              || document.querySelector('div[data-e2e="caption-input"]')
-              || document.querySelector('textarea');
-            if (editor) {
-              editor.focus();
-              return true;
-            }
-            return false;
-          })()`,
-          returnByValue: true
-        },
-        this.sessionId
-      );
-      await new Promise((r) => setTimeout(r, 500));
-      await this.client.call("Input.insertText", { text: fullCaption }, this.sessionId);
-      await new Promise((r) => setTimeout(r, 1000));
+      await this.client.call("Runtime.evaluate", {
+        expression: `(() => {
+          const editor = document.querySelector('.public-DraftEditor-content') || document.querySelector('[contenteditable="true"]') || document.querySelector('textarea');
+          if (editor) { editor.focus(); return true; }
+          return false;
+        })()`,
+        returnByValue: true,
+      });
+      await new Promise(r => setTimeout(r, 500));
+      await this.client.call("Input.insertText", { text: fullCaption });
+      await new Promise(r => setTimeout(r, 1000));
     }
 
-    // 5. 等待"发布"按钮进入可用状态（图片上传通常很快）
     let canPost = false;
     for (let i = 0; i < 30; i++) {
-      const res = await this.client.call(
-        "Runtime.evaluate",
-        {
-          expression: `(() => {
-            const postBtn = ${FIND_POST_BTN_EXPR};
-            if (!postBtn) return false;
-            return !(postBtn.disabled || postBtn.getAttribute('aria-disabled') === 'true' || postBtn.classList.contains('disabled'));
-          })()`,
-          returnByValue: true
-        },
-        this.sessionId
-      );
+      const res = await this.client.call("Runtime.evaluate", {
+        expression: `(() => { const postBtn = ${FIND_POST_BTN_EXPR}; if (!postBtn) return false; return !(postBtn.disabled || postBtn.getAttribute('aria-disabled') === 'true'); })()`,
+        returnByValue: true,
+      });
       canPost = valueOf(res);
       if (canPost) break;
-      await new Promise((r) => setTimeout(r, 1500));
+      await new Promise(r => setTimeout(r, 1500));
     }
 
-    if (!canPost) {
-      throw new Error("图片上传完成但发布按钮未解锁");
-    }
+    if (!canPost) throw new Error("图片上传完成但发布按钮未解锁");
 
-    // 6. 点击"Post / 发布"按钮
-    const clickRes = await this.client.call(
-      "Runtime.evaluate",
-      {
-        expression: `(() => {
-          const postBtn = ${FIND_POST_BTN_EXPR};
-          if (!postBtn) return false;
-          postBtn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
-          postBtn.dispatchEvent(new MouseEvent('mouseup',   { bubbles: true, cancelable: true }));
-          postBtn.dispatchEvent(new MouseEvent('click',     { bubbles: true, cancelable: true }));
-          return postBtn.innerText.trim() || 'clicked';
-        })()`,
-        returnByValue: true
-      },
-      this.sessionId
-    );
+    const clickRes = await this.client.call("Runtime.evaluate", {
+      expression: `(() => {
+        const postBtn = ${FIND_POST_BTN_EXPR};
+        if (!postBtn) return false;
+        postBtn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+        postBtn.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+        postBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        return postBtn.innerText.trim() || 'clicked';
+      })()`,
+      returnByValue: true,
+    });
 
     if (!valueOf(clickRes)) throw new Error("无法触发发布按钮点击");
 
-    // 7. 等待发布成功反馈
     let success = false;
     let publishedPhotoUrl = "";
     let publishedPhotoId = "";
 
     for (let i = 0; i < 20; i++) {
-      await new Promise((r) => setTimeout(r, 1000));
-      const res = await this.client.call(
-        "Runtime.evaluate",
-        {
-          expression: `(() => {
-            const bodyText = document.body.innerText || '';
-            const isDone = bodyText.includes('Your photo is being uploaded to TikTok') ||
-                           bodyText.includes('Manage your posts') ||
-                           bodyText.includes('Upload another photo') ||
-                           bodyText.includes('Upload another video') ||
-                           bodyText.includes('你的图片正在上传') ||
-                           bodyText.includes('你的视频正在上传') ||
-                           bodyText.includes('管理你的作品');
-            const linkEl = document.querySelector('a[href*="/photo/"]') || document.querySelector('a[href*="/video/"]');
-            return JSON.stringify({
-              isDone,
-              photoUrl: linkEl ? linkEl.href : ''
-            });
-          })()`,
-          returnByValue: true
-        },
-        this.sessionId
-      );
+      await new Promise(r => setTimeout(r, 1000));
+      const res = await this.client.call("Runtime.evaluate", {
+        expression: `(() => {
+          const bodyText = document.body.innerText || '';
+          const url = window.location.href;
+          const isDone = bodyText.includes('Your photo is being uploaded') ||
+                         bodyText.includes('Manage your posts') ||
+                         bodyText.includes('Upload another') ||
+                         bodyText.includes('你的图片正在上传') ||
+                         bodyText.includes('管理你的作品') ||
+                         url.includes('/tiktokstudio/content');
+          const linkEl = document.querySelector('a[href*="/photo/"]') || document.querySelector('a[href*="/video/"]');
+          return JSON.stringify({ isDone, photoUrl: linkEl ? linkEl.href : '' });
+        })()`,
+        returnByValue: true,
+      });
       const ret = JSON.parse(valueOf(res) || "{}");
       if (ret.isDone || ret.photoUrl) {
         success = true;
@@ -445,8 +389,6 @@ export class TiktokPublisher {
   }
 
   async close() {
-    try {
-      await this.client.close();
-    } catch {}
+    try { await this.client.close(); } catch {}
   }
 }
