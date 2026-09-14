@@ -7362,12 +7362,8 @@ const autoPublish = {
   _initialized: false,
   _pollTimer: null,
 
-  // 混剪方案列表（与后端 preset 对应）
-  presets: [
-    { value: 'stitch', label: '拼接混剪' },
-    { value: 'ai', label: 'AI混剪' },
-    { value: 'dedup', label: '去重处理' },
-  ],
+  // 混剪方案列表（从后端动态加载）
+  presets: [],
 
   // 状态颜色映射
   statusClass(status) {
@@ -7401,11 +7397,29 @@ const autoPublish = {
       this._bindEvents();
       this._initialized = true;
     }
+    this.fetchPresets();
     this.fetchCreators();
     this.fetchPipelineTasks();
     this.fetchProfiles();
     this.fetchMonitorData();
     this._startPolling();
+  },
+
+  async fetchPresets() {
+    try {
+      const data = await request('/api/ai-presets');
+      const list = Array.isArray(data) ? data : (data?.presets || []);
+      // 只显示单视频AI混剪方案（排除多条混剪方案）
+      this.presets = list
+        .filter((p) => {
+          // 排除 segment_script 类型的多条混剪方案
+          const types = p.resourceTypes || p.resource_types || [];
+          return !types.includes('segment_script');
+        })
+        .map((p) => ({ value: p.id, label: p.name || '未命名方案' }));
+    } catch {
+      this.presets = [];
+    }
   },
 
   _bindEvents() {
