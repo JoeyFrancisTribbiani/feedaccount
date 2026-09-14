@@ -4115,6 +4115,8 @@ tiktokDl.parseBtn?.addEventListener("click", async () => {
     showTiktokProgress(`正在解析主页: ${profileUrls[0]}...`);
     tiktokDl.videoList.style.display = "none";
     tiktokDl.results.style.display = "none";
+    tiktokDl.parseBtn.disabled = true;
+    tiktokDl.parseBtn.textContent = "解析中...";
     try {
       // 发起异步解析请求，立即返回 taskId
       const data = await request("/api/tiktok/parse-profile", {
@@ -4145,6 +4147,8 @@ tiktokDl.parseBtn?.addEventListener("click", async () => {
         if (Date.now() - pollStartedAt > 5 * 60 * 1000) {
           clearInterval(pollTimer);
           hideTiktokProgress();
+          tiktokDl.parseBtn.disabled = false;
+          tiktokDl.parseBtn.textContent = "解析链接";
           showToast("解析超时，请稍后查看视频列表", true);
           return;
         }
@@ -4167,6 +4171,8 @@ tiktokDl.parseBtn?.addEventListener("click", async () => {
           } else if (eventType === "done") {
             clearInterval(pollTimer);
             hideTiktokProgress();
+            tiktokDl.parseBtn.disabled = false;
+            tiktokDl.parseBtn.textContent = "解析链接";
             await fetchRemixCreators();
             showToast(`解析完成，共 ${info.totalVideos || 0} 个视频已入库`);
             // 从数据库加载视频列表，渲染到弹窗供用户选择下载
@@ -4195,12 +4201,16 @@ tiktokDl.parseBtn?.addEventListener("click", async () => {
           } else if (eventType === "error") {
             clearInterval(pollTimer);
             hideTiktokProgress();
+            tiktokDl.parseBtn.disabled = false;
+            tiktokDl.parseBtn.textContent = "解析链接";
             showToast(`解析失败: ${info.error || "未知错误"}`, true);
           }
         } catch {}
       }, 3000);
     } catch (e) {
       hideTiktokProgress();
+      tiktokDl.parseBtn.disabled = false;
+      tiktokDl.parseBtn.textContent = "解析链接";
       showToast(`解析失败: ${e.message}`, true);
     }
     return;
@@ -4218,10 +4228,12 @@ function renderTiktokVideoList(videos, username) {
 
   tiktokDl.videoGrid.innerHTML = videos.map((v, i) => {
     const dur = formatTkDuration(v.duration);
+    const dlBadge = v.downloaded ? '<span style="position:absolute;top:6px;left:6px;background:#22c55e;color:#fff;font-size:9px;padding:1px 5px;border-radius:3px;z-index:2;">已下载</span>' : "";
     return `
-      <div class="tiktok-video-card" data-index="${i}" style="border:1px solid var(--line);border-radius:8px;overflow:hidden;cursor:pointer;position:relative;">
+      <div class="tiktok-video-card" data-index="${i}" style="border:1px solid var(--line);border-radius:8px;overflow:hidden;cursor:pointer;position:relative;${v.downloaded ? 'opacity:0.6;' : ''}">
         <div style="position:relative;width:100%;padding-top:177%;background:var(--bg-subtle);">
           ${v.cover ? `<img src="${v.cover}" style="position:absolute;top:0;left:0;width:100%;height:100%;object-fit:cover;" loading="lazy" onerror="this.style.display='none'" />` : '<div style="position:absolute;top:0;left:0;width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:var(--text-muted);font-size:11px;">无封面</div>'}
+          ${dlBadge}
           <div class="tiktok-check" style="position:absolute;top:6px;right:6px;width:20px;height:20px;border-radius:50%;background:rgba(0,0,0,0.5);border:2px solid #fff;display:flex;align-items:center;justify-content:center;color:#fff;font-size:12px;"></div>
           ${dur ? `<span style="position:absolute;bottom:4px;right:4px;background:rgba(0,0,0,0.7);color:#fff;font-size:10px;padding:1px 4px;border-radius:3px;">${escapeHtml(dur)}</span>` : ""}
         </div>

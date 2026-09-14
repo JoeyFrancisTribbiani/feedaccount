@@ -2425,7 +2425,7 @@ export class LocalDatabase {
     // 创建新记录
     const id = `rv_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     const ts = nowIso();
-    this.db.prepare(`INSERT INTO remix_videos (id, creator_id, url, title, source_url, thumb_url, duration, downloaded, created_at) VALUES (?, ?, NULL, ?, ?, ?, ?, 0, ?)`).run(id, creatorId, title, sourceUrl, thumbUrl, duration, ts);
+    this.db.prepare(`INSERT INTO remix_videos (id, creator_id, url, title, source_url, thumb_url, duration, downloaded, created_at) VALUES (?, ?, '', ?, ?, ?, ?, 0, ?)`).run(id, creatorId, title, sourceUrl, thumbUrl, duration, ts);
     return this.getRemixVideo(id);
   }
 

@@ -2265,10 +2265,11 @@ export function createMonitorServer({
         return;
       }
 
-      // TikTok catch-all (排除 download/parse-profile/batch-download 等路由，它们在后面定义)
+      // TikTok catch-all (排除 download/parse-profile/parse-status/batch-download 等路由，它们在后面定义)
       if (pathname.startsWith("/api/tiktok/") &&
           !pathname.startsWith("/api/tiktok/download") &&
           !pathname.startsWith("/api/tiktok/parse-profile") &&
+          !pathname.startsWith("/api/tiktok/parse-status") &&
           !pathname.startsWith("/api/tiktok/batch-download")) {
         sendJson(response, 404, { error: "TikTok 接口不存在" });
         return;
@@ -3175,8 +3176,8 @@ export function createMonitorServer({
           const filename = `${Date.now()}_${username}_${videoId}.mp4`;
           const videoUrl = `/data/remix-videos/${filename}`;
 
-          // 查找或创建达人
-          const creator = findOrCreateCreator(nickname, "TikTok");
+          // 查找或创建达人（用 username 匹配，不用 nickname，因为 nickname 可能含表情导致和解析时不一致）
+          const creator = findOrCreateCreator(username, "TikTok");
 
           // 去重检查：只按 source_url 匹配，且必须 downloaded=1 或 url 不为空（已下载过的才算已存在）
           const allVideos = store.listRemixVideos(creator.id);
@@ -3317,14 +3318,17 @@ export function createMonitorServer({
               if (!wsUrl) throw new Error('无法获取 WebSocket 地址');
 
               const ws = new WebSocket(wsUrl);
+              let wsClosed = false;
               await new Promise((resolve, reject) => {
                 ws.addEventListener('open', resolve);
                 ws.addEventListener('error', () => reject(new Error('WebSocket 连接失败')));
+                ws.addEventListener('close', () => { wsClosed = true; });
                 setTimeout(() => reject(new Error('ws timeout')), 10000);
               });
 
               let cdpMsgId = 0;
               const sendCDP = (method, params = {}) => new Promise((resolve, reject) => {
+                if (wsClosed) return reject(new Error('WebSocket 已断开'));
                 const id = ++cdpMsgId;
                 const handler = (e) => { const d = JSON.parse(e.data); if (d.id === id) { ws.removeEventListener('message', handler); resolve(d); } };
                 ws.addEventListener('message', handler);
@@ -3415,6 +3419,10 @@ export function createMonitorServer({
               emit("done", { taskId, username, totalVideos: allVideoUrls.size, userInfo: info });
             } catch (e) {
               emit("error", { taskId, error: e.message });
+            } finally {
+              // 确保标签页被关闭（防止累积）
+              try { ws.close(); } catch {}
+              try { await fetch(`${cdpBase}/json/close/${newTab.id}`, { signal: AbortSignal.timeout(5000) }).catch(() => {}); } catch {}
             }
           })();
           return;
