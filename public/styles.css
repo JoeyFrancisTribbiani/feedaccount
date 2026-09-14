@@ -4895,6 +4895,41 @@ footer span {
   }
 }
 
+/* 路径配置 + 按钮栏 */
+.remix-controls-bar {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+  flex-wrap: wrap;
+}
+
+.remix-path-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.remix-path-text {
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.remix-path-input {
+  flex: 1;
+  min-width: 120px;
+  font-size: 12px;
+}
+
+.remix-bar-btn {
+  font-size: 12px;
+  padding: 4px 12px;
+  white-space: nowrap;
+}
+
 /* ==========================================================================
    全局移动端响应式
    ========================================================================== */
@@ -4933,6 +4968,29 @@ footer span {
 @media (max-width: 640px) {
   body {
     font-size: 14px;
+    overflow-x: hidden;
+  }
+
+  /* 防止任何元素撑宽页面 */
+  .shell,
+  .remix-panel,
+  .remix-layout,
+  .remix-controls-bar,
+  .modal-content,
+  section {
+    max-width: 100% !important;
+    overflow-wrap: break-word;
+    word-wrap: break-word;
+  }
+
+  /* 覆盖内联样式的固定最小宽度 */
+  input[type="text"],
+  input[type="url"],
+  input[type="number"],
+  textarea,
+  select {
+    min-width: 0 !important;
+    max-width: 100% !important;
   }
 
   /* 顶栏 */
@@ -5042,9 +5100,15 @@ footer span {
   .remix-controls-bar {
     flex-wrap: wrap;
     gap: 6px;
+    padding: 8px 10px;
   }
 
-  .remix-controls-bar .button {
+  .remix-path-input {
+    min-width: 80px;
+    font-size: 11px;
+  }
+
+  .remix-bar-btn {
     font-size: 11px !important;
     padding: 4px 10px !important;
   }
