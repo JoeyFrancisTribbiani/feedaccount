@@ -1205,13 +1205,14 @@
                 <button id="remix-dedup-btn" class="button button-secondary" type="button" disabled>去重处理</button>
               </div>
 
-              <!-- 达人专属资源 -->
-              <div class="remix-resources-area">
-                <div class="remix-resources-head">
+              <!-- 达人专属资源（默认折叠） -->
+              <details class="remix-resources-area">
+              <summary class="remix-resources-head" style="cursor:pointer;list-style:none;display:flex;align-items:center;gap:8px;">
+                  <span style="font-size:12px;color:var(--text-muted);">▶</span>
                   <h3>达人专属资源</h3>
                   <span id="remix-resources-hint" class="muted-activity" style="font-size: 12px;">选择达人后可上传开头/结尾片段和背景音乐</span>
-                </div>
-                <div id="remix-resources-sections" class="remix-resources-sections">
+              </summary>
+                <div id="remix-resources-sections" class="remix-resources-sections" style="margin-top:8px;">
                 <div class="remix-resource-section" data-type="intro">
                   <div class="remix-resource-section-head">
                     <strong>开头片段 (Intro)</strong>
@@ -1243,6 +1244,7 @@
                   <div class="remix-resource-list" id="remix-resource-list-music"></div>
                 </div>
               </div>
+              </details>
             </div>
             </div>
           </div>
