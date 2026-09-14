@@ -3218,86 +3218,126 @@ export function createMonitorServer({
           }
 
           try {
-            // 方案1: 直接请求 TikTok 主页 HTML 拿 secUid + 用户信息
-            const profileRes = await fetch(`https://www.tiktok.com/@${username}`, {
-              headers: {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "Accept": "text/html,application/xhtml+xml",
-                "Accept-Language": "en-US,en;q=0.9",
-              },
-              signal: AbortSignal.timeout(30000),
-            });
-            if (!profileRes.ok) throw new Error(`TikTok 主页 HTTP ${profileRes.status}`);
-            const html = await profileRes.text();
-
-            // 提取 __UNIVERSAL_DATA_FOR_REHYDRATION__
-            const jsonMatch = html.match(/<script id="__UNIVERSAL_DATA_FOR_REHYDRATION__"[^>]*>([\s\S]*?)<\/script>/);
-            if (!jsonMatch) throw new Error("无法解析 TikTok 主页数据");
-
-            const json = JSON.parse(jsonMatch[1]);
-            const userInfo = json?.__DEFAULT_SCOPE__?.["webapp.user-detail"]?.userInfo;
-            if (!userInfo?.user) throw new Error("未找到达人信息");
-
-            const user = userInfo.user;
-            const stats = userInfo.stats || {};
-            const secUid = user.secUid;
-
-            // 从 HTML 中提取视频列表（itemList 可能为空，需用内部 API）
-            const itemList = userInfo.itemList || [];
-            
-            // 如果 itemList 为空，尝试用 TikWM 的 user/posts API（可能被 CF 拦截）
+            // 方案1: CDP 浏览器打开达人主页，提取视频列表（最可靠）
             let videos = [];
-            if (itemList.length > 0) {
-              videos = itemList.map((v) => ({
-                id: v.id,
-                url: `https://www.tiktok.com/@${username}/video/${v.id}`,
-                title: (v.desc || "").substring(0, 200),
-                cover: v.video?.cover || v.video?.originCover || null,
-                duration: v.video?.duration || null,
-                author: username,
-              }));
-            } else {
-              // 降级: TikWM user/posts API
-              try {
-                const apiUrl = `https://www.tikwm.com/api/user/posts?username=${encodeURIComponent(username)}&count=30`;
-                const res2 = await fetch(apiUrl, {
-                  headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36", "Accept": "application/json" },
-                  signal: AbortSignal.timeout(30000),
-                });
-                if (res2.ok) {
-                  const data2 = await res2.json();
-                  if (data2.code === 0) {
-                    const feed = data2.data?.videos || data2.data || [];
-                    if (Array.isArray(feed)) {
-                      videos = feed.map((v) => ({
-                        id: v.video_id || v.id,
-                        url: `https://www.tiktok.com/@${username}/video/${v.video_id || v.id}`,
-                        title: (v.title || "").substring(0, 200),
-                        cover: v.cover || v.origin_cover || null,
-                        duration: v.duration || null,
-                        author: username,
-                      }));
-                    }
+            let userInfoData = null;
+            try {
+              // 用 Chrome CDP HTTP API 打开页面
+              const cdpBase = 'http://localhost:9222';
+              const newTabRes = await fetch(`${cdpBase}/json/new?${encodeURIComponent(`https://www.tiktok.com/@${username}`)}`, { method: 'PUT', signal: AbortSignal.timeout(10000) });
+              if (newTabRes.ok) {
+                const newTab = await newTabRes.json();
+                const wsUrl = newTab.webSocketDebuggerUrl;
+                if (wsUrl) {
+                  const ws = new WebSocket(wsUrl);
+                  await new Promise((resolve, reject) => {
+                    ws.addEventListener('open', resolve);
+                    ws.addEventListener('error', reject);
+                    setTimeout(() => reject(new Error('ws timeout')), 10000);
+                  });
+
+                  let cdpMsgId = 0;
+                  const sendCDP = (method, params = {}) => new Promise((resolve, reject) => {
+                    const id = ++cdpMsgId;
+                    const handler = (e) => {
+                      const data = JSON.parse(e.data);
+                      if (data.id === id) { ws.removeEventListener('message', handler); resolve(data); }
+                    };
+                    ws.addEventListener('message', handler);
+                    ws.send(JSON.stringify({ id, method, params }));
+                    setTimeout(() => reject(new Error(`${method} timeout`)), 30000);
+                  });
+                  const evalJS = (expr) => sendCDP('Runtime.evaluate', { expression: expr, returnByValue: true, awaitPromise: true });
+
+                  // 等待页面加载
+                  await new Promise(r => setTimeout(r, 3000));
+                  // 等待视频元素出现（最多等 20 秒）
+                  for (let i = 0; i < 10; i++) {
+                    const check = await evalJS(`document.querySelectorAll('a[href*="/video/"]').length`);
+                    if (check?.result?.result?.value > 0) break;
+                    await new Promise(r => setTimeout(r, 2000));
+                  }
+                  // 滚动加载更多
+                  for (let i = 0; i < 3; i++) {
+                    await evalJS(`window.scrollTo(0, document.body.scrollHeight)`);
+                    await new Promise(r => setTimeout(r, 2000));
+                  }
+                  // 提取视频列表
+                  const extractResult = await evalJS(`
+                    (() => {
+                      const items = [...document.querySelectorAll('a[href*="/video/"]')].map(a => {
+                        const container = a.closest('[data-e2e="user-post-item"]') || a.parentElement;
+                        const img = container?.querySelector('img');
+                        return { url: a.href, title: (img?.alt || '').substring(0, 200), cover: img?.src || '', duration: null };
+                      });
+                      const seen = new Set();
+                      const unique = items.filter(v => { if (seen.has(v.url)) return false; seen.add(v.url); return true; });
+                      // 提取达人信息
+                      const nickname = document.querySelector('[data-e2e="user-info"] h1')?.textContent || document.querySelector('h1')?.textContent || '';
+                      const followerCount = document.querySelector('[data-e2e="followers-count"]')?.textContent || '';
+                      const videoCount = document.querySelector('[data-e2e="video-count"]')?.textContent || '';
+                      return JSON.stringify({ videos: unique, nickname, followerCount, videoCount });
+                    })()
+                  `);
+                  const data = JSON.parse(extractResult?.result?.result?.value || '{"videos":[]}');
+                  videos = data.videos || [];
+                  if (data.nickname) userInfoData = { nickname: data.nickname, followerCount: data.followerCount, videoCount: data.videoCount };
+                  ws.close();
+                }
+                // 关闭标签页
+                await fetch(`${cdpBase}/json/close/${newTab.id}`, { signal: AbortSignal.timeout(5000) }).catch(() => {});
+              }
+            } catch (cdpErr) {
+              console.warn('[TikTok] CDP 方式失败:', cdpErr.message);
+            }
+
+            // 方案2: 如果 CDP 没拿到视频，降级到请求 TikTok 页面 HTML 拿用户信息
+            if (!videos.length || !userInfoData) {
+              const profileRes = await fetch(`https://www.tiktok.com/@${username}`, {
+                headers: {
+                  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                  "Accept": "text/html,application/xhtml+xml",
+                  "Accept-Language": "en-US,en;q=0.9",
+                },
+                signal: AbortSignal.timeout(30000),
+              });
+              if (profileRes.ok) {
+                const html = await profileRes.text();
+                const jsonMatch = html.match(/<script id="__UNIVERSAL_DATA_FOR_REHYDRATION__"[^>]*>([\s\S]*?)<\/script>/);
+                if (jsonMatch) {
+                  const json = JSON.parse(jsonMatch[1]);
+                  const ui = json?.__DEFAULT_SCOPE__?.["webapp.user-detail"]?.userInfo;
+                  if (ui?.user && !userInfoData) {
+                    userInfoData = {
+                      nickname: ui.user.nickname,
+                      uniqueId: ui.user.uniqueId,
+                      followerCount: ui.stats?.followerCount,
+                      followingCount: ui.stats?.followingCount,
+                      videoCount: ui.stats?.videoCount,
+                    };
+                  }
+                  // 如果 CDP 没拿到视频但 HTML itemList 有
+                  if (!videos.length && ui?.itemList?.length) {
+                    videos = ui.itemList.map((v) => ({
+                      url: `https://www.tiktok.com/@${username}/video/${v.id}`,
+                      title: (v.desc || "").substring(0, 200),
+                      cover: v.video?.cover || v.video?.originCover || null,
+                      duration: v.video?.duration || null,
+                    }));
                   }
                 }
-              } catch {}
+              }
+            }
+
+            if (!userInfoData && !videos.length) {
+              throw new Error("无法解析达人主页，请确保 Chrome 调试实例(9222)已启动");
             }
 
             sendJson(response, 200, {
               ok: true,
               username,
-              secUid,
-              userInfo: {
-                nickname: user.nickname,
-                uniqueId: user.uniqueId,
-                followerCount: stats.followerCount,
-                followingCount: stats.followingCount,
-                videoCount: stats.videoCount,
-              },
+              userInfo: userInfoData || {},
               videos,
-              note: videos.length === 0
-                ? "TikTok 主页视频列表需要浏览器环境才能获取。请手动复制视频链接进行下载，或通过 CDP 浏览器自动获取。"
-                : undefined,
             });
           } catch (e) {
             sendJson(response, 500, { error: `解析主页失败: ${e.message}` });
