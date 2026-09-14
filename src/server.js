@@ -3218,36 +3218,86 @@ export function createMonitorServer({
           }
 
           try {
-            // TikWM 用户视频列表 API
-            const apiUrl = `https://www.tikwm.com/api/user/posts?username=${encodeURIComponent(username)}&count=30`;
-            const res = await fetch(apiUrl, {
+            // 方案1: 直接请求 TikTok 主页 HTML 拿 secUid + 用户信息
+            const profileRes = await fetch(`https://www.tiktok.com/@${username}`, {
               headers: {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                "Accept": "application/json",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Accept": "text/html,application/xhtml+xml",
+                "Accept-Language": "en-US,en;q=0.9",
               },
               signal: AbortSignal.timeout(30000),
             });
-            if (!res.ok) throw new Error(`TikWM HTTP ${res.status}`);
-            const data = await res.json();
-            if (data.code !== 0) throw new Error(data.msg || "TikWM API 返回错误");
+            if (!profileRes.ok) throw new Error(`TikTok 主页 HTTP ${profileRes.status}`);
+            const html = await profileRes.text();
 
-            const feed = data.data?.videos || data.data || [];
-            if (!Array.isArray(feed)) feed.length = 0;
-            const videos = (Array.isArray(feed) ? feed : []).map((v) => ({
-              id: v.video_id || v.id,
-              url: `https://www.tiktok.com/@${username}/video/${v.video_id || v.id}`,
-              title: (v.title || "").substring(0, 200),
-              cover: v.cover || v.origin_cover,
-              duration: v.duration || null,
-              author: username,
-              playUrl: v.play,
-              size: v.size || null,
-            }));
+            // 提取 __UNIVERSAL_DATA_FOR_REHYDRATION__
+            const jsonMatch = html.match(/<script id="__UNIVERSAL_DATA_FOR_REHYDRATION__"[^>]*>([\s\S]*?)<\/script>/);
+            if (!jsonMatch) throw new Error("无法解析 TikTok 主页数据");
+
+            const json = JSON.parse(jsonMatch[1]);
+            const userInfo = json?.__DEFAULT_SCOPE__?.["webapp.user-detail"]?.userInfo;
+            if (!userInfo?.user) throw new Error("未找到达人信息");
+
+            const user = userInfo.user;
+            const stats = userInfo.stats || {};
+            const secUid = user.secUid;
+
+            // 从 HTML 中提取视频列表（itemList 可能为空，需用内部 API）
+            const itemList = userInfo.itemList || [];
+            
+            // 如果 itemList 为空，尝试用 TikWM 的 user/posts API（可能被 CF 拦截）
+            let videos = [];
+            if (itemList.length > 0) {
+              videos = itemList.map((v) => ({
+                id: v.id,
+                url: `https://www.tiktok.com/@${username}/video/${v.id}`,
+                title: (v.desc || "").substring(0, 200),
+                cover: v.video?.cover || v.video?.originCover || null,
+                duration: v.video?.duration || null,
+                author: username,
+              }));
+            } else {
+              // 降级: TikWM user/posts API
+              try {
+                const apiUrl = `https://www.tikwm.com/api/user/posts?username=${encodeURIComponent(username)}&count=30`;
+                const res2 = await fetch(apiUrl, {
+                  headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36", "Accept": "application/json" },
+                  signal: AbortSignal.timeout(30000),
+                });
+                if (res2.ok) {
+                  const data2 = await res2.json();
+                  if (data2.code === 0) {
+                    const feed = data2.data?.videos || data2.data || [];
+                    if (Array.isArray(feed)) {
+                      videos = feed.map((v) => ({
+                        id: v.video_id || v.id,
+                        url: `https://www.tiktok.com/@${username}/video/${v.video_id || v.id}`,
+                        title: (v.title || "").substring(0, 200),
+                        cover: v.cover || v.origin_cover || null,
+                        duration: v.duration || null,
+                        author: username,
+                      }));
+                    }
+                  }
+                }
+              } catch {}
+            }
 
             sendJson(response, 200, {
               ok: true,
               username,
+              secUid,
+              userInfo: {
+                nickname: user.nickname,
+                uniqueId: user.uniqueId,
+                followerCount: stats.followerCount,
+                followingCount: stats.followingCount,
+                videoCount: stats.videoCount,
+              },
               videos,
+              note: videos.length === 0
+                ? "TikTok 主页视频列表需要浏览器环境才能获取。请手动复制视频链接进行下载，或通过 CDP 浏览器自动获取。"
+                : undefined,
             });
           } catch (e) {
             sendJson(response, 500, { error: `解析主页失败: ${e.message}` });
