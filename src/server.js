@@ -3284,6 +3284,7 @@ export function createMonitorServer({
             // 方案1: CDP 浏览器打开达人主页，提取视频列表（最可靠）
             let videos = [];
             let userInfoData = null;
+            let cdpErrMsg = null;
             try {
               // 用 Chrome CDP HTTP API 打开页面
               const cdpBase = 'http://localhost:9222';
@@ -3390,49 +3391,12 @@ export function createMonitorServer({
                 await fetch(`${cdpBase}/json/close/${newTab.id}`, { signal: AbortSignal.timeout(5000) }).catch(() => {});
               }
             } catch (cdpErr) {
-              console.warn('[TikTok] CDP 方式失败:', cdpErr.message);
-            }
-
-            // 方案2: 如果 CDP 没拿到视频，降级到请求 TikTok 页面 HTML 拿用户信息
-            if (!videos.length || !userInfoData) {
-              const profileRes = await fetch(`https://www.tiktok.com/@${username}`, {
-                headers: {
-                  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                  "Accept": "text/html,application/xhtml+xml",
-                  "Accept-Language": "en-US,en;q=0.9",
-                },
-                signal: AbortSignal.timeout(30000),
-              });
-              if (profileRes.ok) {
-                const html = await profileRes.text();
-                const jsonMatch = html.match(/<script id="__UNIVERSAL_DATA_FOR_REHYDRATION__"[^>]*>([\s\S]*?)<\/script>/);
-                if (jsonMatch) {
-                  const json = JSON.parse(jsonMatch[1]);
-                  const ui = json?.__DEFAULT_SCOPE__?.["webapp.user-detail"]?.userInfo;
-                  if (ui?.user && !userInfoData) {
-                    userInfoData = {
-                      nickname: ui.user.nickname,
-                      uniqueId: ui.user.uniqueId,
-                      followerCount: ui.stats?.followerCount,
-                      followingCount: ui.stats?.followingCount,
-                      videoCount: ui.stats?.videoCount,
-                    };
-                  }
-                  // 如果 CDP 没拿到视频但 HTML itemList 有
-                  if (!videos.length && ui?.itemList?.length) {
-                    videos = ui.itemList.map((v) => ({
-                      url: `https://www.tiktok.com/@${username}/video/${v.id}`,
-                      title: (v.desc || "").substring(0, 200),
-                      cover: v.video?.cover || v.video?.originCover || null,
-                      duration: v.video?.duration || null,
-                    }));
-                  }
-                }
-              }
+              cdpErrMsg = cdpErr.message;
+              console.warn('[TikTok] CDP 方式失败:', cdpErr.message, cdpErr.stack);
             }
 
             if (!userInfoData && !videos.length) {
-              throw new Error("无法解析达人主页，请确保 Chrome 调试实例(9222)已启动");
+              throw new Error(`CDP 解析主页失败: ${cdpErrMsg || 'Chrome 调试实例(9222)未启动或无法连接'}`);
             }
 
             sendJson(response, 200, {
