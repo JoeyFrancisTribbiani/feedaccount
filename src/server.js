@@ -3261,7 +3261,7 @@ export function createMonitorServer({
           return;
         }
 
-        // POST /api/tiktok/parse-profile — 解析达人主页获取视频列表
+        // POST /api/tiktok/parse-profile — 解析达人主页获取视频列表（异步+SSE）
         if (request.method === "POST" && pathname === "/api/tiktok/parse-profile") {
           const body = await readJson(request);
           const rawUrl = (body.url || "").trim();
@@ -3280,138 +3280,137 @@ export function createMonitorServer({
             username = m ? m[1] : "unknown";
           }
 
-          try {
-            // 方案1: CDP 浏览器打开达人主页，提取视频列表（最可靠）
-            let videos = [];
-            let userInfoData = null;
-            let cdpErrMsg = null;
+          // 查找或创建达人
+          const creator = findOrCreateCreator(username, "TikTok");
+
+          // 立即返回 taskId，后台异步处理
+          const taskId = `parse_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+          sendJson(response, 200, { ok: true, taskId, username, message: "解析已开始，请通过 SSE 获取进度" });
+
+          // 异步执行 CDP 解析
+          (async () => {
+            const emit = (event, data) => {
+              store.logCdpEvent(null, "info", `[TikTok解析] ${event}: ${JSON.stringify(data).substring(0, 200)}`, null, null);
+            };
             try {
-              // 用 Chrome CDP HTTP API 打开页面
+              emit("progress", { taskId, step: "opening", message: `正在打开 @${username} 的主页...` });
               const cdpBase = 'http://localhost:9222';
-              const newTabRes = await fetch(`${cdpBase}/json/new?${encodeURIComponent(`about:blank`)}`, { method: 'PUT', signal: AbortSignal.timeout(10000) });
-              if (newTabRes.ok) {
-                const newTab = await newTabRes.json();
-                const wsUrl = newTab.webSocketDebuggerUrl;
-                if (wsUrl) {
-                  const ws = new WebSocket(wsUrl);
-                  await new Promise((resolve, reject) => {
-                    ws.addEventListener('open', resolve);
-                    ws.addEventListener('error', reject);
-                    setTimeout(() => reject(new Error('ws timeout')), 10000);
-                  });
+              const newTabRes = await fetch(`${cdpBase}/json/new?${encodeURIComponent('about:blank')}`, { method: 'PUT', signal: AbortSignal.timeout(10000) });
+              if (!newTabRes.ok) throw new Error('无法创建标签页');
+              const newTab = await newTabRes.json();
+              const wsUrl = newTab.webSocketDebuggerUrl;
+              if (!wsUrl) throw new Error('无法获取 WebSocket 地址');
 
-                  let cdpMsgId = 0;
-                  const sendCDP = (method, params = {}) => new Promise((resolve, reject) => {
-                    const id = ++cdpMsgId;
-                    const handler = (e) => {
-                      const data = JSON.parse(e.data);
-                      if (data.id === id) { ws.removeEventListener('message', handler); resolve(data); }
-                    };
-                    ws.addEventListener('message', handler);
-                    ws.send(JSON.stringify({ id, method, params }));
-                    setTimeout(() => reject(new Error(`${method} timeout`)), 30000);
-                  });
-                  const evalJS = (expr) => sendCDP('Runtime.evaluate', { expression: expr, returnByValue: true, awaitPromise: true });
+              const ws = new WebSocket(wsUrl);
+              await new Promise((resolve, reject) => {
+                ws.addEventListener('open', resolve);
+                ws.addEventListener('error', () => reject(new Error('WebSocket 连接失败')));
+                setTimeout(() => reject(new Error('ws timeout')), 10000);
+              });
 
-                  // 启用 Page 域
-                  await sendCDP('Page.enable', {});
-                  // 主动导航到达人主页
-                  await sendCDP('Page.navigate', { url: `https://www.tiktok.com/@${username}` });
-                  // 等待页面加载
+              let cdpMsgId = 0;
+              const sendCDP = (method, params = {}) => new Promise((resolve, reject) => {
+                const id = ++cdpMsgId;
+                const handler = (e) => { const d = JSON.parse(e.data); if (d.id === id) { ws.removeEventListener('message', handler); resolve(d); } };
+                ws.addEventListener('message', handler);
+                ws.send(JSON.stringify({ id, method, params }));
+                setTimeout(() => reject(new Error(`${method} timeout`)), 30000);
+              });
+              const evalJS = (expr) => sendCDP('Runtime.evaluate', { expression: expr, returnByValue: true, awaitPromise: true });
+
+              await sendCDP('Page.enable', {});
+              await sendCDP('Page.navigate', { url: `https://www.tiktok.com/@${username}` });
+              emit("progress", { taskId, step: "loading", message: "页面加载中..." });
+              await new Promise(r => setTimeout(r, 3000));
+
+              // 等待视频元素出现
+              for (let i = 0; i < 15; i++) {
+                const check = await evalJS(`(() => { const v = document.querySelectorAll('a[href*="/video/"]').length; const e = document.body.innerText.includes('出错了') || document.body.innerText.includes('Something went wrong'); return JSON.stringify({v, e}); })()`);
+                const st = JSON.parse(check?.result?.result?.value || '{"v":0,"e":false}');
+                if (st.v > 0) break;
+                if (st.e || i === 0) {
+                  emit("progress", { taskId, step: "reload", message: `页面未加载，刷新重试(${i+1})...` });
+                  await evalJS(`const b=[...document.querySelectorAll('button, a')].find(e=>/重试|刷新|retry|reload/i.test(e.textContent)); if(b)b.click(); else location.reload();`).catch(() => {});
                   await new Promise(r => setTimeout(r, 3000));
-                  // 等待视频元素出现（最多等 20 秒）
-                  // 如果页面显示"出错了"，自动刷新重试
-                  for (let i = 0; i < 15; i++) {
-                    const check = await evalJS(`
-                      (() => {
-                        const videoCount = document.querySelectorAll('a[href*="/video/"]').length;
-                        const hasError = document.body.innerText.includes('出错了') || document.body.innerText.includes('Something went wrong') || document.body.innerText.includes('error');
-                        return JSON.stringify({ videoCount, hasError });
-                      })()
-                    `);
-                    const status = JSON.parse(check?.result?.result?.value || '{"videoCount":0,"hasError":false}');
-                    if (status.videoCount > 0) break;
-                    // 如果显示错误或还没加载出来，刷新页面
-                    if (status.hasError || i === 0) {
-                      console.log(`[TikTok] 页面未加载(尝试${i+1})，刷新中...`);
-                      // 尝试点击页面上的刷新按钮，如果没有就 location.reload
-                      await evalJS(`
-                        const refreshBtn = [...document.querySelectorAll('button, a')].find(e => /重试|刷新|retry|reload|try again/i.test(e.textContent));
-                        if (refreshBtn) refreshBtn.click();
-                        else location.reload();
-                      `).catch(() => {});
-                      await new Promise(r => setTimeout(r, 3000));
-                    } else {
-                      await new Promise(r => setTimeout(r, 2000));
-                    }
-                  }
-                  // 滚动加载更多，直到触底无新视频
-                  // 判断标准：连续3次滚动后视频数不增加 且 已到底部(atBottom)
-                  let prevCount = 0;
-                  let noChangeRounds = 0;
-                  for (let i = 0; i < 50; i++) {
-                    await evalJS(`window.scrollTo(0, document.body.scrollHeight)`);
-                    await new Promise(r => setTimeout(r, 4000)); // 等4秒让懒加载完成
-                    const check = await evalJS(`
-                      (() => {
-                        const count = document.querySelectorAll('a[href*="/video/"]').length;
-                        const atBottom = (window.innerHeight + window.scrollY) >= document.body.scrollHeight - 10;
-                        return JSON.stringify({ count, atBottom });
-                      })()
-                    `);
-                    const status = JSON.parse(check?.result?.result?.value || '{"count":0,"atBottom":false}');
-                    const currentCount = status.count || 0;
-                    if (currentCount === prevCount) {
-                      noChangeRounds++;
-                      if (noChangeRounds >= 3 && status.atBottom) break;
-                    } else {
-                      noChangeRounds = 0;
-                    }
-                    prevCount = currentCount;
-                  }
-                  // 提取视频列表
-                  const extractResult = await evalJS(`
+                } else {
+                  await new Promise(r => setTimeout(r, 2000));
+                }
+              }
+
+              // 滚动加载
+              emit("progress", { taskId, step: "scrolling", message: "正在滚动加载视频..." });
+              let prevCount = 0;
+              let noChangeRounds = 0;
+              let allVideoUrls = new Set();
+              for (let i = 0; i < 50; i++) {
+                await evalJS(`window.scrollTo(0, document.body.scrollHeight)`);
+                await new Promise(r => setTimeout(r, 4000));
+                const check = await evalJS(`(() => { const c = document.querySelectorAll('a[href*="/video/"]').length; const b = (window.innerHeight + window.scrollY) >= document.body.scrollHeight - 10; return JSON.stringify({c, b}); })()`);
+                const st = JSON.parse(check?.result?.result?.value || '{"c":0,"b":false}');
+                const currentCount = st.c || 0;
+
+                // 每次滚动后提取新发现的视频，存入数据库
+                if (currentCount > prevCount) {
+                  const newVideosRes = await evalJS(`
                     (() => {
                       const items = [...document.querySelectorAll('a[href*="/video/"]')].map(a => {
                         const container = a.closest('[data-e2e="user-post-item"]') || a.parentElement;
                         const img = container?.querySelector('img');
-                        return { url: a.href, title: (img?.alt || '').substring(0, 200), cover: img?.src || '', duration: null };
+                        return { url: a.href, title: (img?.alt || '').substring(0, 200), cover: img?.src || '' };
                       });
-                      const seen = new Set();
-                      const unique = items.filter(v => { if (seen.has(v.url)) return false; seen.add(v.url); return true; });
-                      // 提取达人信息
-                      const nickname = document.querySelector('[data-e2e="user-info"] h1')?.textContent || document.querySelector('h1')?.textContent || '';
-                      const followerCount = document.querySelector('[data-e2e="followers-count"]')?.textContent || '';
-                      const videoCount = document.querySelector('[data-e2e="video-count"]')?.textContent || '';
-                      return JSON.stringify({ videos: unique, nickname, followerCount, videoCount });
+                      return JSON.stringify(items);
                     })()
                   `);
-                  const data = JSON.parse(extractResult?.result?.result?.value || '{"videos":[]}');
-                  videos = data.videos || [];
-                  if (data.nickname) userInfoData = { nickname: data.nickname, followerCount: data.followerCount, videoCount: data.videoCount };
-                  ws.close();
+                  const allItems = JSON.parse(newVideosRes?.result?.result?.value || '[]');
+                  let newCount = 0;
+                  for (const v of allItems) {
+                    if (!allVideoUrls.has(v.url)) {
+                      allVideoUrls.add(v.url);
+                      // 存入数据库（按 source_url 去重）
+                      store.upsertRemixVideoBySourceUrl({
+                        creatorId: creator.id,
+                        sourceUrl: v.url,
+                        title: v.title || null,
+                        thumbUrl: v.cover || null,
+                      });
+                      newCount++;
+                    }
+                  }
+                  if (newCount > 0) {
+                    emit("progress", { taskId, step: "scanning", message: `已发现 ${allVideoUrls.size} 个视频（本次新增 ${newCount}）` });
+                  }
                 }
-                // 关闭标签页
-                await fetch(`${cdpBase}/json/close/${newTab.id}`, { signal: AbortSignal.timeout(5000) }).catch(() => {});
+
+                if (currentCount === prevCount) {
+                  noChangeRounds++;
+                  if (noChangeRounds >= 3 && st.b) break;
+                } else {
+                  noChangeRounds = 0;
+                }
+                prevCount = currentCount;
               }
-            } catch (cdpErr) {
-              cdpErrMsg = cdpErr.message;
-              console.warn('[TikTok] CDP 方式失败:', cdpErr.message, cdpErr.stack);
-            }
 
-            if (!userInfoData && !videos.length) {
-              throw new Error(`CDP 解析主页失败: ${cdpErrMsg || 'Chrome 调试实例(9222)未启动或无法连接'}`);
-            }
+              // 最终提取达人信息
+              const infoResult = await evalJS(`(() => { const n = document.querySelector('[data-e2e="user-info"] h1')?.textContent || document.querySelector('h1')?.textContent || ''; const f = document.querySelector('[data-e2e="followers-count"]')?.textContent || ''; const v = document.querySelector('[data-e2e="video-count"]')?.textContent || ''; return JSON.stringify({nickname:n, followerCount:f, videoCount:v}); })()`);
+              const info = JSON.parse(infoResult?.result?.result?.value || '{}');
 
-            sendJson(response, 200, {
-              ok: true,
-              username,
-              userInfo: userInfoData || {},
-              videos,
-            });
-          } catch (e) {
-            sendJson(response, 500, { error: `解析主页失败: ${e.message}` });
-          }
+              ws.close();
+              await fetch(`${cdpBase}/json/close/${newTab.id}`, { signal: AbortSignal.timeout(5000) }).catch(() => {});
+
+              emit("done", { taskId, username, totalVideos: allVideoUrls.size, userInfo: info });
+            } catch (e) {
+              emit("error", { taskId, error: e.message });
+            }
+          })();
+          return;
+        }
+
+        // GET /api/tiktok/parse-status/:taskId — 查询解析进度（通过 cdp_logs）
+        const parseStatusMatch = pathname.match(/^\/api\/tiktok\/parse-status\/(.+)$/);
+        if (request.method === "GET" && parseStatusMatch) {
+          const taskId = decodeURIComponent(parseStatusMatch[1]);
+          const logs = store.db.prepare("SELECT message, created_at FROM cdp_logs WHERE message LIKE ? ORDER BY created_at DESC LIMIT 50").all(`%${taskId}%`);
+          sendJson(response, 200, { taskId, logs });
           return;
         }
 

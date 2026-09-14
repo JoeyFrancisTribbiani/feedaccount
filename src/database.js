@@ -575,6 +575,9 @@ export class LocalDatabase {
       );
     `);
     this.#ensureColumn("remix_videos", "file_size", "INTEGER DEFAULT 0");
+    this.#ensureColumn("remix_videos", "source_url", "TEXT");
+    this.#ensureColumn("remix_videos", "thumb_url", "TEXT");
+    this.#ensureColumn("remix_videos", "downloaded", "INTEGER DEFAULT 0");
     this.#ensureColumn("matrix_videos", "file_size", "INTEGER DEFAULT 0");
     this.#ensureColumn("matrix_videos", "duration", "REAL");
 
@@ -2398,6 +2401,31 @@ export class LocalDatabase {
     const id = `rv_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     const ts = nowIso();
     this.db.prepare(`INSERT INTO remix_videos (id, creator_id, url, title, created_at) VALUES (?, ?, ?, ?, ?)`).run(id, creatorId, url, title, ts);
+    return this.getRemixVideo(id);
+  }
+
+  // 按 source_url 查找或创建（解析时用，避免重复存储）
+  upsertRemixVideoBySourceUrl({ creatorId, sourceUrl, title = null, thumbUrl = null, duration = null }) {
+    const existing = this.db.prepare("SELECT id FROM remix_videos WHERE source_url = ?").get(sourceUrl);
+    if (existing) {
+      // 更新信息（如果有新数据）
+      if (title || thumbUrl || duration) {
+        const sets = [];
+        const params = [];
+        if (title) { sets.push("title = ?"); params.push(title); }
+        if (thumbUrl) { sets.push("thumb_url = ?"); params.push(thumbUrl); }
+        if (duration) { sets.push("duration = ?"); params.push(duration); }
+        if (sets.length) {
+          params.push(existing.id);
+          this.db.prepare(`UPDATE remix_videos SET ${sets.join(", ")} WHERE id = ?`).run(...params);
+        }
+      }
+      return this.getRemixVideo(existing.id);
+    }
+    // 创建新记录
+    const id = `rv_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const ts = nowIso();
+    this.db.prepare(`INSERT INTO remix_videos (id, creator_id, url, title, source_url, thumb_url, duration, downloaded, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)`).run(id, creatorId, sourceUrl, title, sourceUrl, thumbUrl, duration, ts);
     return this.getRemixVideo(id);
   }
 
