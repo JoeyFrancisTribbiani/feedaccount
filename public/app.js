@@ -3520,55 +3520,114 @@ function renderRemixVideos() {
   remixEl.videoGrid.className = isList ? "remix-video-list" : "remix-video-grid";
 
   remixEl.videoGrid.innerHTML = pageVideos.map((v) => {
-    const selected = remix.selectedVideos.some((sv) => sv.url === v.url);
+
+    const videoKey = v.sourceUrl || v.url || v.id;
+
+    const selected = remix.selectedVideos.some((sv) => sv.key === videoKey);
+
     const taskInfo = remixTaskMap[v.url];
+
+    const isDownloaded = v.downloaded === 1 || (v.url && v.url !== "null");
+
+    const thumbSrc = v.thumbnail || v.thumbUrl || "";
+
+    const dlMark = isDownloaded ? "" : '<span style="position:absolute;top:6px;left:6px;background:rgba(245,158,11,0.9);color:#fff;font-size:9px;padding:1px 5px;border-radius:3px;z-index:2;">未下载</span>';
+
     if (isList) {
+
       return `
-        <div class="remix-video-row ${selected ? "selected" : ""}" data-url="${escapeHtml(v.url)}" data-title="${escapeHtml(v.title || "未命名")}">
+
+        <div class="remix-video-row ${selected ? "selected" : ""}" data-key="${escapeHtml(videoKey)}" data-url="${escapeHtml(v.url || "")}" data-source-url="${escapeHtml(v.sourceUrl || "")}" data-title="${escapeHtml(v.title || "未命名")}" ${!isDownloaded ? 'data-not-downloaded="1"' : ""}>
+
           <div class="remix-video-row-thumb">
-            <video src="${escapeHtml(v.url)}" muted preload="metadata" playsinline></video>
-            <button class="remix-play-btn remix-play-sm" type="button"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></button>
+
+            ${isDownloaded ? `<video src="${escapeHtml(v.url)}" muted preload="metadata" playsinline></video>` : (thumbSrc ? `<img src="${escapeHtml(thumbSrc)}" style="width:100%;height:100%;object-fit:cover;" onerror="this.style.display='none'" />` : '<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:#64748b;font-size:11px;">无预览</div>')}
+
+            ${isDownloaded ? '<button class="remix-play-btn remix-play-sm" type="button"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></button>' : ""}
+
+            ${dlMark}
+
             <div class="remix-video-check ${selected ? "checked" : ""}">${selected ? "✓" : ""}</div>
+
           </div>
+
           <div class="remix-video-row-info">
+
             <p class="remix-video-title">${escapeHtml(v.title || "未命名")}</p>
+
             ${taskInfo ? remixBadgeHtml(taskInfo) : ""}
+
           </div>
+
           <button class="remix-video-del" data-del-video="${escapeHtml(v.id)}">×</button>
+
         </div>
+
       `;
+
     }
+
     return `
-      <div class="remix-video-card ${selected ? "selected" : ""}" data-url="${escapeHtml(v.url)}" data-title="${escapeHtml(v.title || "未命名")}">
+
+      <div class="remix-video-card ${selected ? "selected" : ""}" data-key="${escapeHtml(videoKey)}" data-url="${escapeHtml(v.url || "")}" data-source-url="${escapeHtml(v.sourceUrl || "")}" data-title="${escapeHtml(v.title || "未命名")}" ${!isDownloaded ? 'data-not-downloaded="1"' : ""}>
+
         <div class="remix-video-thumb">
-          <video src="${escapeHtml(v.url)}" muted preload="metadata" playsinline></video>
-          <button class="remix-play-btn" type="button" aria-label="播放">
-            <svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
-          </button>
+
+          ${isDownloaded ? `<video src="${escapeHtml(v.url)}" muted preload="metadata" playsinline></video>` : (thumbSrc ? `<img src="${escapeHtml(thumbSrc)}" style="width:100%;height:100%;object-fit:cover;" onerror="this.style.display='none'" />` : '<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:#64748b;font-size:11px;">无预览</div>')}
+
+          ${isDownloaded ? '<button class="remix-play-btn" type="button" aria-label="播放"><svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></button>' : ""}
+
+          ${dlMark}
+
           <div class="remix-video-check ${selected ? "checked" : ""}">${selected ? "✓" : ""}</div>
+
           <button class="remix-video-del" data-del-video="${escapeHtml(v.id)}">×</button>
+
           ${remixBadgeHtml(taskInfo)}
+
         </div>
+
         <p class="remix-video-title">${escapeHtml(v.title || "未命名")}</p>
+
         <p class="remix-video-meta" style="font-size:10px;color:#94a3b8;margin:2px 0;">${formatDuration(v.duration)} · ${formatFileSize(v.fileSize)}</p>
+
         ${v.matrixLinks?.length ? `<div class="remix-video-matrix-links">${v.matrixLinks.map((ml) => `<span class="remix-matrix-tag" title="${escapeHtml(ml.matrixName)}">${escapeHtml(ml.matrixName)}</span>`).join("")}</div>` : ""}
+
       </div>
+
     `;
+
   }).join("");
+
+
 
   renderRemixPagination(totalPages);
 
-  remixEl.videoGrid.querySelectorAll("[data-url]").forEach((el) => {
+
+
+  remixEl.videoGrid.querySelectorAll("[data-key]").forEach((el) => {
+
     el.addEventListener("click", (e) => {
+
       if (e.target.dataset.delVideo) return;
+
       if (e.target.closest(".remix-play-btn")) return;
-      const url = el.dataset.url;
+
+      const key = el.dataset.key;
+
       const title = el.dataset.title;
-      const exists = remix.selectedVideos.find((sv) => sv.url === url);
-      if (exists) remix.selectedVideos = remix.selectedVideos.filter((sv) => sv.url !== url);
-      else remix.selectedVideos.push({ url, title, creatorName: remix.creators.find((c) => c.id === remix.selectedCreatorId)?.name || "" });
-      el.classList.toggle("selected", !exists);
-      const check = el.querySelector(".remix-video-check");
+
+      const sourceUrl = el.dataset.sourceUrl;
+
+      const url = el.dataset.url;
+
+      const exists = remix.selectedVideos.find((sv) => sv.key === key);
+
+      if (exists) remix.selectedVideos = remix.selectedVideos.filter((sv) => sv.key !== key);
+
+      else remix.selectedVideos.push({ key, url, sourceUrl, title, creatorName: remix.creators.find((c) => c.id === remix.selectedCreatorId)?.name || "" });
+
+      el.classList.toggle("selected", !exists);      const check = el.querySelector(".remix-video-check");
       if (check) {
         check.classList.toggle("checked", !exists);
         check.textContent = !exists ? "✓" : "";
@@ -3685,13 +3744,14 @@ function updateRemixVideoBadges() {
 
 function renderRemixSelected() {
   remixEl.selectedList.innerHTML = remix.selectedVideos.length
-    ? remix.selectedVideos.map((v) => `<span class="remix-chip" data-url="${escapeHtml(v.url)}">${escapeHtml(v.title)} ×</span>`).join("")
+    ? remix.selectedVideos.map((v) => `<span class="remix-chip" data-key="${escapeHtml(v.key || v.url)}" data-url="${escapeHtml(v.url || "")}">${escapeHtml(v.title)} ×</span>`).join("")
     : '<span class="muted-activity" style="font-size: 12px;">勾选视频加入去重或混剪</span>';
   remixEl.dedupBtn.disabled = remix.selectedVideos.length < 1;
   remixEl.stitchBtn.disabled = false;
-  remixEl.selectedList.querySelectorAll("[data-url]").forEach((chip) => {
+  remixEl.selectedList.querySelectorAll(".remix-chip").forEach((chip) => {
     chip.addEventListener("click", () => {
-      remix.selectedVideos = remix.selectedVideos.filter((sv) => sv.url !== chip.dataset.url);
+      const chipKey = chip.dataset.key;
+      remix.selectedVideos = remix.selectedVideos.filter((sv) => (sv.key || sv.url) !== chipKey);
       renderRemixVideos();
       renderRemixSelected();
     });
@@ -4109,8 +4169,24 @@ tiktokDl.parseBtn?.addEventListener("click", async () => {
             hideTiktokProgress();
             await fetchRemixCreators();
             showToast(`解析完成，共 ${info.totalVideos || 0} 个视频已入库`);
-            // 自动选中刚解析的达人
+            // 从数据库加载视频列表，渲染到弹窗供用户选择下载
             const creatorName = info.username || data.username;
+            try {
+              const creator = remix.creators.find((c) => c.name === creatorName || c.name.includes(creatorName));
+              if (creator) {
+                const videos = await request(`/api/remix/creators/${encodeURIComponent(creator.id)}/videos`);
+                tiktokDl.parsedVideos = (videos || []).map((v) => ({
+                  url: v.sourceUrl || v.url,
+                  title: v.title,
+                  cover: v.thumbnail || v.thumbUrl || "",
+                  duration: v.duration,
+                  downloaded: v.downloaded,
+                }));
+                tiktokDl.selectedVideos.clear();
+                renderTiktokVideoList(tiktokDl.parsedVideos, creatorName);
+              }
+            } catch (e) { console.warn('加载视频列表失败:', e); }
+            // 同时选中达人刷新主列表
             const creatorEl = [...document.querySelectorAll('.remix-creator-item')].find(el => el.textContent.includes(creatorName));
             if (creatorEl) creatorEl.click();
             else if (remix.selectedCreatorId) {
@@ -4257,7 +4333,7 @@ function renderTiktokResults(results) {
     }
     return `<div style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-bottom:1px solid var(--line);font-size:12px;">
       <span style="color:#ef4444;">✗</span>
-      <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(r.url.substring(0, 60))}</span>
+      <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml((r.url || '').substring(0, 60))}</span>
       <span style="color:#ef4444;font-size:11px;">${escapeHtml(r.error || "失败")}</span>
     </div>`;
   }).join("");
@@ -4796,6 +4872,12 @@ remixEl.videoFile.addEventListener("change", async () => {
 // 去重
 remixEl.dedupBtn.addEventListener("click", async () => {
   if (!remix.selectedVideos.length) return;
+  // 未下载的视频不能去重/混剪
+  const notDownloaded = remix.selectedVideos.filter((v) => !v.url);
+  if (notDownloaded.length) {
+    showToast(`${notDownloaded.length} 个视频未下载，请先下载再操作`, true);
+    return;
+  }
   const ratio = remixEl.ratio.value;
   for (const v of remix.selectedVideos) {
     try {
