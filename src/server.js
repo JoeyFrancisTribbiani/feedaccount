@@ -3059,14 +3059,59 @@ export function createMonitorServer({
           throw new Error("页面中未找到视频 URL");
         }
 
-        // 辅助：获取无水印高清视频数据（三策略）
+        // 辅助：用 yt-dlp 获取最高画质视频（1080p HEVC 60fps）
+        async function downloadWithYtDlp(tiktokUrl, filePath) {
+          const { execFileSync } = await import("child_process");
+          // 先获取可用格式列表，选最高画质的
+          const formatOutput = execFileSync("yt-dlp", ["-F", "--no-warnings", tiktokUrl], {
+            encoding: "utf-8", timeout: 30000, stdio: "pipe",
+          }).stdout || "";
+          // 优先 bytevc1_1080p（HEVC 1080p），其次 h264_720p，最后 best
+          let formatId = "best";
+          if (formatOutput.includes("bytevc1_1080p")) {
+            const m = formatOutput.match(/bytevc1_1080p_\d+-0/);
+            formatId = m ? m[0] : "bytevc1_1080p";
+          } else if (formatOutput.includes("h264_720p")) {
+            const m = formatOutput.match(/h264_720p_\d+-0/);
+            formatId = m ? m[0] : "h264_720p";
+          }
+          execFileSync("yt-dlp", ["-f", formatId, "-o", filePath, "--no-warnings", tiktokUrl], {
+            encoding: "utf-8", timeout: 120000, stdio: "pipe",
+          });
+          const { existsSync, statSync } = await import("fs");
+          if (!existsSync(filePath)) throw new Error("yt-dlp 下载失败");
+          return statSync(filePath).size;
+        }
+
+        // 辅助：获取无水印高清视频数据（四策略，优先 yt-dlp）
         async function getTiktokVideoData(tiktokUrl) {
-          // 策略2: TikWM API（主策略，返回高码率无水印）
+          // 获取 videoId
+          const videoIdMatch = tiktokUrl.match(/video\/(\d+)/);
+          const videoId = videoIdMatch ? videoIdMatch[1] : String(Date.now());
+
+          // 策略1: yt-dlp（最高画质 1080p HEVC 60fps）
+          try {
+            const uploadDir = getUploadDir();
+            mkdirSync(uploadDir, { recursive: true });
+            const tempPath = path.join(uploadDir, `_ytdlp_${videoId}.mp4`);
+            const fileSize = await downloadWithYtDlp(tiktokUrl, tempPath);
+            return {
+              play: null, // yt-dlp 直接下载到文件了
+              _localPath: tempPath,
+              _fileSize: fileSize,
+              title: null, author: { id: null, nickname: null }, id: videoId,
+              cover: null, duration: null,
+              _source: "ytdlp",
+            };
+          } catch (e) { console.warn("[TikTok] yt-dlp 失败:", e.message); }
+
+          // 策略2: TikWM API
           try {
             const data = await callTikwm(tiktokUrl);
-            if (data.play) return data;
+            if (data.play) return { ...data, _source: "tikwm" };
           } catch (e) { console.warn("[TikTok] TikWM API 失败:", e.message); }
-          // 策略1+3: 直接解析页面（bitrateInfo 最高码率 → playAddr 兜底）
+
+          // 策略3+4: 页面解析（bitrateInfo 最高码率 → playAddr 兜底）
           return await parseTiktokPageDirect(tiktokUrl);
         }
 
@@ -3116,7 +3161,7 @@ export function createMonitorServer({
           }
 
           const tkData = await getTiktokVideoData(tiktokUrl);
-          if (!tkData.play) throw new Error("未获取到视频播放地址");
+          if (!tkData.play && !tkData._localPath) throw new Error("未获取到视频播放地址");
           const author = tkData.author || {};
           const username = author.id || parsed.username || "unknown";
           const nickname = author.nickname || username;
@@ -3142,7 +3187,21 @@ export function createMonitorServer({
             return { ok: true, filename: path.basename(existing.url), filePath: existing.url, title, author: nickname, alreadyExists: true };
           }
 
-          const localPath = await downloadTiktokVideo(tkData.play, filename, tkData.size);
+          let localPath;
+          let fileSize;
+          if (tkData._localPath) {
+            // yt-dlp 已经下载到临时文件，重命名
+            localPath = tkData._localPath;
+            const finalPath = path.join(getUploadDir(), filename);
+            const { renameSync } = await import("fs");
+            renameSync(localPath, finalPath);
+            localPath = finalPath;
+            fileSize = tkData._fileSize;
+          } else {
+            // TikWM 或页面解析，用 fetch 下载
+            localPath = await downloadTiktokVideo(tkData.play, filename, tkData.size);
+            fileSize = null;
+          }
 
           // 创建视频记录
           const video = store.createRemixVideo({ creatorId: creator.id, url: videoUrl, title: title || null });
@@ -3150,9 +3209,9 @@ export function createMonitorServer({
           // 更新文件大小和时长
           try {
             const { statSync: statFn } = await import("fs");
-            const fSize = statFn(localPath).size;
-            store.db.prepare("UPDATE remix_videos SET file_size = ? WHERE id = ?").run(fSize, video.id);
-            video.fileSize = fSize;
+            if (!fileSize) fileSize = statFn(localPath).size;
+            store.db.prepare("UPDATE remix_videos SET file_size = ? WHERE id = ?").run(fileSize, video.id);
+            video.fileSize = fileSize;
           } catch {}
           if (tkData.duration) {
             store.updateRemixVideoDuration(video.id, tkData.duration);
@@ -3183,7 +3242,7 @@ export function createMonitorServer({
         }
 
         // POST /api/tiktok/download — 单条视频下载
-        if (request.method === "POST" && pathname === "/api/tiktok/download") {
+         if (request.method === "POST" && pathname === "/api/tiktok/download") {
           const body = await readJson(request);
           const rawUrl = (body.url || "").trim();
           if (!rawUrl) { sendJson(response, 400, { error: "缺少 url 参数" }); return; }
