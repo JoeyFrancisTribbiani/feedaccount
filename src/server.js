@@ -3168,23 +3168,24 @@ export function createMonitorServer({
           const tkData = await getTiktokVideoData(tiktokUrl);
           if (!tkData.play && !tkData._localPath) throw new Error("未获取到视频播放地址");
           const author = tkData.author || {};
-          const username = author.id || parsed.username || "unknown";
+          const username = parsed.username || author.id || "unknown";
           const nickname = author.nickname || username;
           const videoId = tkData.id || String(Date.now());
           const title = (tkData.title || "").substring(0, 200);
           const filename = `${Date.now()}_${username}_${videoId}.mp4`;
           const videoUrl = `/data/remix-videos/${filename}`;
 
-          // 检查是否已下载（按原始 TikTok URL 去重，不按本地文件路径）
+          // 查找或创建达人
           const creator = findOrCreateCreator(nickname, "TikTok");
+
+          // 去重检查：只按 source_url 匹配，且必须 downloaded=1 或 url 不为空（已下载过的才算已存在）
           const allVideos = store.listRemixVideos(creator.id);
           const existing = allVideos.find((v) => {
-            // 检查 source_url 字段是否匹配
-            if (v.sourceUrl && v.sourceUrl === tiktokUrl) return true;
-            // 检查标题相同且文件已存在
-            if (v.title === (title || null) && v.url !== videoUrl) {
-              const existingPath = path.join(getUploadDir(), path.basename(v.url));
-              if (existsSync(existingPath)) return true;
+            if (v.sourceUrl && v.sourceUrl === tiktokUrl) {
+              // source_url 匹配，但只有 downloaded=1 或 url 不为空才算真正已下载
+              if (v.downloaded === 1 || v.url) {
+                return true;
+              }
             }
             return false;
           });
@@ -3197,6 +3198,8 @@ export function createMonitorServer({
           if (tkData._localPath) {
             // yt-dlp 已经下载到临时文件，重命名
             localPath = tkData._localPath;
+            const { existsSync: existsFn } = await import("fs");
+            if (!existsFn(localPath)) throw new Error("yt-dlp 临时文件不存在");
             const finalPath = path.join(getUploadDir(), filename);
             const { renameSync } = await import("fs");
             renameSync(localPath, finalPath);
@@ -3208,8 +3211,19 @@ export function createMonitorServer({
             fileSize = null;
           }
 
-          // 创建视频记录
-          const video = store.createRemixVideo({ creatorId: creator.id, url: videoUrl, title: title || null });
+          // 更新或创建视频记录（按 source_url 关联解析时存的记录）
+          let video;
+          const existingBySourceUrl = allVideos.find((v) => v.sourceUrl === tiktokUrl);
+          if (existingBySourceUrl) {
+            // 更新解析时存的记录：设置本地路径、文件大小、downloaded=1
+            store.db.prepare("UPDATE remix_videos SET url = ?, file_size = ?, downloaded = 1 WHERE id = ?").run(videoUrl, fileSize || 0, existingBySourceUrl.id);
+            video = store.getRemixVideo(existingBySourceUrl.id);
+          } else {
+            // 解析时没存过，创建新记录
+            video = store.createRemixVideo({ creatorId: creator.id, url: videoUrl, title: title || null });
+            // 设置 source_url 和 downloaded
+            try { store.db.prepare("UPDATE remix_videos SET source_url = ?, downloaded = 1 WHERE id = ?").run(tiktokUrl, video.id); } catch {}
+          }
 
           // 更新文件大小和时长
           try {
@@ -3223,7 +3237,7 @@ export function createMonitorServer({
             video.duration = tkData.duration;
           }
 
-          // 下载封面图作为缩略图
+          // 下载封面图作为缩略图（统一用 thumbnail 字段）
           if (tkData.cover) {
             try {
               const thumbDir = path.join(getUploadDir(), "thumbs");
@@ -3237,8 +3251,9 @@ export function createMonitorServer({
               if (thumbRes.ok) {
                 const thumbBuf = await thumbRes.arrayBuffer();
                 writeFileSync(thumbPath, Buffer.from(thumbBuf));
-                video.thumbUrl = `/data/remix-videos/thumbs/${thumbName}`;
-                try { store.db.prepare("UPDATE remix_videos SET thumbnail = ? WHERE id = ?").run(video.thumbUrl, video.id); } catch {}
+                const thumbUrl = `/data/remix-videos/thumbs/${thumbName}`;
+                try { store.db.prepare("UPDATE remix_videos SET thumbnail = ? WHERE id = ?").run(thumbUrl, video.id); } catch {}
+                video.thumbnail = thumbUrl;
               }
             } catch {}
           }
