@@ -5070,7 +5070,7 @@ footer span {
 
   /* Remix 布局 */
   .remix-sidebar {
-    max-height: 200px;
+    max-height: 400px;
   }
 
   .remix-video-area {
