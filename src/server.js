@@ -211,49 +211,8 @@ function sendJson(response, statusCode, payload) {
 }
 
 function assertLocalWriteRequest(request) {
-  const host = request.headers.host || "";
-  let hostname = "";
-  try {
-    hostname = new URL(`http://${host}`).hostname;
-  } catch {
-    const error = new Error("无效的本机请求地址");
-    error.statusCode = 403;
-    throw error;
-  }
-  // 允许本机 + ngrok 域名（通过 ngrok 访问时 host 不是 localhost）
-  const isLocal = ["127.0.0.1", "localhost", "::1"].includes(hostname);
-  const isNgrok = hostname.endsWith(".ngrok-free.app") || hostname.endsWith(".ngrok.io");
-  if (!isLocal && !isNgrok) {
-    const error = new Error("只接受来自本机监控页的控制请求");
-    error.statusCode = 403;
-    throw error;
-  }
-
-  // ngrok 请求的 sec-fetch-site 可能是 cross-site，跳过检查
-  const fetchSite = request.headers["sec-fetch-site"];
-  if (fetchSite === "cross-site" && !isNgrok) {
-    const error = new Error("已拒绝跨站控制请求");
-    error.statusCode = 403;
-    throw error;
-  }
-
-  // ngrok 请求的 origin 与 host 不同，跳过检查
-  const origin = request.headers.origin;
-  if (origin && !isNgrok) {
-    let originHost = "";
-    try {
-      originHost = new URL(origin).host;
-    } catch {
-      const error = new Error("无效的请求来源");
-      error.statusCode = 403;
-      throw error;
-    }
-    if (originHost !== host) {
-      const error = new Error("已拒绝非监控页来源的控制请求");
-      error.statusCode = 403;
-      throw error;
-    }
-  }
+  // 允许所有来源访问（支持 ngrok / cloudflare tunnel / 任意域名）
+  return;
 }
 
 function csvCell(value) {
