@@ -5073,6 +5073,19 @@ footer span {
     max-height: 400px;
   }
 
+  /* 任务列表：手机端按钮换行到第二行 */
+  .remix-task-item {
+    flex-wrap: wrap;
+  }
+  .remix-task-info {
+    flex: 1 1 100%;
+    margin-bottom: 6px;
+  }
+  .remix-task-actions {
+    flex: 1 1 100%;
+    flex-wrap: wrap;
+  }
+
   .remix-video-area {
     padding: 12px;
   }
