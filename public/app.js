@@ -7892,8 +7892,8 @@ const autoPublish = {
       const expanded = this.expandedCreatorId === c.id;
       return `
         <div class="ap-creator-card" data-creator-id="${escapeHtml(c.id)}">
-          <div class="ap-creator-header ${expanded ? 'expanded' : ''}" data-toggle="${escapeHtml(c.id)}">
-            <span class="ap-creator-toggle ${expanded ? 'expanded' : ''}">▶</span>
+          <div class="ap-creator-header" data-toggle="${escapeHtml(c.id)}" style="cursor:pointer;">
+            <span class="ap-creator-toggle">⚙</span>
             <div class="ap-creator-info">
               <strong>${escapeHtml(c.name)}</strong>
               <span class="ap-creator-platform">${escapeHtml(c.platform || '—')}</span>
@@ -7903,7 +7903,7 @@ const autoPublish = {
               <span class="ap-switch-slider"></span>
             </label>
           </div>
-          ${expanded ? this._renderCreatorBodyHtml(c) : ''}
+
         </div>
       `;
     }).join('');
@@ -7913,9 +7913,7 @@ const autoPublish = {
       header.addEventListener('click', (e) => {
         if (e.target.closest('[data-stop-prop]')) return;
         const id = header.dataset.toggle;
-        this.expandedCreatorId = this.expandedCreatorId === id ? null : id;
-        if (this.expandedCreatorId) this.fetchBindings(this.expandedCreatorId);
-        this.renderCreators();
+        this._openConfigModal(id);
       });
     });
 
@@ -7992,6 +7990,80 @@ const autoPublish = {
     });
     container.querySelectorAll('[data-monitor-trigger]').forEach((btn) => {
       btn.addEventListener('click', () => this.triggerMonitor(btn.dataset.monitorTrigger));
+    });
+  },
+
+  _openConfigModal(creatorId) {
+    const c = this.creators.find((x) => x.id === creatorId);
+    if (!c) return;
+    this.fetchBindings(creatorId).then(() => {
+      // 移除已有弹窗
+      document.querySelector('#ap-config-modal')?.remove();
+      const cfg = c.autoPublishConfig || {};
+      const bodyHtml = this._renderCreatorBodyHtml(c);
+      const modal = document.createElement('div');
+      modal.id = 'ap-config-modal';
+      modal.className = 'modal-overlay';
+      modal.style.display = 'flex';
+      modal.innerHTML = `
+        <div class="modal-content" style="max-width:600px;max-height:85vh;overflow-y:auto;">
+          <div class="modal-header">
+            <h3 style="font-size:14px;">自动发布配置 · ${escapeHtml(c.name)}</h3>
+            <button class="modal-close" type="button" onclick="document.querySelector('#ap-config-modal').remove()">×</button>
+          </div>
+          <div class="modal-body">
+            ${bodyHtml}
+          </div>
+        </div>
+      `;
+      document.body.appendChild(modal);
+      modal.addEventListener('click', (e) => {
+        if (e.target === modal) modal.remove();
+      });
+      // 绑定弹窗内事件
+      this._bindCardEvents(modal.querySelector('.modal-body'));
+      // 绑定表单事件
+      this._bindBindingFormEvents(modal, creatorId);
+    });
+  },
+
+  _bindBindingFormEvents(scope, creatorId) {
+    scope.querySelectorAll('[data-bind-btn]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const form = scope.querySelector(`[data-bind-form="${CSS.escape(creatorId)}"]`);
+        if (form) {
+          form.classList.toggle('hidden');
+          // 填充实例列表
+          const select = scope.querySelector(`[data-bind-select="${CSS.escape(creatorId)}"]`);
+          if (select) {
+            select.innerHTML = '<option value="">选择实例…</option>' +
+              this.profiles.map(p => `<option value="${escapeHtml(p.id)}">#${escapeHtml(String(p.seq ?? '?'))} ${escapeHtml(p.name)}</option>`).join('');
+          }
+        }
+      });
+    });
+    scope.querySelectorAll('[data-bind-confirm]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const select = scope.querySelector(`[data-bind-select="${CSS.escape(creatorId)}"]`);
+        const limitInp = scope.querySelector(`[data-bind-limit="${CSS.escape(creatorId)}"]`);
+        if (!select?.value) { showToast('请选择实例', true); return; }
+        this.addProfileBinding(creatorId, select.value, parseInt(limitInp?.value || '3', 10));
+      });
+    });
+    scope.querySelectorAll('[data-bind-cancel]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        scope.querySelector(`[data-bind-form="${CSS.escape(creatorId)}"]`)?.classList.add('hidden');
+      });
+    });
+    scope.querySelectorAll('[data-del-binding]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        this.removeProfileBinding(btn.dataset.delBinding, btn.dataset.creatorId);
+      });
+    });
+    scope.querySelectorAll('[data-monitor-trigger]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        this.triggerMonitor(btn.dataset.monitorTrigger);
+      });
     });
   },
 
