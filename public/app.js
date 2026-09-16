@@ -7660,14 +7660,7 @@ const autoPublish = {
     try {
       const data = await request('/api/ai-presets');
       const list = Array.isArray(data) ? data : (data?.presets || []);
-      // 只显示单视频AI混剪方案（排除多条混剪方案）
-      this.presets = list
-        .filter((p) => {
-          // 排除 segment_script 类型的多条混剪方案
-          const types = p.resourceTypes || p.resource_types || [];
-          return !types.includes('segment_script');
-        })
-        .map((p) => ({ value: p.id, label: p.name || '未命名方案' }));
+      this.presets = list.map((p) => ({ value: p.id, label: p.name || '未命名方案' }));
     } catch {
       this.presets = [];
     }
