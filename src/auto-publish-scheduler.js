@@ -77,6 +77,7 @@ export class AutoPublishScheduler extends EventTarget {
     this.running = true;
     try {
       await this.monitorCreatorVideos();
+      await this._createPipelineForExistingVideos();
       await this.triggerRemixTasks();
       await this.checkRemixComplete();
       await this.schedulePublishJobs();
@@ -245,6 +246,73 @@ export class AutoPublishScheduler extends EventTarget {
         `自动发布-Pipeline创建: ${pipelineId} (达人=${cfg.creator_id}, profile=${binding.profile_id})`,
       );
     }
+  }
+
+  // ─── 1.5 为已有已下载视频补建 pipeline（手动下载的视频不在 monitor 表里） ───
+
+  async _createPipelineForExistingVideos() {
+    const configs = this._listEnabledConfigs();
+    if (!configs.length) return;
+
+    let changed = false;
+    for (const cfg of configs) {
+      const bindings = this._listCreatorBindings(cfg.creator_id);
+      if (!bindings.length) continue;
+
+      // 查这个达人所有已下载视频
+      const videos = this.store.db
+        .prepare("SELECT id, source_url FROM remix_videos WHERE creator_id = ? AND downloaded = 1")
+        .all(cfg.creator_id);
+
+      for (const video of videos) {
+        // 检查是否已有 pipeline task
+        for (const binding of bindings) {
+          const existing = this.store.db
+            .prepare("SELECT id FROM auto_remix_publish_pipeline WHERE source_video_id = ? AND profile_id = ?")
+            .get(video.id, binding.profile_id);
+          if (existing) continue;
+
+          // 创建 pipeline task
+          const pipelineId = genId("ap");
+          this.store.db
+            .prepare(
+              `INSERT INTO auto_remix_publish_pipeline
+               (id, creator_id, source_video_id, remix_task_id, profile_id, publish_job_id, status, fail_reason, attempt_count, source_url, matrix_id, created_at, updated_at)
+               VALUES (?, ?, ?, NULL, ?, NULL, 'pending', NULL, 0, ?, ?, ?, ?)`,
+            )
+            .run(
+              pipelineId,
+              cfg.creator_id,
+              video.id,
+              binding.profile_id,
+              video.source_url || null,
+              cfg.matrix_id || null,
+              nowIso(),
+              nowIso(),
+            );
+
+          // 同时记录到 monitor 表（标记为已下载）
+          if (video.source_url) {
+            this._recordMonitoredVideo({
+              creatorId: cfg.creator_id,
+              videoId: video.id,
+              tiktokUrl: video.source_url,
+            });
+            this._updateMonitoredVideo(cfg.creator_id, video.source_url, {
+              remixVideoId: video.id,
+            });
+          }
+
+          this.store.logCdpEvent(
+            null,
+            "info",
+            `自动发布-补建Pipeline: ${pipelineId} (视频=${video.id}, profile=${binding.profile_id})`,
+          );
+          changed = true;
+        }
+      }
+    }
+    if (changed) this._emitChange();
   }
 
   // ─── 2. 自动触发混剪 ───
@@ -805,12 +873,18 @@ export class AutoPublishScheduler extends EventTarget {
   // ─── 辅助：从达人名称提取 TikTok 用户名 ───
 
   _extractUsername(creator) {
+    // 1. platform 字段中提取 @username
     if (creator.platform && creator.platform.includes("@")) {
       const m = creator.platform.match(/@([^/\s]+)/);
       if (m) return m[1];
     }
+    // 2. name 以 @ 开头
     if (creator.name && creator.name.startsWith("@")) {
       return creator.name.substring(1).split(/\s/)[0];
+    }
+    // 3. name 本身就是 TikTok 用户名（无 @ 前缀，无空格，无中文）
+    if (creator.name && /^[a-zA-Z0-9._]+$/.test(creator.name)) {
+      return creator.name;
     }
     return null;
   }
