@@ -3582,6 +3582,7 @@ function renderRemixVideos() {
           <div class="remix-video-check ${selected ? "checked" : ""}">${selected ? "✓" : ""}</div>
 
           <button class="remix-video-del" data-del-video="${escapeHtml(v.id)}">×</button>
+          ${isDownloaded ? `<button class="remix-video-folder" data-folder-video="${escapeHtml(v.id)}" title="打开所在文件夹" style="position:absolute;bottom:6px;left:6px;background:rgba(0,0,0,0.6);color:#fff;border:none;border-radius:4px;padding:2px 6px;font-size:10px;cursor:pointer;z-index:2;">📁</button>` : ""}
 
           ${remixBadgeHtml(taskInfo)}
 
@@ -3641,6 +3642,21 @@ function renderRemixVideos() {
       await request(`/api/remix/creators/${encodeURIComponent(remix.selectedCreatorId)}/videos/${encodeURIComponent(btn.dataset.delVideo)}`, { method: "DELETE" });
       await fetchRemixVideos(remix.selectedCreatorId);
       await fetchRemixCreators();
+    });
+  });
+
+  // 打开文件夹按钮
+  remixEl.videoGrid.querySelectorAll("[data-folder-video]").forEach((btn) => {
+    btn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      try {
+        await request("/api/remix/reveal-file", {
+          method: "POST",
+          body: JSON.stringify({ videoId: btn.dataset.folderVideo }),
+        });
+      } catch (e) {
+        showToast(e.message, true);
+      }
     });
   });
   remixEl.videoGrid.querySelectorAll(".remix-play-btn").forEach((btn) => {
@@ -6265,8 +6281,16 @@ function renderModalTabs() {
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
         <strong style="font-size:12px;">原视频</strong>
         <span class="muted-activity" style="font-size:11px;">${tabName}</span>
+        <div style="margin-left:auto;display:flex;gap:6px;">
+          <button id="tab-upload-video" class="button button-secondary" type="button" style="font-size:10px;padding:2px 8px;" ${!tab.creatorId ? 'disabled title="请先选择达人"' : ''}>上传视频</button>
+        </div>
       </div>
-      <div class="modal-video-list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;">${videoHtml}</div>
+      <div id="tab-video-drop-zone" style="position:relative;">
+        <div id="tab-video-drop-hint" class="hidden" style="position:absolute;inset:0;border:2px dashed #3b82f6;border-radius:8px;background:rgba(59,130,246,0.05);display:flex;align-items:center;justify-content:center;z-index:10;pointer-events:none;">
+          <span style="font-size:14px;color:#3b82f6;font-weight:600;">松开以上传视频</span>
+        </div>
+        <div class="modal-video-list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;">${videoHtml}</div>
+      </div>
     </div>
   `;
 
@@ -6299,7 +6323,75 @@ function renderModalTabs() {
     openOtherCreatorModal(modalState.activeTabId);
   });
 
+  // 上传视频按钮
+  document.querySelector("#tab-upload-video")?.addEventListener("click", () => {
+    if (!tab.creatorId) { showToast("请先选择达人", true); return; }
+    const inp = document.createElement("input");
+    inp.type = "file";
+    inp.accept = "video/*";
+    inp.multiple = true;
+    inp.addEventListener("change", async () => {
+      for (const file of inp.files) {
+        await uploadVideoToTabCreator(tab, file);
+      }
+    });
+    inp.click();
+  });
+
+  // 拖拽上传
+  const dropZone = document.querySelector("#tab-video-drop-zone");
+  const dropHint = document.querySelector("#tab-video-drop-hint");
+  if (dropZone && dropHint) {
+    let dragCounter = 0;
+    dropZone.addEventListener("dragenter", (e) => {
+      e.preventDefault();
+      if (!tab.creatorId) return;
+      dragCounter++;
+      dropHint.classList.remove("hidden");
+    });
+    dropZone.addEventListener("dragleave", (e) => {
+      e.preventDefault();
+      dragCounter--;
+      if (dragCounter <= 0) { dragCounter = 0; dropHint.classList.add("hidden"); }
+    });
+    dropZone.addEventListener("dragover", (e) => { e.preventDefault(); });
+    dropZone.addEventListener("drop", async (e) => {
+      e.preventDefault();
+      dragCounter = 0;
+      dropHint.classList.add("hidden");
+      if (!tab.creatorId) { showToast("请先选择达人", true); return; }
+      const files = [...e.dataTransfer.files].filter(f => f.type.startsWith("video/"));
+      for (const file of files) {
+        await uploadVideoToTabCreator(tab, file);
+      }
+    });
+  }
+
   updateSelectedVideosSummary();
+}
+
+// 上传视频到当前 Tab 选中的达人
+async function uploadVideoToTabCreator(tab, file) {
+  try {
+    showToast(`正在上传 ${file.name}...`);
+    const formData = new FormData();
+    formData.append("file", file);
+    const res = await fetch("/api/remix/upload", { method: "POST", body: formData });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "上传失败");
+    // 创建视频记录关联到达人
+    await request(`/api/remix/creators/${encodeURIComponent(tab.creatorId)}/videos`, {
+      method: "POST",
+      body: JSON.stringify({ url: data.url, title: file.name.replace(/\.[^.]+$/, "") }),
+    });
+    // 刷新视频列表
+    const vids = await request(`/api/remix/creators/${encodeURIComponent(tab.creatorId)}/videos`);
+    tab.videos = vids;
+    renderModalTabs();
+    showToast(`${file.name} 上传成功`);
+  } catch (e) {
+    showToast(`上传失败: ${e.message}`, true);
+  }
 }
 
 // 选择其他达人弹窗

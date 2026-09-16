@@ -2405,6 +2405,25 @@ export function createMonitorServer({
           return;
         }
 
+        // ---- Remix: 在资源管理器中定位视频文件 ----
+        if (request.method === "POST" && pathname === "/api/remix/reveal-file") {
+          const body = await readJson(request);
+          const videoId = body.videoId;
+          if (!videoId) { sendJson(response, 400, { error: "缺少 videoId" }); return; }
+          const video = store.getRemixVideo(videoId);
+          if (!video || !video.url) { sendJson(response, 404, { error: "视频不存在或未下载" }); return; }
+          const filePath = path.join(getUploadDir(), path.basename(video.url));
+          if (!existsSync(filePath)) { sendJson(response, 404, { error: "文件不存在: " + filePath }); return; }
+          try {
+            // Windows: explorer /select,"文件路径"
+            spawn("explorer", ["/select,", filePath], { detached: true, stdio: "ignore" }).unref();
+            sendJson(response, 200, { ok: true, path: filePath });
+          } catch (e) {
+            sendJson(response, 500, { error: "打开文件夹失败: " + e.message });
+          }
+          return;
+        }
+
         // ---- Remix: 现有素材库 ----
         if (request.method === "GET" && pathname === "/api/remix/materials") {
           sendJson(response, 200, store.listTkMaterials());
