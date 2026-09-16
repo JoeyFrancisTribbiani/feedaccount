@@ -3048,20 +3048,153 @@ export function createMonitorServer({
           return statSync(filePath).size;
         }
 
-        // 辅助：获取无水印高清视频数据（四策略，优先 yt-dlp）
+        // 辅助：通过 CDP 从已登录的 TikTok 页面获取最高码率视频并下载
+        async function downloadViaCDP(tiktokUrl, filePath) {
+          const cdpBase = 'http://localhost:9222';
+          // 检查 9222 是否可用
+          try {
+            const verRes = await fetch(`${cdpBase}/json/version`, { signal: AbortSignal.timeout(3000) });
+            if (!verRes.ok) throw new Error('9222 not available');
+          } catch { throw new Error('Chrome 调试端口 9222 未启动'); }
+
+          // 查找或创建 TikTok 标签页
+          const tabsRes = await fetch(`${cdpBase}/json`);
+          const tabs = await tabsRes.json();
+          let page = tabs.find(t => t.type === 'page' && t.url.includes('tiktok.com'));
+          let newTabId = null;
+          if (!page) {
+            const newRes = await fetch(`${cdpBase}/json/new?about:blank`, { method: 'PUT', signal: AbortSignal.timeout(10000) });
+            const newTab = await newRes.json();
+            page = newTab;
+            newTabId = newTab.id;
+          }
+          const wsUrl = page.webSocketDebuggerUrl;
+          if (!wsUrl) throw new Error('无法获取 WebSocket 地址');
+
+          const ws = new WebSocket(wsUrl);
+          let wsClosed = false;
+          await new Promise((resolve, reject) => {
+            ws.addEventListener('open', resolve);
+            ws.addEventListener('error', () => reject(new Error('WebSocket 连接失败')));
+            ws.addEventListener('close', () => { wsClosed = true; });
+            setTimeout(() => reject(new Error('ws timeout')), 10000);
+          });
+
+          let cdpMsgId = 0;
+          const sendCDP = (method, params = {}) => new Promise((resolve, reject) => {
+            if (wsClosed) return reject(new Error('WebSocket 已断开'));
+            const id = ++cdpMsgId;
+            const handler = (e) => { const d = JSON.parse(e.data); if (d.id === id) { ws.removeEventListener('message', handler); resolve(d); } };
+            ws.addEventListener('message', handler);
+            ws.send(JSON.stringify({ id, method, params }));
+            setTimeout(() => reject(new Error(`${method} timeout`)), 60000);
+          });
+          const evalJS = (expr) => sendCDP('Runtime.evaluate', { expression: expr, returnByValue: true, awaitPromise: true });
+
+          try {
+            await sendCDP('Page.enable');
+            await sendCDP('Page.navigate', { url: tiktokUrl });
+            // 等待页面加载
+            await new Promise(r => setTimeout(r, 5000));
+
+            // 提取最高码率版本并下载
+            const result = await evalJS(`(async () => {
+              try {
+                const el = document.getElementById('__UNIVERSAL_DATA_FOR_REHYDRATION__');
+                if (!el) return JSON.stringify({error: 'no universal data'});
+                const data = JSON.parse(el.textContent);
+                const video = data?.['__DEFAULT_SCOPE__']?.['webapp.video-detail']?.itemInfo?.itemStruct?.video;
+                if (!video) return JSON.stringify({error: 'no video'});
+                const bitrateInfo = video.bitrateInfo || [];
+                if (!bitrateInfo.length) return JSON.stringify({error: 'no bitrateInfo'});
+                const best = bitrateInfo.reduce((a, b) => (b.Bitrate > a.Bitrate ? b : a));
+                const url = best.PlayAddr?.UrlList?.[0];
+                if (!url) return JSON.stringify({error: 'no url'});
+                const resp = await fetch(url, { credentials: 'include' });
+                if (!resp.ok) return JSON.stringify({error: 'fetch failed: ' + resp.status});
+                const buf = await resp.arrayBuffer();
+                const bytes = new Uint8Array(buf);
+                let binary = '';
+                const chunk = 16384;
+                for (let i = 0; i < bytes.length; i += chunk) {
+                  binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+                }
+                return JSON.stringify({
+                  ok: true,
+                  size: bytes.length,
+                  base64: btoa(binary),
+                  bitrate: best.Bitrate,
+                  codec: best.CodecType,
+                  width: best.PlayAddr.Width,
+                  height: best.PlayAddr.Height,
+                  title: data?.['__DEFAULT_SCOPE__']?.['webapp.video-detail']?.itemInfo?.itemStruct?.desc || '',
+                  duration: video.duration || null,
+                  cover: video.cover || video.originCover || '',
+                });
+              } catch(e) { return JSON.stringify({error: e.message}); }
+            })()`);
+
+            const val = result?.result?.result?.value;
+            if (!val) throw new Error('CDP 返回空结果');
+            const data = JSON.parse(val);
+            if (data.error) throw new Error('CDP 下载失败: ' + data.error);
+
+            // 写入文件
+            const buf = Buffer.from(data.base64, 'base64');
+            const { writeFileSync } = await import('fs');
+            writeFileSync(filePath, buf);
+
+            return {
+              size: data.size,
+              bitrate: data.bitrate,
+              codec: data.codec,
+              width: data.width,
+              height: data.height,
+              title: data.title,
+              duration: data.duration,
+              cover: data.cover,
+            };
+          } finally {
+            try { ws.close(); } catch {}
+            if (newTabId) {
+              try { await fetch(`${cdpBase}/json/close/${newTabId}`, { signal: AbortSignal.timeout(5000) }); } catch {}
+            }
+          }
+        }
+
+        // 辅助：获取无水印高清视频数据（CDP 优先 → yt-dlp → TikWM → 页面解析）
         async function getTiktokVideoData(tiktokUrl) {
           // 获取 videoId
           const videoIdMatch = tiktokUrl.match(/video\/(\d+)/);
           const videoId = videoIdMatch ? videoIdMatch[1] : String(Date.now());
 
-          // 策略1: yt-dlp（最高画质 1080p HEVC 60fps）
+          // 策略1: CDP（最高码率 HEVC 1080p 60fps，通过已登录浏览器下载）
+          try {
+            const uploadDir = getUploadDir();
+            mkdirSync(uploadDir, { recursive: true });
+            const tempPath = path.join(uploadDir, `_cdp_${videoId}.mp4`);
+            const cdpResult = await downloadViaCDP(tiktokUrl, tempPath);
+            return {
+              play: null,
+              _localPath: tempPath,
+              _fileSize: cdpResult.size,
+              title: cdpResult.title,
+              author: { id: null, nickname: null },
+              id: videoId,
+              cover: cdpResult.cover,
+              duration: cdpResult.duration,
+              _source: "cdp",
+            };
+          } catch (e) { console.warn("[TikTok] CDP 失败:", e.message); }
+
+          // 策略2: yt-dlp（1080p HEVC 60fps）
           try {
             const uploadDir = getUploadDir();
             mkdirSync(uploadDir, { recursive: true });
             const tempPath = path.join(uploadDir, `_ytdlp_${videoId}.mp4`);
             const fileSize = await downloadWithYtDlp(tiktokUrl, tempPath);
             return {
-              play: null, // yt-dlp 直接下载到文件了
+              play: null,
               _localPath: tempPath,
               _fileSize: fileSize,
               title: null, author: { id: null, nickname: null }, id: videoId,
@@ -3070,13 +3203,13 @@ export function createMonitorServer({
             };
           } catch (e) { console.warn("[TikTok] yt-dlp 失败:", e.message); }
 
-          // 策略2: TikWM API
+          // 策略3: TikWM API
           try {
             const data = await callTikwm(tiktokUrl);
             if (data.play) return { ...data, _source: "tikwm" };
           } catch (e) { console.warn("[TikTok] TikWM API 失败:", e.message); }
 
-          // 策略3+4: 页面解析（bitrateInfo 最高码率 → playAddr 兜底）
+          // 策略4: 页面解析（bitrateInfo 最高码率 → playAddr 兜底）
           return await parseTiktokPageDirect(tiktokUrl);
         }
 

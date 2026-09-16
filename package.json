@@ -11,5 +11,8 @@
   },
   "engines": {
     "node": ">=22.5"
+  },
+  "dependencies": {
+    "xbogus": "^1.0.2"
   }
 }
