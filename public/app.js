@@ -7966,6 +7966,65 @@ const autoPublish = {
       });
     });
 
+  },
+
+  _openConfigModal(creatorId) {
+    const c = this.creators.find((x) => x.id === creatorId);
+    if (!c) return;
+    this.fetchBindings(creatorId).then(() => {
+      document.querySelector('#ap-config-modal')?.remove();
+      const bodyHtml = this._renderCreatorBodyHtml(c);
+      const modal = document.createElement('div');
+      modal.id = 'ap-config-modal';
+      modal.className = 'modal-overlay';
+      modal.style.display = 'flex';
+      modal.innerHTML = `
+        <div class="modal-content" style="max-width:600px;max-height:85vh;overflow-y:auto;">
+          <div class="modal-header">
+            <h3 style="font-size:14px;">自动发布配置 · ${escapeHtml(c.name)}</h3>
+            <button class="modal-close" type="button" onclick="document.querySelector('#ap-config-modal').remove()">×</button>
+          </div>
+          <div class="modal-body">${bodyHtml}</div>
+        </div>
+      `;
+      document.body.appendChild(modal);
+      modal.addEventListener('click', (e) => { if (e.target === modal) modal.remove(); });
+      this._bindModalEvents(modal, creatorId);
+    });
+  },
+
+  _bindModalEvents(scope, creatorId) {
+    scope.querySelectorAll('[data-config-preset]').forEach((sel) => {
+      sel.addEventListener('change', () => this.saveCreatorConfig(sel.dataset.configPreset, { presetId: sel.value }));
+    });
+    scope.querySelectorAll('[data-config-daily]').forEach((inp) => {
+      inp.addEventListener('change', () => {
+        const val = parseInt(inp.value, 10) || 0;
+        this.saveCreatorConfig(inp.dataset.configDaily, { dailyLimitPerProfile: val });
+      });
+    });
+    scope.querySelectorAll('[data-config-interval]').forEach((inp) => {
+      inp.addEventListener('change', () => {
+        const val = parseInt(inp.value, 10) || 1;
+        this.saveCreatorConfig(inp.dataset.configInterval, { monitorIntervalHours: val });
+      });
+    });
+    scope.querySelectorAll('[data-config-cdp]').forEach((sel) => {
+      sel.addEventListener('change', () => this.saveCreatorConfig(sel.dataset.configCdp, { cdpInstanceId: sel.value || null }));
+    });
+    scope.querySelectorAll('[data-config-slots-save]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const cid = btn.dataset.configSlotsSave;
+        const input = scope.querySelector(`[data-config-slots="${CSS.escape(cid)}"]`);
+        if (!input) return;
+        const raw = input.value.trim();
+        if (!raw) { this.saveCreatorConfig(cid, { publishTimeSlots: null }); return; }
+        const slots = raw.split(',').map((s) => s.trim()).filter(Boolean);
+        const valid = slots.every((s) => /^\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}$/.test(s) || /^\d{1,2}:\d{2}$/.test(s));
+        if (!valid) { showToast('格式有误，用 HH:MM-HH:MM(时间段) 或 HH:MM(精确时间)，逗号分隔', true); return; }
+        this.saveCreatorConfig(cid, { publishTimeSlots: JSON.stringify(slots) });
+      });
+    });
     scope.querySelectorAll('[data-bind-btn]').forEach((btn) => {
       btn.addEventListener('click', () => this._showBindingForm(btn.dataset.bindBtn));
     });
@@ -7981,6 +8040,45 @@ const autoPublish = {
     scope.querySelectorAll('[data-monitor-trigger]').forEach((btn) => {
       btn.addEventListener('click', () => this.triggerMonitor(btn.dataset.monitorTrigger));
     });
+  },
+
+  _renderCreatorBodyHtml(c) {
+    const cfg = c.autoPublishConfig || {};
+    const bindings = c.bindings || [];
+    const presetOptions = this.presets
+      .map((p) => `<option value="${p.value}" ${cfg.presetId === p.value ? 'selected' : ''}>${escapeHtml(p.label)}</option>`)
+      .join('');
+    const bindingsHtml = bindings.length
+      ? bindings.map((b) => {
+          const prof = this.profiles.find((p) => p.id === b.profileId);
+          const seq = prof?.seq ?? '?';
+          const name = prof?.name || b.profileId;
+          return `<div class="ap-binding-item"><span class="ap-binding-seq">#${escapeHtml(String(seq))}</span><span class="ap-binding-name">${escapeHtml(name)}</span><span class="ap-binding-limit">${escapeHtml(String(b.dailyLimit || 0))}条/日</span><button class="ap-binding-del" data-del-binding="${escapeHtml(b.id)}" data-creator-id="${escapeHtml(c.id)}" title="删除">×</button></div>`;
+        }).join('')
+      : '<div style="font-size:11px;color:var(--text-muted,#94a3b8);padding:4px 0;">暂未绑定实例</div>';
+    const slotsVal = cfg.publishTimeSlots ? (typeof cfg.publishTimeSlots === 'string' ? (() => { try { return JSON.parse(cfg.publishTimeSlots).join(', '); } catch { return cfg.publishTimeSlots; } })() : cfg.publishTimeSlots.join(', ')) : '';
+    return `<div class="ap-creator-body" data-body="${escapeHtml(c.id)}">
+      <div class="ap-config-row"><span class="ap-config-label">混剪方案</span><div class="ap-config-value"><select data-config-preset="${escapeHtml(c.id)}">${presetOptions}</select></div></div>
+      <div class="ap-config-row"><span class="ap-config-label">每实例每日发布</span><div class="ap-config-value"><input type="number" min="0" max="50" value="${escapeHtml(String(cfg.dailyLimitPerProfile ?? 3))}" data-config-daily="${escapeHtml(c.id)}" style="width:60px;" /> 条</div></div>
+      <div class="ap-config-row"><span class="ap-config-label">监控间隔</span><div class="ap-config-value"><input type="number" min="1" max="168" value="${escapeHtml(String(cfg.monitorIntervalHours ?? 6))}" data-config-interval="${escapeHtml(c.id)}" style="width:70px;" /> 小时</div></div>
+      <div class="ap-config-row"><span class="ap-config-label">CDP实例</span><div class="ap-config-value"><select data-config-cdp="${escapeHtml(c.id)}" style="min-width:160px;"><option value="">未配置（使用绑定实例）</option>${this.cdpInstances.map((inst) => `<option value="${escapeHtml(inst.id)}" ${cfg.cdpInstanceId === inst.id ? 'selected' : ''}>${escapeHtml(inst.name)}</option>`).join('')}</select></div></div>
+      <div class="ap-config-row"><span class="ap-config-label">发布时间段</span><div class="ap-config-value"><input type="text" value="${escapeHtml(slotsVal)}" data-config-slots="${escapeHtml(c.id)}" style="width:280px;" placeholder="时间段: 09:00-12:00 或 精确: 09:00, 12:00" /><button class="button button-secondary" type="button" data-config-slots-save="${escapeHtml(c.id)}" style="font-size:11px;padding:2px 8px;margin-left:4px;">保存</button><div style="font-size:10px;color:var(--text-muted,#94a3b8);margin-top:4px;">时间段→范围内随机；精确时间→定点发布</div></div></div>
+      <div class="ap-bindings-area"><div class="ap-bindings-head"><span>绑定的指纹浏览器实例 (${bindings.length})</span><button class="button button-secondary" type="button" data-bind-btn="${escapeHtml(c.id)}" style="font-size:11px;padding:2px 10px;">+ 绑定</button></div><div class="ap-binding-form hidden" data-bind-form="${escapeHtml(c.id)}"><select data-bind-select="${escapeHtml(c.id)}" style="flex:1;"><option value="">选择实例…</option></select><input type="number" min="1" max="50" value="3" data-bind-limit="${escapeHtml(c.id)}" style="width:50px;" title="每日发布条数" /><button class="button button-primary" type="button" data-bind-confirm="${escapeHtml(c.id)}" style="font-size:11px;padding:2px 10px;">确认</button><button class="button button-secondary" type="button" data-bind-cancel="${escapeHtml(c.id)}" style="font-size:11px;padding:2px 10px;">取消</button></div>${bindingsHtml}</div>
+      <div class="ap-config-row"><span class="ap-config-label">手动操作</span><button class="button button-secondary" type="button" data-monitor-trigger="${escapeHtml(c.id)}" style="font-size:11px;padding:2px 10px;">立即监控</button></div>
+    </div>`;
+  },
+
+  renderCreatorBody(creatorId) {
+    // 弹窗模式下直接刷新弹窗内容
+    const modal = document.querySelector('#ap-config-modal');
+    if (!modal) return;
+    const c = this.creators.find((x) => x.id === creatorId);
+    if (!c) return;
+    const bodyEl = modal.querySelector('.modal-body');
+    if (bodyEl) {
+      bodyEl.innerHTML = this._renderCreatorBodyHtml(c);
+      this._bindModalEvents(modal, creatorId);
+    }
   },
 
   _showBindingForm(creatorId) {
