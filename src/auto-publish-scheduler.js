@@ -367,8 +367,21 @@ export class AutoPublishScheduler extends EventTarget {
     const presetId = cfg.preset_id;
     const ratio = cfg.ratio || "9:16";
 
-    // matrix_id 可选：如果用户不配 matrix，用默认值 "auto" 跳过
-    const effectiveMatrixId = matrixId || "auto";
+    // matrix_id 可选：如果用户不配 matrix，自动选第一个可用矩阵
+    let effectiveMatrixId = matrixId;
+    if (!effectiveMatrixId) {
+      const firstMatrix = this.store.db.prepare("SELECT id FROM media_matrices LIMIT 1").get();
+      effectiveMatrixId = firstMatrix?.id || null;
+    }
+
+    if (!effectiveMatrixId) {
+      this._updatePipeline(pipeline.id, {
+        status: "failed",
+        failReason: "未配置社媒矩阵，且数据库中无可用矩阵",
+      });
+      this._emitChange();
+      return;
+    }
 
     // cdp_instance_id 仍需校验（混剪需要 CDP 实例运行 ChatGPT）
     if (!cdpInstanceId) {
@@ -385,7 +398,7 @@ export class AutoPublishScheduler extends EventTarget {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          matrixIds: effectiveMatrixId !== "auto" ? [effectiveMatrixId] : [],
+          matrixIds: [effectiveMatrixId],
           creatorId: pipeline.creator_id,
           videoIds: [pipeline.source_video_id],
           cdpInstanceId,
@@ -804,8 +817,21 @@ export class AutoPublishScheduler extends EventTarget {
     const ratio = cfg.ratio || "9:16";
     const presetId = cfg.preset_id;
 
-    // matrix_id 可选：如果用户不配 matrix，用默认值 "auto" 跳过
-    const effectiveMatrixId = matrixId || "auto";
+    // matrix_id 可选：如果用户不配 matrix，自动选第一个可用矩阵
+    let effectiveMatrixId = matrixId;
+    if (!effectiveMatrixId) {
+      const firstMatrix = this.store.db.prepare("SELECT id FROM media_matrices LIMIT 1").get();
+      effectiveMatrixId = firstMatrix?.id || null;
+    }
+
+    if (!effectiveMatrixId) {
+      this._updatePipeline(pipeline.id, {
+        status: "failed",
+        failReason: "未配置社媒矩阵，且数据库中无可用矩阵",
+      });
+      this._emitChange();
+      return;
+    }
 
     // cdp_instance_id 仍需校验
     if (!cdpInstanceId) {
@@ -822,7 +848,7 @@ export class AutoPublishScheduler extends EventTarget {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          matrixIds: effectiveMatrixId !== "auto" ? [effectiveMatrixId] : [],
+          matrixIds: [effectiveMatrixId],
           creatorId: pipeline.creator_id,
           videoIds: [pipeline.source_video_id],
           cdpInstanceId,
