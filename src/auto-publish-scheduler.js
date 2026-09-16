@@ -537,11 +537,22 @@ export class AutoPublishScheduler extends EventTarget {
    * @param {Date} now
    */
   _calcNextPublishTimeWithSlots(slots, profileId, now) {
-    // 解析时间段为 { startMin, endMin } (从当天 00:00 起的分钟数)
+    // 解析时间段和精确时间点
+    // 时间段格式: "09:00-12:00" → { startMin, endMin, type: 'range' }
+    // 精确时间格式: "09:00" → { startMin, endMin: startMin, type: 'exact' }
     const parsedSlots = slots.map((s) => {
-      const m = s.match(/(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})/);
-      if (!m) return null;
-      return { startMin: parseInt(m[1], 10) * 60 + parseInt(m[2], 10), endMin: parseInt(m[3], 10) * 60 + parseInt(m[4], 10), raw: s };
+      // 先尝试匹配时间段 HH:MM-HH:MM
+      const rangeMatch = s.match(/(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})/);
+      if (rangeMatch) {
+        return { startMin: parseInt(rangeMatch[1], 10) * 60 + parseInt(rangeMatch[2], 10), endMin: parseInt(rangeMatch[3], 10) * 60 + parseInt(rangeMatch[4], 10), type: 'range', raw: s };
+      }
+      // 再尝试匹配精确时间 HH:MM
+      const exactMatch = s.match(/(\d{1,2}):(\d{2})/);
+      if (exactMatch) {
+        const min = parseInt(exactMatch[1], 10) * 60 + parseInt(exactMatch[2], 10);
+        return { startMin: min, endMin: min, type: 'exact', raw: s };
+      }
+      return null;
     }).filter(Boolean);
 
     if (!parsedSlots.length) {
@@ -587,6 +598,14 @@ export class AutoPublishScheduler extends EventTarget {
 
         // 候选时间 = max(现在, 上次发布 + 最小间隔)
         let candidateMs = Math.max(nowMs, lastScheduledMs + PUBLISH_INTERVAL_MIN_MS);
+
+        if (slot.type === 'exact') {
+          // 精确时间点：直接用 slotStartMs，如果已过则跳到明天
+          if (dayOffset === 0 && slotStartMs < candidateMs) continue;
+          return new Date(slotStartMs).toISOString();
+        }
+
+        // 时间段：在范围内随机
         // 第一天跳过已过的时间段，第二天不限
         if (dayOffset === 0 && candidateMs >= slotEndMs) continue;
         // 确保候选时间在时间段内
