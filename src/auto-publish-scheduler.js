@@ -367,17 +367,21 @@ export class AutoPublishScheduler extends EventTarget {
     const presetId = cfg.preset_id;
     const ratio = cfg.ratio || "9:16";
 
-    // matrix_id 可选：如果用户不配 matrix，自动选第一个可用矩阵
+    // matrix_id: 优先用 pipeline/config 配置的，否则从达人绑定的矩阵查
     let effectiveMatrixId = matrixId;
     if (!effectiveMatrixId) {
-      const firstMatrix = this.store.db.prepare("SELECT id FROM media_matrices LIMIT 1").get();
-      effectiveMatrixId = firstMatrix?.id || null;
+      const mac = this.store.db
+        .prepare(`SELECT ma.matrix_id FROM matrix_account_creators mac
+                  JOIN matrix_accounts ma ON ma.id = mac.matrix_account_id
+                  WHERE mac.creator_id = ? LIMIT 1`)
+        .get(pipeline.creator_id);
+      effectiveMatrixId = mac?.matrix_id || null;
     }
 
     if (!effectiveMatrixId) {
       this._updatePipeline(pipeline.id, {
         status: "failed",
-        failReason: "未配置社媒矩阵，且数据库中无可用矩阵",
+        failReason: "该达人未绑定任何社媒矩阵",
       });
       this._emitChange();
       return;
@@ -817,17 +821,21 @@ export class AutoPublishScheduler extends EventTarget {
     const ratio = cfg.ratio || "9:16";
     const presetId = cfg.preset_id;
 
-    // matrix_id 可选：如果用户不配 matrix，自动选第一个可用矩阵
+    // matrix_id: 优先用 pipeline/config 配置的，否则从达人绑定的矩阵查
     let effectiveMatrixId = matrixId;
     if (!effectiveMatrixId) {
-      const firstMatrix = this.store.db.prepare("SELECT id FROM media_matrices LIMIT 1").get();
-      effectiveMatrixId = firstMatrix?.id || null;
+      const mac = this.store.db
+        .prepare(`SELECT ma.matrix_id FROM matrix_account_creators mac
+                  JOIN matrix_accounts ma ON ma.id = mac.matrix_account_id
+                  WHERE mac.creator_id = ? LIMIT 1`)
+        .get(pipeline.creator_id);
+      effectiveMatrixId = mac?.matrix_id || null;
     }
 
     if (!effectiveMatrixId) {
       this._updatePipeline(pipeline.id, {
         status: "failed",
-        failReason: "未配置社媒矩阵，且数据库中无可用矩阵",
+        failReason: "该达人未绑定任何社媒矩阵",
       });
       this._emitChange();
       return;
