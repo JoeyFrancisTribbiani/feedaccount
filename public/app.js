@@ -3582,7 +3582,7 @@ function renderRemixVideos() {
           <div class="remix-video-check ${selected ? "checked" : ""}">${selected ? "✓" : ""}</div>
 
           <button class="remix-video-del" data-del-video="${escapeHtml(v.id)}">×</button>
-          ${isDownloaded ? `<button class="remix-video-folder" data-folder-video="${escapeHtml(v.id)}" title="打开所在文件夹" style="position:absolute;bottom:6px;left:6px;background:rgba(0,0,0,0.6);color:#fff;border:none;border-radius:4px;padding:2px 6px;font-size:10px;cursor:pointer;z-index:2;">📁</button>` : ""}
+          ${isDownloaded ? `<button class="remix-video-folder" data-folder-video="${escapeHtml(v.id)}" title="打开所在文件夹" style="position:absolute;bottom:6px;right:32px;background:rgba(0,0,0,0.6);color:#fff;border:none;border-radius:4px;padding:2px 6px;font-size:11px;cursor:pointer;z-index:2;">📁</button>` : ""}
 
           ${remixBadgeHtml(taskInfo)}
 
