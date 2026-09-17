@@ -112,24 +112,32 @@ export class TiktokPublisher {
 
     // 1. 等待并找到 file input
     let fileInput = null;
+    let alreadyUploaded = false;
     for (let i = 0; i < 10; i++) {
       fileInput = await page.$('input[type="file"]');
       if (fileInput) break;
       // 每次 retry 前 dismiss 弹窗
       await this._dismissDialogs();
+      // 检查是否已经在上传/已上传状态（之前的上传残留）
+      const bodyText = await page.innerText('body').catch(() => '');
+      if (bodyText.includes('Uploaded') || bodyText.includes('已上传') || bodyText.includes('Replace') || bodyText.includes('替换')) {
+        alreadyUploaded = true;
+        break;
+      }
       await page.waitForTimeout(2000);
     }
 
-    if (!fileInput) {
-      // 记录页面状态用于调试
+    if (!fileInput && !alreadyUploaded) {
       const url = page.url();
       const bodyText = await page.innerText('body').catch(() => '');
       const inputCount = await page.evaluate(() => document.querySelectorAll('input').length).catch(() => -1);
       throw new Error(`未找到 file input。URL=${url}, inputs=${inputCount}, body=${bodyText.substring(0, 150)}`);
     }
 
-    // 2. 用 Playwright setInputFiles 上传文件
-    await fileInput.setInputFiles(localFilePath);
+    // 2. 用 Playwright setInputFiles 上传文件（跳过已上传的情况）
+    if (fileInput) {
+      await fileInput.setInputFiles(localFilePath);
+    }
 
     // 3. 等待视频上传并解析完成（编辑器就绪）
     let editorReady = false;
