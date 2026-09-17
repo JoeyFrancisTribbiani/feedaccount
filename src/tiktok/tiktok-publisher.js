@@ -115,11 +115,17 @@ export class TiktokPublisher {
     for (let i = 0; i < 10; i++) {
       fileInput = await page.$('input[type="file"]');
       if (fileInput) break;
+      // 每次 retry 前 dismiss 弹窗
+      await this._dismissDialogs();
       await page.waitForTimeout(2000);
     }
 
     if (!fileInput) {
-      throw new Error("未在 TikTok Studio 上传页面找到 <input type='file'> 元素（请确认已登录账号）");
+      // 记录页面状态用于调试
+      const url = page.url();
+      const bodyText = await page.innerText('body').catch(() => '');
+      const inputCount = await page.evaluate(() => document.querySelectorAll('input').length).catch(() => -1);
+      throw new Error(`未找到 file input。URL=${url}, inputs=${inputCount}, body=${bodyText.substring(0, 150)}`);
     }
 
     // 2. 用 Playwright setInputFiles 上传文件
