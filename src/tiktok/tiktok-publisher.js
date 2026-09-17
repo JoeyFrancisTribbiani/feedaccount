@@ -77,17 +77,23 @@ export class TiktokPublisher {
    */
   async _dismissDialogs() {
     const page = this.page;
-    // "Discard" 按钮 - 丢弃未保存的编辑
-    const discardBtn = await page.$('button:has-text("Discard"), button:has-text("放弃"), button:has-text("丢弃")');
-    if (discardBtn) {
-      await discardBtn.click().catch(() => {});
-      await page.waitForTimeout(1000);
-    }
-    // 其他可能的弹窗关闭按钮
-    const closeBtns = await page.$$('button:has-text("Continue"), button:has-text("OK"), button:has-text("Got it"), button:has-text("继续"), button:has-text("确定")');
-    for (const btn of closeBtns) {
-      await btn.click().catch(() => {});
-    }
+    // 用 evaluate 直接找弹窗按钮点击，避免 :has-text 兼容性问题
+    await page.evaluate(() => {
+      const btns = document.querySelectorAll('button');
+      for (const b of btns) {
+        const t = b.innerText.trim();
+        if (t === 'Discard' || t === '放弃' || t === '丢弃') { b.click(); return; }
+      }
+    }).catch(() => {});
+    await page.waitForTimeout(1000);
+    // 再关其他弹窗
+    await page.evaluate(() => {
+      const btns = document.querySelectorAll('button');
+      for (const b of btns) {
+        const t = b.innerText.trim();
+        if (t === 'Continue' || t === 'OK' || t === 'Got it' || t === '继续' || t === '确定') { b.click(); return; }
+      }
+    }).catch(() => {});
     await page.waitForTimeout(500);
   }
 
