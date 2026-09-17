@@ -76,23 +76,62 @@ export class BitBrowserApi {
     }));
   }
 
-  async openProfile(profileId, { extractIp = false } = {}) {
-    const data = await this.request("/browser/open", { id: profileId, ...(extractIp ? { extractIp: true } : {}) }, 30000);
-    const wsUrl =
-      (typeof data?.ws === "string" && data.ws) ||
-      data?.ws?.selenium ||
-      data?.ws?.puppeteer ||
-      data?.ws?.playwright;
+  async openProfile(profileId, { extractIp = false, maxRetries = 3, retryDelay = 5000 } = {}) {
+    // 先检查窗口是否已经打开
+    let alreadyOpen = false;
+    try {
+      const listData = await this.request("/browser/list", { page: 0, pageSize: 100, ids: [profileId] }, 10000);
+      const list = listData?.list || listData?.data?.list || [];
+      const item = list.find((b) => b.id === profileId);
+      if (item && (item.status === 1 || item.isRunning === true)) {
+        alreadyOpen = true;
+      }
+    } catch { /* 查询失败不影响后续 open */ }
 
-    if (!wsUrl) {
-      throw new Error("BitBrowser 未返回可用的调试连接地址");
+    let lastError = null;
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        const data = await this.request("/browser/open", { id: profileId, ...(extractIp ? { extractIp: true } : {}) }, 30000);
+        const wsUrl =
+          (typeof data?.ws === "string" && data.ws) ||
+          data?.ws?.selenium ||
+          data?.ws?.puppeteer ||
+          data?.ws?.playwright;
+
+        if (!wsUrl) {
+          throw new Error("BitBrowser 未返回可用的调试连接地址");
+        }
+
+        return {
+          wsUrl,
+          http: data.http || null,
+          coreVersion: data.coreVersion || null,
+        };
+      } catch (error) {
+        lastError = error;
+        // "降低接口请求频率" 时等待重试
+        if (attempt < maxRetries && /降低|频率|频率重试/i.test(error.message)) {
+          await new Promise((r) => setTimeout(r, retryDelay));
+          continue;
+        }
+        // 如果窗口已经开着但 open 失败，尝试用 detail 获取 ws
+        if (alreadyOpen) {
+          try {
+            const detail = await this.request("/browser/detail", { id: profileId }, 10000);
+            const wsUrl =
+              (typeof detail?.ws === "string" && detail.ws) ||
+              detail?.ws?.selenium ||
+              detail?.ws?.puppeteer ||
+              detail?.ws?.playwright;
+            if (wsUrl) {
+              return { wsUrl, http: detail.http || null, coreVersion: detail.coreVersion || null };
+            }
+          } catch { /* detail 也拿不到 ws，继续抛原错误 */ }
+        }
+        throw error;
+      }
     }
-
-    return {
-      wsUrl,
-      http: data.http || null,
-      coreVersion: data.coreVersion || null,
-    };
+    throw lastError;
   }
 
   async closeProfile(profileId) {
