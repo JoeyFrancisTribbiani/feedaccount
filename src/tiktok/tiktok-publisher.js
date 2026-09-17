@@ -66,7 +66,29 @@ export class TiktokPublisher {
     await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
     await page.waitForTimeout(2000);
 
+    // 处理可能出现的弹窗（"A video you were editing wasn't saved. Continue editing?"）
+    await this._dismissDialogs();
+
     return { connected: true };
+  }
+
+  /**
+   * 关闭 TikTok Studio 可能出现的弹窗
+   */
+  async _dismissDialogs() {
+    const page = this.page;
+    // "Discard" 按钮 - 丢弃未保存的编辑
+    const discardBtn = await page.$('button:has-text("Discard"), button:has-text("放弃"), button:has-text("丢弃")');
+    if (discardBtn) {
+      await discardBtn.click().catch(() => {});
+      await page.waitForTimeout(1000);
+    }
+    // 其他可能的弹窗关闭按钮
+    const closeBtns = await page.$$('button:has-text("Continue"), button:has-text("OK"), button:has-text("Got it"), button:has-text("继续"), button:has-text("确定")');
+    for (const btn of closeBtns) {
+      await btn.click().catch(() => {});
+    }
+    await page.waitForTimeout(500);
   }
 
   /**
@@ -118,7 +140,7 @@ export class TiktokPublisher {
     if (fullCaption) {
       const editor = await page.$('.public-DraftEditor-content, [contenteditable="true"], div[data-e2e="caption-input"], textarea');
       if (editor) {
-        await editor.click();
+        await editor.click({ force: true }).catch(() => {});
         await page.waitForTimeout(300);
         await page.keyboard.type(fullCaption, { delay: 30 });
         await page.waitForTimeout(1000);
@@ -149,7 +171,14 @@ export class TiktokPublisher {
     const postBtn = await this._findPostButton();
     if (!postBtn) throw new Error('无法找到发布按钮');
 
-    await postBtn.click();
+    await postBtn.click({ force: true }).catch(async () => {
+      // force click 失败，尝试 JS dispatch
+      await postBtn.evaluate(el => {
+        el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+        el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+        el.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      });
+    });
     const btnText = await postBtn.innerText().catch(() => 'clicked');
 
     // 7. 等待发布成功
@@ -229,7 +258,7 @@ export class TiktokPublisher {
     if (fullCaption) {
       const editor = await page.$('.public-DraftEditor-content, [contenteditable="true"], textarea');
       if (editor) {
-        await editor.click();
+        await editor.click({ force: true }).catch(() => {});
         await page.waitForTimeout(300);
         await page.keyboard.type(fullCaption, { delay: 30 });
         await page.waitForTimeout(1000);
@@ -252,7 +281,14 @@ export class TiktokPublisher {
 
     const postBtn = await this._findPostButton();
     if (!postBtn) throw new Error('无法找到发布按钮');
-    await postBtn.click();
+    await postBtn.click({ force: true }).catch(async () => {
+      // force click 失败，尝试 JS dispatch
+      await postBtn.evaluate(el => {
+        el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+        el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+        el.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      });
+    });
 
     let success = false;
     let publishedPhotoUrl = '';
