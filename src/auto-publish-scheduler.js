@@ -19,7 +19,7 @@
  */
 
 const DEFAULT_CHECK_INTERVAL_MS = 60_000; // 1 分钟
-const PUBLISH_INTERVAL_MIN_MS = 10 * 60 * 1000; // 发布间隔至少 10 分钟
+const PUBLISH_INTERVAL_MIN_MS = 30 * 60 * 1000; // 发布间隔至少 30 分钟
 const MAX_RETRY_COUNT = 3;
 const DEFAULT_MONITOR_INTERVAL_HOURS = 6;
 

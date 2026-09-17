@@ -7857,6 +7857,24 @@ const autoPublish = {
     }
   },
 
+  // ---- 手动触发发布 ----
+  async triggerPublishTask(taskId) {
+    try {
+      const task = this.pipelineTasks.find((t) => t.id === taskId);
+      if (!task || !task.publishJobId) {
+        showToast('该任务没有关联的发布任务，无法手动发布', true);
+        return;
+      }
+      showToast('正在触发发布…');
+      await request(`/api/tiktok/publish/jobs/${encodeURIComponent(task.publishJobId)}/execute`, {
+        method: 'POST',
+      });
+      showToast('发布任务已触发');
+    } catch (e) {
+      showToast(`触发发布失败: ${e.message}`, true);
+    }
+  },
+
   // ---- 手动触发监控 ----
   async triggerMonitor(creatorId) {
     try {
@@ -8142,6 +8160,7 @@ const autoPublish = {
       const isFailed = status === 'failed';
       const failReason = t.failReason || '';
       const canRetry = status === 'failed' || status === 'retry';
+      const canPublish = (status === 'scheduled' || status === 'retry') && t.publishJobId;
 
       return `
         <tr class="${isFailed ? 'failed-row' : ''}">
@@ -8156,6 +8175,7 @@ const autoPublish = {
           <td class="col-time">${escapeHtml(createdAt)}</td>
           <td class="col-action">
             ${canRetry ? `<button class="button button-secondary" type="button" data-retry="${escapeHtml(t.id)}" style="font-size:11px;padding:2px 10px;">重试</button>` : ''}
+            ${canPublish ? `<button class="button button-primary" type="button" data-publish="${escapeHtml(t.id)}" style="font-size:11px;padding:2px 10px;margin-left:4px;">立即发布</button>` : ''}
           </td>
         </tr>
       `;
@@ -8164,6 +8184,11 @@ const autoPublish = {
     // 绑定重试按钮
     tbody.querySelectorAll('[data-retry]').forEach((btn) => {
       btn.addEventListener('click', () => this.retryPipelineTask(btn.dataset.retry));
+    });
+
+    // 绑定立即发布按钮
+    tbody.querySelectorAll('[data-publish]').forEach((btn) => {
+      btn.addEventListener('click', () => this.triggerPublishTask(btn.dataset.publish));
     });
   },
 
