@@ -81,7 +81,17 @@ export class TiktokPublishManager extends EventTarget {
         });
         this._log(jobId, "info", `发布成功! videoId=${result.publishedVideoId || "—"}, url=${result.publishedVideoUrl || "—"}`);
       } else {
-        throw new Error(result.message || "视频自动发布未成功完成");
+        // "视频已提交发布" 视为软成功（按钮已点击，只是未检测到成功页）
+        if (result.message && result.message.includes("已提交发布")) {
+          this.persistence?.updateTkPublishJobStatus(jobId, {
+            status: "success",
+            publishedVideoId: result.publishedVideoId || null,
+            publishedVideoUrl: result.publishedVideoUrl || null
+          });
+          this._log(jobId, "info", `发布按钮已点击(软成功): ${result.message}`);
+        } else {
+          throw new Error(result.message || "视频自动发布未成功完成");
+        }
       }
     } catch (error) {
       this.persistence?.updateTkPublishJobStatus(jobId, {

@@ -206,8 +206,8 @@ export class TiktokPublisher {
     let publishedVideoUrl = '';
     let publishedVideoId = '';
 
-    for (let i = 0; i < 30; i++) {
-      await page.waitForTimeout(1000);
+    for (let i = 0; i < 60; i++) {
+      await page.waitForTimeout(2000);
       const bodyText = await page.innerText('body').catch(() => '');
       const url = page.url();
 
@@ -217,6 +217,11 @@ export class TiktokPublisher {
         bodyText.includes('Upload another video') ||
         bodyText.includes('你的视频正在上传') ||
         bodyText.includes('管理你的作品') ||
+        bodyText.includes('上传其他视频') ||
+        bodyText.includes('Your video was posted') ||
+        bodyText.includes('视频已发布') ||
+        bodyText.includes('video is being processed') ||
+        bodyText.includes('being processed') ||
         url.includes('/tiktokstudio/content');
 
       if (isDone) {
