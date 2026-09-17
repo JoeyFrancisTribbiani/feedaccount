@@ -118,6 +118,33 @@ export class TiktokPublisher {
     if (!filePath) throw new Error("缺失视频文件路径");
 
     // 1. 查找页面中的 file input 节点
+    // 用 Runtime.evaluate 找到 input[type=file] 的后端 nodeId（比 DOM.getDocument depth:-1 更可靠）
+    const fileInputEval = await this.client.call("Runtime.evaluate", {
+      expression: `(() => {
+        const input = document.querySelector('input[type="file"]');
+        return input ? true : false;
+      })()`,
+      returnByValue: true,
+    }).catch(() => null);
+
+    const hasFileInput = fileInputEval?.result?.result?.value === true;
+
+    if (!hasFileInput) {
+      // 重试：等待页面加载完成后再找
+      await new Promise(r => setTimeout(r, 5000));
+      const retryEval = await this.client.call("Runtime.evaluate", {
+        expression: `(() => {
+          const input = document.querySelector('input[type="file"]');
+          return input ? true : false;
+        })()`,
+        returnByValue: true,
+      }).catch(() => null);
+      if (retryEval?.result?.result?.value !== true) {
+        throw new Error("未在 TikTok Studio 上传页面找到 <input type='file'> 元素（请确认已登录账号）");
+      }
+    }
+
+    // 用 DOM.querySelector 获取 nodeId（需要先 getDocument）
     const doc = await this.client.call("DOM.getDocument", { depth: -1 });
     const fileInput = await this.client.call("DOM.querySelector", {
       nodeId: doc.root.nodeId,
@@ -125,12 +152,18 @@ export class TiktokPublisher {
     }).catch(() => null);
 
     if (!fileInput || !fileInput.nodeId) {
-      throw new Error("未在 TikTok Studio 上传页面找到 <input type='file'> 元素（请确认已登录账号）");
+      throw new Error("未在 TikTok Studio 上传页面找到 <input type='file'> 元素（DOM.querySelector 失败）");
     }
 
-    // 2. 使用 CDP DOM.setFileInputFiles 设置文件
+    // 2. 转换文件路径为本地绝对路径
+    let localFilePath = filePath;
+    if (/^\/data\//.test(filePath)) {
+      localFilePath = filePath.replace(/^\/data\//, "D:/WILLLUXE/yix-repo/feedaccount/data/");
+    }
+
+    // 3. 使用 CDP DOM.setFileInputFiles 设置文件
     await this.client.call("DOM.setFileInputFiles", {
-      files: [filePath],
+      files: [localFilePath],
       nodeId: fileInput.nodeId,
     });
 
