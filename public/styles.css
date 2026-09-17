@@ -1059,6 +1059,12 @@ textarea:focus-visible {
   box-shadow: 0 3px 12px rgba(99, 102, 241, 0.3);
 }
 
+.platform-tab.active[data-platform="auto-publish"] {
+  background: #d946ef;
+  color: #ffffff;
+  box-shadow: 0 3px 12px rgba(217, 70, 239, 0.3);
+}
+
 /* ==========================================================================
    Workspace Grid (.workspace-grid)
    ========================================================================== */
