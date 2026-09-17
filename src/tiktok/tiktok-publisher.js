@@ -380,6 +380,75 @@ export class TiktokPublisher {
     return null;
   }
 
+  /**
+   * 访问账号主页，抓取所有视频的播放量/点赞/评论/分享数据
+   * @param {string} username - TikTok 用户名
+   * @returns {Array<{videoId, videoUrl, views, likes, comments, shares, title}>}
+   */
+  async recordAnalytics(username) {
+    const page = this.page;
+    if (!username) throw new Error('缺失 TikTok 用户名');
+
+    // 导航到账号主页
+    const profileUrl = `https://www.tiktok.com/@${username}`;
+    await page.goto(profileUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
+    await page.waitForTimeout(3000);
+
+    // 滚动加载所有视频
+    let prevCount = 0;
+    for (let i = 0; i < 30; i++) {
+      await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+      await page.waitForTimeout(2000);
+      const count = await page.evaluate(() => document.querySelectorAll('a[href*="/video/"]').length).catch(() => 0);
+      if (count === prevCount) break;
+      prevCount = count;
+    }
+
+    // 抓取每个视频的数据
+    const videos = await page.evaluate(() => {
+      const items = [];
+      const videoLinks = document.querySelectorAll('a[href*="/video/"]');
+      const seen = new Set();
+
+      for (const link of videoLinks) {
+        const href = link.getAttribute('href') || '';
+        const match = href.match(/\/video\/(\d+)/);
+        if (!match || seen.has(match[1])) continue;
+        seen.add(match[1]);
+
+        // 找到视频卡片容器（向上找带播放量的容器）
+        let card = link;
+        for (let depth = 0; depth < 5; depth++) {
+          card = card.parentElement;
+          if (!card) break;
+          const text = card.innerText || '';
+          // TikTok 主页视频卡片通常有播放次数
+          if (text.includes('views') || text.includes('播放') || /\d+.*K|M|B/.test(text)) break;
+        }
+
+        const cardText = card?.innerText || '';
+        const viewsMatch = cardText.match(/([\d.]+)\s*([KMB])?\s*views/i) || cardText.match(/([\d.]+)\s*([KMB])?\s*播放/);
+        const likesMatch = cardText.match(/([\d.]+)\s*([KMB])?\s*likes/i) || cardText.match(/([\d.]+)\s*([KMB])?\s*点赞/);
+
+        // 也尝试从 data 属性抓取
+        const viewsEl = card?.querySelector('[data-e2e="video-views"], .video-views, [class*="views"]');
+        const viewsText = viewsEl?.innerText || viewsEl?.textContent || '';
+
+        items.push({
+          videoId: match[1],
+          videoUrl: href,
+          views: viewsText || (viewsMatch ? viewsMatch[0] : ''),
+          likes: likesMatch ? likesMatch[0] : '',
+          title: link.getAttribute('title') || link.innerText?.substring(0, 60) || '',
+        });
+      }
+      return items;
+    }).catch(() => []);
+
+    return { profileUrl, videoCount: videos.length, videos };
+  }
+
   async close() {
     // connectOverCDP 不应该关闭浏览器，只断开连接
     if (this.browser) {

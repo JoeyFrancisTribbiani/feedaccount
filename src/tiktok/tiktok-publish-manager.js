@@ -73,25 +73,52 @@ export class TiktokPublishManager extends EventTarget {
         privacyLevel: job.materialPrivacy
       });
 
-      if (result.ok) {
+      // 获取用户名（用于发布后记录播放量）
+      let username = null;
+      if (this.persistence) {
+        // 通过 publish_job_id 找 pipeline → creator → creator name
+        const pipeline = this.persistence.db.prepare("SELECT creator_id FROM auto_remix_publish_pipeline WHERE publish_job_id = ?").get(jobId);
+        if (pipeline) {
+          const creator = this.persistence.db.prepare("SELECT name FROM remix_creators WHERE id = ?").get(pipeline.creator_id);
+          if (creator) {
+            username = creator.name.replace(/^@/, "");
+          }
+        }
+      }
+
+      if (result.ok || (result.message && result.message.includes("已提交发布"))) {
         this.persistence?.updateTkPublishJobStatus(jobId, {
           status: "success",
           publishedVideoId: result.publishedVideoId || null,
           publishedVideoUrl: result.publishedVideoUrl || null
         });
         this._log(jobId, "info", `发布成功! videoId=${result.publishedVideoId || "—"}, url=${result.publishedVideoUrl || "—"}`);
-      } else {
-        // "视频已提交发布" 视为软成功（按钮已点击，只是未检测到成功页）
-        if (result.message && result.message.includes("已提交发布")) {
-          this.persistence?.updateTkPublishJobStatus(jobId, {
-            status: "success",
-            publishedVideoId: result.publishedVideoId || null,
-            publishedVideoUrl: result.publishedVideoUrl || null
-          });
-          this._log(jobId, "info", `发布按钮已点击(软成功): ${result.message}`);
-        } else {
-          throw new Error(result.message || "视频自动发布未成功完成");
+
+        // 发布成功后，去账号主页记录播放量
+        try {
+          this._log(jobId, "info", `正在访问账号主页记录播放量…`);
+          const analyticsResult = await publisher.recordAnalytics(username);
+          this._log(jobId, "info", `播放量记录完成: ${analyticsResult.videoCount} 个视频`);
+
+          // 存入 tk_video_analytics 表
+          if (analyticsResult.videos?.length && this.persistence) {
+            const nowIso = new Date().toISOString();
+            const insertStmt = this.persistence.db.prepare(
+              `INSERT INTO tk_video_analytics (publish_job_id, views_count, likes_count, comments_count, shares_count, recorded_at)
+               VALUES (?, ?, ?, ?, ?, ?)`
+            );
+            // 记录当前发布的视频的数据
+            for (const v of analyticsResult.videos) {
+              const views = this._parseCount(v.views);
+              const likes = this._parseCount(v.likes);
+              insertStmt.run(jobId, views, likes, 0, 0, nowIso);
+            }
+          }
+        } catch (analyticsErr) {
+          this._log(jobId, "warning", `播放量记录失败(不影响发布结果): ${analyticsErr.message}`);
         }
+      } else {
+        throw new Error(result.message || "视频自动发布未成功完成");
       }
     } catch (error) {
       this.persistence?.updateTkPublishJobStatus(jobId, {
@@ -118,5 +145,21 @@ export class TiktokPublishManager extends EventTarget {
     } else {
       console.log(`[TiktokPublishManager] [${jobId}] ${message}`);
     }
+  }
+
+  /**
+   * 解析播放量文本为数字（如 "1.2K" → 1200, "3.5M" → 3500000）
+   */
+  _parseCount(text) {
+    if (!text) return 0;
+    const s = String(text).trim().replace(/[^\d.KMBkmb]/g, "");
+    const match = s.match(/^([\d.]+)\s*([KMBkmb])?$/);
+    if (!match) return parseInt(s) || 0;
+    const num = parseFloat(match[1]);
+    const suffix = (match[2] || "").toUpperCase();
+    if (suffix === "K") return Math.round(num * 1000);
+    if (suffix === "M") return Math.round(num * 1000000);
+    if (suffix === "B") return Math.round(num * 1000000000);
+    return Math.round(num);
   }
 }
