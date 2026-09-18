@@ -77,10 +77,10 @@ export class TiktokPublisher {
     const page = this.page;
 
     const dismiss = (texts) => page.evaluate((ts) => {
-      const btns = document.querySelectorAll('button');
-      for (const b of btns) {
-        const t = b.innerText.trim();
-        if (ts.includes(t)) { b.click(); return t; }
+      const els = document.querySelectorAll('button, a, [role="button"], [data-e2e], div[data-e2e]');
+      for (const el of els) {
+        const t = el.innerText.trim();
+        if (ts.includes(t)) { el.click(); return t; }
       }
       return null;
     }, texts).catch(() => null);
@@ -91,18 +91,33 @@ export class TiktokPublisher {
 
       // 优先级1: Discard（丢弃草稿/确认丢弃）
       clicked = await dismiss(['Discard', '放弃', '丢弃']);
-      if (clicked) { await page.waitForTimeout(2000); continue; }
+      if (clicked) { console.log(`[_dismissDialogs] round ${i}: clicked Discard`); await page.waitForTimeout(2000); continue; }
 
       // 优先级2: 内容检查弹窗 - 关闭/跳过
       clicked = await dismiss(['Not now', 'Skip', "Don't turn on", 'Cancel', '以后再说', '跳过', '取消', '暂不开启', '不开启']);
-      if (clicked) { await page.waitForTimeout(2000); continue; }
+      if (clicked) { console.log(`[_dismissDialogs] round ${i}: clicked ${clicked}`); await page.waitForTimeout(2000); continue; }
 
       // 优先级3: 其他确认弹窗
       clicked = await dismiss(['Got it', 'OK', 'Continue', '确定', '继续', '我知道了']);
-      if (clicked) { await page.waitForTimeout(2000); continue; }
+      if (clicked) { console.log(`[_dismissDialogs] round ${i}: clicked ${clicked}`); await page.waitForTimeout(2000); continue; }
 
       // 没有弹窗了，退出
       break;
+    }
+
+    // 最终检查：页面是否还有弹窗文本
+    const bodyText = await page.innerText('body').catch(() => '');
+    if (bodyText.includes('Discard this post') || bodyText.includes("wasn't saved")) {
+      console.log('[_dismissDialogs] WARNING: 弹窗仍在页面上！');
+      // 最后一次尝试：用更宽泛的匹配
+      await page.evaluate(() => {
+        const all = document.querySelectorAll('button, a, [role="button"], [data-e2e]');
+        for (const el of all) {
+          const t = (el.innerText || '').trim();
+          if (t === 'Discard') { el.click(); return; }
+        }
+      }).catch(() => {});
+      await page.waitForTimeout(1000);
     }
   }
 
