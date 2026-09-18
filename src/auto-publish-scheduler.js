@@ -18,7 +18,8 @@
  * 通过 EventTarget 派发 "change" 事件，前端 SSE 可感知状态变化。
  */
 
-const DEFAULT_CHECK_INTERVAL_MS = 60_000; // 1 分钟
+const DEFAULT_CHECK_INTERVAL_MS = 60_000; // 1 分钟（主循环）
+const REMIX_INTERVAL_MS = 5 * 60 * 1000; // 混剪触发间隔 5 分钟
 const PUBLISH_INTERVAL_MIN_MS = 30 * 60 * 1000; // 发布间隔至少 30 分钟
 const MAX_RETRY_COUNT = 3;
 const DEFAULT_MONITOR_INTERVAL_HOURS = 6;
@@ -45,6 +46,8 @@ export class AutoPublishScheduler extends EventTarget {
     this.serverUrl = (serverUrl || "").replace(/\/$/, "");
     this.timer = null;
     this.running = false;
+    this.lastRemixAt = 0; // 上次触发混剪的时间
+    this.lastRemixCreatorId = null; // 上次混剪的达人，用于轮换
 
     this._ensureSchema();
   }
@@ -325,7 +328,21 @@ export class AutoPublishScheduler extends EventTarget {
     const remixingCount = this._listPipelinesByStatus("remixing").length;
     if (remixingCount > 0) return;
 
-    const pipeline = pendingPipelines[0];
+    // 5分钟间隔限制
+    const now = Date.now();
+    if (now - this.lastRemixAt < REMIX_INTERVAL_MS) return;
+
+    // 轮换达人：优先选不同于上次混剪的达人的任务
+    let pipeline = null;
+    if (this.lastRemixCreatorId) {
+      // 找一个不同达人的 pending 任务
+      pipeline = pendingPipelines.find((p) => p.creator_id !== this.lastRemixCreatorId);
+    }
+    if (!pipeline) {
+      // 没有不同的达人，取第一个
+      pipeline = pendingPipelines[0];
+    }
+
     const cfg = this._getConfig(pipeline.creator_id);
 
     if (!pipeline.source_video_id) {
@@ -426,6 +443,8 @@ export class AutoPublishScheduler extends EventTarget {
         status: "remixing",
         failReason: null,
       });
+      this.lastRemixAt = now;
+      this.lastRemixCreatorId = pipeline.creator_id;
 
       this.store.logCdpEvent(
         null,
