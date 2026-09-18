@@ -83,18 +83,8 @@ export class TiktokPublishManager extends EventTarget {
         privacyLevel: job.materialPrivacy
       });
 
-      // 获取用户名（用于发布后记录播放量）
-      let username = null;
-      if (this.persistence) {
-        // 通过 publish_job_id 找 pipeline → creator → creator name
-        const pipeline = this.persistence.db.prepare("SELECT creator_id FROM auto_remix_publish_pipeline WHERE publish_job_id = ?").get(jobId);
-        if (pipeline) {
-          const creator = this.persistence.db.prepare("SELECT name FROM remix_creators WHERE id = ?").get(pipeline.creator_id);
-          if (creator) {
-            username = creator.name.replace(/^@/, "");
-          }
-        }
-      }
+      // 获取用户名（用于发布后记录播放量）— 死代码已删除
+      // （recordAnalytics 内部自行获取当前登录账号用户名）
 
       if (result.ok) {
         this.persistence?.updateTkPublishJobStatus(jobId, {
@@ -104,10 +94,10 @@ export class TiktokPublishManager extends EventTarget {
         });
         this._log(jobId, "info", `发布成功! videoId=${result.publishedVideoId || "—"}, url=${result.publishedVideoUrl || "—"}`);
 
-        // 发布成功后，去我们自己的账号主页记录播放量
+        // 发布成功后，去我们自己的账号主页记录播放量（只记录本次发布的视频）
         try {
           this._log(jobId, "info", `正在访问发布账号主页记录播放量…`);
-          const analyticsResult = await publisher.recordAnalytics();
+          const analyticsResult = await publisher.recordAnalytics(result.publishedVideoId || null);
           this._log(jobId, "info", `播放量记录完成: ${analyticsResult.videoCount} 个视频`);
 
           // 存入 tk_video_analytics 表
@@ -120,7 +110,9 @@ export class TiktokPublishManager extends EventTarget {
             for (const v of analyticsResult.videos) {
               const views = this._parseCount(v.views);
               const likes = this._parseCount(v.likes);
-              insertStmt.run(jobId, views, likes, 0, 0, nowIso);
+              const comments = this._parseCount(v.comments);
+              const shares = this._parseCount(v.shares);
+              insertStmt.run(jobId, views, likes, comments, shares, nowIso);
             }
           }
         } catch (analyticsErr) {

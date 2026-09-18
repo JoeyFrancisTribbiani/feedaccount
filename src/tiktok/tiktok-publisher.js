@@ -460,10 +460,11 @@ export class TiktokPublisher {
   }
 
   /**
-   * 访问当前登录账号的主页，抓取所有视频的播放量
-   * @returns {Array<{videoId, videoUrl, views, title}>}
+   * 访问当前登录账号的主页，抓取视频的播放量/点赞/评论/分享
+   * @param {string} publishedVideoId — 发布成功后的视频ID，用于过滤只记录该视频
+   * @returns {Array<{videoId, videoUrl, views, likes, comments, shares, title}>}
    */
-  async recordAnalytics() {
+  async recordAnalytics(publishedVideoId = null) {
     const page = this.page;
 
     // 先导航到 TikTok 主页获取当前登录账号的用户名
@@ -509,7 +510,7 @@ export class TiktokPublisher {
     }
 
     // 抓取每个视频的数据
-    const videos = await page.evaluate(() => {
+    const videos = await page.evaluate((targetVideoId) => {
       const items = [];
       const cards = document.querySelectorAll('[data-e2e="user-post-item"]');
       const seen = new Set();
@@ -523,9 +524,24 @@ export class TiktokPublisher {
         if (!match || seen.has(match[2])) continue;
         seen.add(match[2]);
 
+        // 如果指定了 publishedVideoId，只记录该视频
+        if (targetVideoId && match[2] !== targetVideoId) continue;
+
         // 播放量在 <strong data-e2e="video-views">
         const viewsEl = card.querySelector('[data-e2e="video-views"]');
         const viewsText = viewsEl?.innerText || viewsEl?.textContent || '';
+
+        // 点赞数 data-e2e="video-likes"
+        const likesEl = card.querySelector('[data-e2e="video-likes"]');
+        const likesText = likesEl?.innerText || likesEl?.textContent || '';
+
+        // 评论数 data-e2e="video-comments"
+        const commentsEl = card.querySelector('[data-e2e="video-comments"]');
+        const commentsText = commentsEl?.innerText || commentsEl?.textContent || '';
+
+        // 分享数 data-e2e="video-shares"
+        const sharesEl = card.querySelector('[data-e2e="video-shares"]');
+        const sharesText = sharesEl?.innerText || sharesEl?.textContent || '';
 
         // 视频标题在 img alt
         const imgEl = card.querySelector('img');
@@ -535,11 +551,14 @@ export class TiktokPublisher {
           videoId: match[2],
           videoUrl: href,
           views: viewsText,
+          likes: likesText,
+          comments: commentsText,
+          shares: sharesText,
           title: title.substring(0, 100),
         });
       }
       return items;
-    }).catch(() => []);
+    }, publishedVideoId).catch(() => []);
 
     return { profileUrl, videoCount: videos.length, videos };
   }

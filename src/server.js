@@ -4213,7 +4213,9 @@ export function createMonitorServer({
           const matrixId = decodeURIComponent(apMatrixCfgMatch[1]);
           if (request.method === "GET") {
             const cfg = store.getMatrixAutoPublishConfig(matrixId) || {
-              matrixId, enabled: false, presetId: null, dailyLimit: 3, monitorIntervalHours: 6,
+              matrixId, enabled: 0, presetId: null, dailyLimit: 3, monitorIntervalHours: 6,
+              lastMonitorAt: null, publishTimeSlots: null, ratio: "9:16", cdpInstanceId: null,
+              createdAt: null, updatedAt: null,
             };
             sendJson(response, 200, cfg);
             return;

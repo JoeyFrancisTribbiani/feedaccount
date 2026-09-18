@@ -10,8 +10,8 @@
  *   6. 失败重试（重新混剪）
  *
  * 使用已有的数据库表：
- *   - creator_auto_publish_config  — 达人自动发布配置
- *   - creator_profile_bindings     — 达人绑定指纹浏览器 profile
+ *   - matrix_auto_publish_config  — 矩阵自动发布配置
+ *   - matrix_profiles              — 矩阵绑定的指纹浏览器 profile
  *   - creator_video_monitor        — 达人视频监控记录
  *   - auto_remix_publish_pipeline  — 自动混剪发布流水线
  *

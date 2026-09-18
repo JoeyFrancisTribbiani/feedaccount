@@ -4837,7 +4837,7 @@ footer span {
 .ap-status-pending { background: var(--bg-subtle, #f1f5f9); color: var(--text-muted, #64748b); }
 .ap-status-remixing { background: rgba(59, 130, 246, 0.12); color: #2563eb; }
 .ap-status-remixed { background: rgba(16, 185, 129, 0.12); color: #059669; }
-.ap-status-publishing { background: rgba(249, 115, 22, 0.12); color: #ea580c; }
+.ap-status-scheduled { background: rgba(139, 92, 246, 0.12); color: #7c3aed; }
 .ap-status-published { background: rgba(22, 163, 74, 0.12); color: #15803d; }
 .ap-status-failed { background: rgba(239, 68, 68, 0.12); color: #dc2626; }
 .ap-status-retry { background: rgba(245, 158, 11, 0.12); color: #d97706; }

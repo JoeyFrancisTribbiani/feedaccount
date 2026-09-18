@@ -7753,7 +7753,7 @@ const autoPublish = {
       pending: 'ap-status-pending',
       remixing: 'ap-status-remixing',
       remixed: 'ap-status-remixed',
-      publishing: 'ap-status-publishing',
+      scheduled: 'ap-status-scheduled',
       published: 'ap-status-published',
       failed: 'ap-status-failed',
       retry: 'ap-status-retry',
@@ -7870,7 +7870,7 @@ const autoPublish = {
       if (this.filterStatus) params.set('status', this.filterStatus);
       params.set('limit', '100');
       const data = await request(`/api/auto-publish/pipeline?${params}`);
-      this.pipelineTasks = Array.isArray(data) ? data : (data?.tasks || []);
+      this.pipelineTasks = Array.isArray(data) ? data : [];
       this.renderPipeline();
     } catch (e) {
       if (!quiet) {
@@ -8152,7 +8152,7 @@ const autoPublish = {
         const payload = {
           presetId: presetSel?.value || null,
           dailyLimit: parseInt(dailyInp?.value, 10) || 0,
-          monitorIntervalHours: parseInt(intervalInp?.value, 10) || 1,
+          monitorIntervalHours: parseInt(intervalInp?.value, 10) || 0,
           cdpInstanceId: cdpSel?.value || null,
         };
         // 时间段校验
@@ -8204,7 +8204,7 @@ const autoPublish = {
       inp.addEventListener('change', () => this.saveMatrixConfig(matrixId, { dailyLimit: parseInt(inp.value, 10) || 0 }));
     });
     scope.querySelectorAll('[data-config-interval]').forEach((inp) => {
-      inp.addEventListener('change', () => this.saveMatrixConfig(matrixId, { monitorIntervalHours: parseInt(inp.value, 10) || 1 }));
+      inp.addEventListener('change', () => this.saveMatrixConfig(matrixId, { monitorIntervalHours: parseInt(inp.value, 10) || 0 }));
     });
     scope.querySelectorAll('[data-config-cdp]').forEach((sel) => {
       sel.addEventListener('change', () => this.saveMatrixConfig(matrixId, { cdpInstanceId: sel.value || null }));

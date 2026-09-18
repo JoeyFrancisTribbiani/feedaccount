@@ -1874,7 +1874,7 @@ export class LocalDatabase {
     if (!row) return null;
     return {
       matrixId: row.matrix_id,
-      enabled: row.enabled !== 0,
+      enabled: row.enabled ? 1 : 0,
       presetId: row.preset_id || null,
       dailyLimit: Number(row.daily_limit || 3),
       monitorIntervalHours: Number(row.monitor_interval_hours || 6),
@@ -2048,9 +2048,13 @@ export class LocalDatabase {
 
   getPipelineTask(id) {
     const row = this.db.prepare(`
-      SELECT p.*, c.name AS creator_name
+      SELECT p.*, c.name AS creator_name,
+             m.name AS matrix_name,
+             (SELECT ma.platform FROM matrix_accounts ma WHERE ma.matrix_id = p.matrix_id LIMIT 1) AS platform,
+             (SELECT ma.account_name FROM matrix_accounts ma WHERE ma.matrix_id = p.matrix_id LIMIT 1) AS account_name
       FROM auto_remix_publish_pipeline p
       LEFT JOIN remix_creators c ON p.creator_id = c.id
+      LEFT JOIN media_matrices m ON m.id = p.matrix_id
       WHERE p.id = ?
     `).get(id);
     if (!row) return null;
@@ -2058,7 +2062,12 @@ export class LocalDatabase {
       id: row.id,
       creatorId: row.creator_id,
       creatorName: row.creator_name,
+      matrixId: row.matrix_id || null,
+      matrixName: row.matrix_name || null,
+      platform: row.platform || null,
+      accountName: row.account_name || null,
       sourceVideoId: row.source_video_id,
+      sourceUrl: row.source_url || null,
       remixTaskId: row.remix_task_id,
       profileId: row.profile_id,
       publishJobId: row.publish_job_id,
@@ -2080,11 +2089,12 @@ export class LocalDatabase {
     const clause = where.length ? `WHERE ${where.join(" AND ")}` : "";
     const rows = this.db.prepare(`
       SELECT p.*, c.name AS creator_name,
-             m.name AS matrix_name, ma.platform AS platform, ma.account_name AS account_name
+             m.name AS matrix_name,
+             (SELECT ma.platform FROM matrix_accounts ma WHERE ma.matrix_id = p.matrix_id LIMIT 1) AS platform,
+             (SELECT ma.account_name FROM matrix_accounts ma WHERE ma.matrix_id = p.matrix_id LIMIT 1) AS account_name
       FROM auto_remix_publish_pipeline p
       LEFT JOIN remix_creators c ON p.creator_id = c.id
       LEFT JOIN media_matrices m ON m.id = p.matrix_id
-      LEFT JOIN matrix_accounts ma ON ma.matrix_id = p.matrix_id
       ${clause}
       ORDER BY p.created_at DESC
       LIMIT ?
@@ -2110,14 +2120,14 @@ export class LocalDatabase {
     }));
   }
 
-  updatePipelineTask(id, { status = null, remixTaskId = null, publishJobId = null, failReason = null, attemptCount = null, updatedAt = null } = {}) {
+  updatePipelineTask(id, { status = undefined, remixTaskId = undefined, publishJobId = undefined, failReason = undefined, attemptCount = undefined, updatedAt = undefined } = {}) {
     const sets = [];
     const params = [];
-    if (status !== null) { sets.push("status = ?"); params.push(status); }
-    if (remixTaskId !== null) { sets.push("remix_task_id = ?"); params.push(remixTaskId); }
-    if (publishJobId !== null) { sets.push("publish_job_id = ?"); params.push(publishJobId); }
-    if (failReason !== null) { sets.push("fail_reason = ?"); params.push(failReason); }
-    if (attemptCount !== null) { sets.push("attempt_count = ?"); params.push(attemptCount); }
+    if (status !== undefined) { sets.push("status = ?"); params.push(status); }
+    if (remixTaskId !== undefined) { sets.push("remix_task_id = ?"); params.push(remixTaskId); }
+    if (publishJobId !== undefined) { sets.push("publish_job_id = ?"); params.push(publishJobId); }
+    if (failReason !== undefined) { sets.push("fail_reason = ?"); params.push(failReason); }
+    if (attemptCount !== undefined) { sets.push("attempt_count = ?"); params.push(attemptCount); }
     sets.push("updated_at = ?"); params.push(updatedAt || nowIso());
     params.push(id);
     this.db.prepare(`UPDATE auto_remix_publish_pipeline SET ${sets.join(", ")} WHERE id = ?`).run(...params);
