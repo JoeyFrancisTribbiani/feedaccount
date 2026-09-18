@@ -7733,14 +7733,14 @@ document.querySelector('.platform-tab[data-platform="remix"]')?.click();
 // 自动发布流水线
 // ==========================================================================
 const autoPublish = {
-  creators: [],
+  matrices: [],
   pipelineTasks: [],
   profiles: [],
   cdpInstances: [],
   monitorData: [],
-  filterCreator: '',
+  filterMatrix: '',
   filterStatus: '',
-  expandedCreatorId: null,
+  selectedMatrixId: null,
   _initialized: false,
   _pollTimer: null,
 
@@ -7763,14 +7763,17 @@ const autoPublish = {
 
   // ---- DOM 引用 ----
   el: {
-    creatorsList: () => document.querySelector('#ap-creators-list'),
+    matricesList: () => document.querySelector('#ap-matrices-list'),
     pipelineTbody: () => document.querySelector('#ap-pipeline-tbody'),
     monitorList: () => document.querySelector('#ap-monitor-list'),
-    filterCreator: () => document.querySelector('#ap-filter-creator'),
+    filterMatrix: () => document.querySelector('#ap-filter-matrix'),
     filterStatus: () => document.querySelector('#ap-filter-status'),
-    refreshCreators: () => document.querySelector('#ap-refresh-creators'),
+    refreshMatrices: () => document.querySelector('#ap-refresh-matrices'),
     refreshPipeline: () => document.querySelector('#ap-refresh-pipeline'),
     refreshMonitor: () => document.querySelector('#ap-refresh-monitor'),
+    matrixModal: () => document.querySelector('#ap-matrix-modal'),
+    modalTitle: () => document.querySelector('#ap-modal-title'),
+    modalBody: () => document.querySelector('#ap-modal-body'),
   },
 
   // ---- 初始化 ----
@@ -7780,7 +7783,7 @@ const autoPublish = {
       this._initialized = true;
     }
     this.fetchPresets();
-    this.fetchCreators();
+    this.fetchMatrices();
     this.fetchPipelineTasks();
     this.fetchProfiles();
     this.fetchCdpInstances();
@@ -7809,17 +7812,24 @@ const autoPublish = {
   },
 
   _bindEvents() {
-    this.el.refreshCreators()?.addEventListener('click', () => this.fetchCreators());
+    this.el.refreshMatrices()?.addEventListener('click', () => this.fetchMatrices());
     this.el.refreshPipeline()?.addEventListener('click', () => this.fetchPipelineTasks());
     this.el.refreshMonitor()?.addEventListener('click', () => this.fetchMonitorData());
-    this.el.filterCreator()?.addEventListener('change', (e) => {
-      this.filterCreator = e.target.value;
-      this.renderPipeline();
+    this.el.filterMatrix()?.addEventListener('change', (e) => {
+      this.filterMatrix = e.target.value;
+      this.fetchPipelineTasks();
     });
     this.el.filterStatus()?.addEventListener('change', (e) => {
       this.filterStatus = e.target.value;
       this.renderPipeline();
     });
+    // 弹窗关闭：点击遮罩或关闭按钮
+    this.el.matrixModal()?.addEventListener('click', (e) => {
+      if (e.target === this.el.matrixModal()) {
+        this._closeMatrixModal();
+      }
+    });
+    document.querySelector('#ap-matrix-modal .modal-close')?.addEventListener('click', () => this._closeMatrixModal());
     // 发布日志
     document.querySelector('#ap-refresh-logs')?.addEventListener('click', () => this.fetchPublishLogs());
     document.querySelector('#ap-log-filter')?.addEventListener('change', () => this.renderPublishLogs());
@@ -7837,39 +7847,17 @@ const autoPublish = {
   },
 
   // ---- 加载数据 ----
-  async fetchCreators() {
+  async fetchMatrices() {
     try {
-      // 获取所有已添加的对标达人（复用 remix 的 creator 列表）
-      const data = await request('/api/remix/creators');
-      const allCreators = Array.isArray(data) ? data : (data?.creators || []);
-      // 为每个对标达人获取自动发布配置
-      const enriched = await Promise.all(
-        allCreators.map(async (c) => {
-          try {
-            const cfg = await request(`/api/auto-publish/config/${encodeURIComponent(c.id)}`);
-            return { ...c, autoPublishConfig: cfg || {} };
-          } catch {
-            // 后端可能尚未实现，返回默认配置
-            return {
-              ...c,
-              autoPublishConfig: {
-                enabled: 0,
-                presetId: null,
-                dailyLimitPerProfile: 3,
-                monitorIntervalHours: 6,
-              },
-            };
-          }
-        })
-      );
-      this.creators = enriched;
-      this.renderCreators();
+      const data = await request('/api/auto-publish/matrices');
+      this.matrices = Array.isArray(data) ? data : [];
+      this.renderMatrices();
       this._updateFilterOptions();
     } catch (e) {
-      this.creators = [];
-      this.renderCreators();
-      if (this.el.creatorsList()) {
-        this.el.creatorsList().innerHTML = `<div class="empty-state compact" style="padding:16px;">加载失败：${escapeHtml(e.message)}</div>`;
+      this.matrices = [];
+      this.renderMatrices();
+      if (this.el.matricesList()) {
+        this.el.matricesList().innerHTML = `<div class="empty-state compact" style="padding:16px;">加载失败：${escapeHtml(e.message)}</div>`;
       }
     }
   },
@@ -7878,7 +7866,7 @@ const autoPublish = {
     const { quiet = false } = opts;
     try {
       const params = new URLSearchParams();
-      if (this.filterCreator) params.set('creatorId', this.filterCreator);
+      if (this.filterMatrix) params.set('matrixId', this.filterMatrix);
       if (this.filterStatus) params.set('status', this.filterStatus);
       params.set('limit', '100');
       const data = await request(`/api/auto-publish/pipeline?${params}`);
@@ -7903,10 +7891,12 @@ const autoPublish = {
 
   async fetchMonitorData() {
     try {
-      // 获取所有 enabled 的对标达人监控状态
-      const data = await request('/api/auto-publish/creators');
-      const enabledCreators = Array.isArray(data) ? data : [];
-      this.monitorData = enabledCreators;
+      // 获取所有矩阵的监控状态（复用 matrices 接口，取 enabled 的）
+      const data = await request('/api/auto-publish/matrices');
+      this.monitorData = (Array.isArray(data) ? data : []).filter((m) => {
+        const cfg = m.autoPublishConfig || {};
+        return cfg.enabled === 1 || cfg.enabled === true;
+      });
       this.renderMonitor();
     } catch {
       this.monitorData = [];
@@ -7914,79 +7904,45 @@ const autoPublish = {
     }
   },
 
-  // ---- 对标达人配置操作 ----
-  async toggleAutoPublish(creatorId, enabled) {
+  // ---- 矩阵自动发布开关 ----
+  async toggleMatrixAutoPublish(matrixId, enabled) {
+    const m = this.matrices.find((x) => x.id === matrixId);
     try {
-      await request(`/api/auto-publish/config/${encodeURIComponent(creatorId)}`, {
+      await request(`/api/auto-publish/matrix-config/${encodeURIComponent(matrixId)}`, {
         method: 'PUT',
         body: JSON.stringify({ enabled: enabled ? 1 : 0 }),
       });
       showToast(enabled ? '已开启自动发布' : '已关闭自动发布');
-      // 更新本地状态
-      const c = this.creators.find((x) => x.id === creatorId);
-      if (c) c.autoPublishConfig.enabled = enabled ? 1 : 0;
+      if (m) {
+        m.autoPublishConfig = m.autoPublishConfig || {};
+        m.autoPublishConfig.enabled = enabled ? 1 : 0;
+      }
     } catch (e) {
       showToast(`切换失败: ${e.message}`, true);
       // 回滚开关
-      const c = this.creators.find((x) => x.id === creatorId);
-      if (c) c.autoPublishConfig.enabled = enabled ? 0 : 1;
-      this.renderCreators();
+      if (m) {
+        m.autoPublishConfig = m.autoPublishConfig || {};
+        m.autoPublishConfig.enabled = enabled ? 0 : 1;
+      }
+      this.renderMatrices();
     }
   },
 
-  async saveCreatorConfig(creatorId, config) {
+  // ---- 保存矩阵配置 ----
+  async saveMatrixConfig(matrixId, config) {
     try {
-      await request(`/api/auto-publish/config/${encodeURIComponent(creatorId)}`, {
+      await request(`/api/auto-publish/matrix-config/${encodeURIComponent(matrixId)}`, {
         method: 'PUT',
         body: JSON.stringify(config),
       });
       showToast('配置已保存');
-      const c = this.creators.find((x) => x.id === creatorId);
-      if (c) Object.assign(c.autoPublishConfig, config);
+      const m = this.matrices.find((x) => x.id === matrixId);
+      if (m) {
+        m.autoPublishConfig = m.autoPublishConfig || {};
+        Object.assign(m.autoPublishConfig, config);
+      }
     } catch (e) {
       showToast(`保存失败: ${e.message}`, true);
-    }
-  },
-
-  // ---- 实例绑定操作 ----
-  async addProfileBinding(creatorId, profileId, dailyLimit) {
-    try {
-      await request('/api/auto-publish/bindings', {
-        method: 'POST',
-        body: JSON.stringify({ creatorId, profileId, dailyLimit }),
-      });
-      showToast('实例绑定成功');
-      await this.fetchBindings(creatorId);
-    } catch (e) {
-      showToast(`绑定失败: ${e.message}`, true);
-    }
-  },
-
-  async removeProfileBinding(bindingId, creatorId) {
-    if (!confirm('确认删除此实例绑定？')) return;
-    try {
-      await request(`/api/auto-publish/bindings/${encodeURIComponent(bindingId)}`, {
-        method: 'DELETE',
-      });
-      showToast('已删除绑定');
-      await this.fetchBindings(creatorId);
-    } catch (e) {
-      showToast(`删除失败: ${e.message}`, true);
-    }
-  },
-
-  async fetchBindings(creatorId) {
-    try {
-      const data = await request(`/api/auto-publish/bindings/${encodeURIComponent(creatorId)}`);
-      const bindings = Array.isArray(data) ? data : (data?.bindings || []);
-      const c = this.creators.find((x) => x.id === creatorId);
-      if (c) {
-        c.bindings = bindings;
-        this.renderCreatorBody(creatorId);
-      }
-      return bindings;
-    } catch {
-      return [];
     }
   },
 
@@ -8022,10 +7978,10 @@ const autoPublish = {
   },
 
   // ---- 手动触发监控 ----
-  async triggerMonitor(creatorId) {
+  async triggerMonitor(matrixId) {
     try {
       showToast('正在触发监控…');
-      await request(`/api/auto-publish/monitor/${encodeURIComponent(creatorId)}`, {
+      await request(`/api/auto-publish/monitor/${encodeURIComponent(matrixId)}`, {
         method: 'POST',
       });
       showToast('监控已触发');
@@ -8035,257 +7991,232 @@ const autoPublish = {
     }
   },
 
-  // ---- 渲染：对标达人列表 ----
-  renderCreators() {
-    const container = this.el.creatorsList();
+  // ---- 渲染：矩阵列表 ----
+  renderMatrices() {
+    const container = this.el.matricesList();
     if (!container) return;
-    if (!this.creators.length) {
-      container.innerHTML = '<div class="empty-state compact" style="padding:16px;">暂无对标达人，请先在「视频混剪」中添加</div>';
+    if (!this.matrices.length) {
+      container.innerHTML = '<div class="empty-state compact" style="padding:16px;">暂无矩阵，请先在「矩阵管理」中创建</div>';
       return;
     }
-    container.innerHTML = this.creators.map((c) => {
-      const cfg = c.autoPublishConfig || {};
+    container.innerHTML = this.matrices.map((m) => {
+      const cfg = m.autoPublishConfig || {};
       const enabled = cfg.enabled === 1 || cfg.enabled === true;
-      const expanded = this.expandedCreatorId === c.id;
+      const accountCount = (m.accounts || []).length;
+      const hasProfile = !!m.profileId;
+      const profile = hasProfile ? this.profiles.find((p) => p.id === m.profileId) : null;
+      const profileLabel = profile ? `#${escapeHtml(String(profile.seq ?? '?'))} ${escapeHtml(profile.name)}` : '未绑实例';
       return `
-        <div class="ap-creator-card" data-creator-id="${escapeHtml(c.id)}">
-          <div class="ap-creator-header" data-toggle="${escapeHtml(c.id)}" style="cursor:pointer;">
+        <div class="ap-creator-card" data-matrix-id="${escapeHtml(m.id)}">
+          <div class="ap-creator-header" data-matrix-toggle="${escapeHtml(m.id)}" style="cursor:pointer;">
             <span class="ap-creator-toggle">⚙</span>
             <div class="ap-creator-info">
-              <strong>${escapeHtml(c.name)}</strong>
-              <span class="ap-creator-platform">${escapeHtml(c.platform || '—')}</span>
+              <strong>${escapeHtml(m.name)}</strong>
+              <span class="ap-creator-platform">${escapeHtml(String(accountCount))} 账号 · ${profileLabel}</span>
             </div>
             <label class="ap-switch ap-creator-enabled" data-stop-prop>
-              <input type="checkbox" data-enabled="${escapeHtml(c.id)}" ${enabled ? 'checked' : ''} />
+              <input type="checkbox" data-matrix-enabled="${escapeHtml(m.id)}" ${enabled ? 'checked' : ''} />
               <span class="ap-switch-slider"></span>
             </label>
           </div>
-
         </div>
       `;
     }).join('');
 
-    // 绑定事件
-    container.querySelectorAll('[data-toggle]').forEach((header) => {
+    // 矩阵卡片点击 → 打开账号列表弹窗
+    container.querySelectorAll('[data-matrix-toggle]').forEach((header) => {
       header.addEventListener('click', (e) => {
         if (e.target.closest('[data-stop-prop]')) return;
-        const id = header.dataset.toggle;
-        this._openConfigModal(id);
+        const id = header.dataset.matrixToggle;
+        this.openMatrixAccountsModal(id);
       });
     });
 
-    container.querySelectorAll('[data-enabled]').forEach((sw) => {
+    // 自动发布开关
+    container.querySelectorAll('[data-matrix-enabled]').forEach((sw) => {
       sw.addEventListener('change', (e) => {
         e.stopPropagation();
-        this.toggleAutoPublish(sw.dataset.enabled, sw.checked);
+        this.toggleMatrixAutoPublish(sw.dataset.matrixEnabled, sw.checked);
       });
     });
+  },
 
-    // 绑定配置变更事件
-    container.querySelectorAll('[data-config-preset]').forEach((sel) => {
-      sel.addEventListener('change', () => {
-        this.saveCreatorConfig(sel.dataset.configPreset, { presetId: sel.value });
-      });
-    });
-    container.querySelectorAll('[data-config-daily]').forEach((inp) => {
-      inp.addEventListener('change', () => {
-        const val = parseInt(inp.value, 10) || 0;
-        this.saveCreatorConfig(inp.dataset.configDaily, { dailyLimitPerProfile: val });
-      });
-    });
-    container.querySelectorAll('[data-config-interval]').forEach((inp) => {
-      inp.addEventListener('change', () => {
-        const val = parseInt(inp.value, 10) || 1;
-        this.saveCreatorConfig(inp.dataset.configInterval, { monitorIntervalHours: val });
-      });
-    });
+  // ---- 弹窗：矩阵账号列表 ----
+  openMatrixAccountsModal(matrixId) {
+    const m = this.matrices.find((x) => x.id === matrixId);
+    if (!m) return;
+    this.selectedMatrixId = matrixId;
+    const modal = this.el.matrixModal();
+    const title = this.el.modalTitle();
+    const body = this.el.modalBody();
+    if (!modal || !body) return;
+    if (title) title.textContent = `矩阵账号列表 · ${m.name}`;
+    body.innerHTML = this._renderMatrixAccountsHtml(m);
+    modal.style.display = 'flex';
 
-    // CDP 实例选择
-    container.querySelectorAll('[data-config-cdp]').forEach((sel) => {
-      sel.addEventListener('change', () => {
-        this.saveCreatorConfig(sel.dataset.configCdp, { cdpInstanceId: sel.value || null });
-      });
+    // 配置按钮 → 渲染配置页
+    body.querySelectorAll('[data-config-btn]').forEach((btn) => {
+      btn.addEventListener('click', () => this.renderConfigPage(btn.dataset.configBtn));
     });
+    // 手动触发监控按钮
+    body.querySelectorAll('[data-monitor-trigger]').forEach((btn) => {
+      btn.addEventListener('click', () => this.triggerMonitor(btn.dataset.monitorTrigger));
+    });
+  },
 
-    // 发布时间段保存
-    container.querySelectorAll('[data-config-slots-save]').forEach((btn) => {
+  _closeMatrixModal() {
+    const modal = this.el.matrixModal();
+    if (modal) modal.style.display = 'none';
+    this.selectedMatrixId = null;
+  },
+
+  // 矩阵账号列表 HTML
+  _renderMatrixAccountsHtml(m) {
+    const accounts = m.accounts || [];
+    if (!accounts.length) {
+      return '<div class="empty-state compact" style="padding:16px;">该矩阵暂无账号</div>';
+    }
+    // 矩阵级别：配置按钮（用矩阵 ID）+ 立即监控
+    const headerRow = `
+      <div class="ap-config-row" style="border-bottom:1px solid var(--border,#e2e8f0);margin-bottom:8px;padding-bottom:8px;">
+        <span class="ap-config-label">矩阵操作</span>
+        <button class="button button-primary" type="button" data-config-btn="${escapeHtml(m.id)}" style="font-size:11px;padding:2px 10px;">矩阵发布配置</button>
+        <button class="button button-secondary" type="button" data-monitor-trigger="${escapeHtml(m.id)}" style="font-size:11px;padding:2px 10px;margin-left:4px;">立即监控</button>
+      </div>
+    `;
+    const rows = accounts.map((a) => {
+      const creatorCount = a.creatorCount ?? 0;
+      return `
+        <div class="ap-binding-item" style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid #f0f0f0;">
+          <span class="ap-binding-seq" style="min-width:50px;">${escapeHtml(a.platform || '—')}</span>
+          <span class="ap-binding-name" style="flex:1;">${escapeHtml(a.accountName || '—')}</span>
+          <span class="ap-binding-limit">${escapeHtml(String(creatorCount))} 达人</span>
+          <button class="button button-secondary" type="button" data-config-btn="${escapeHtml(m.id)}" style="font-size:11px;padding:2px 10px;">配置</button>
+        </div>
+      `;
+    }).join('');
+    return headerRow + rows;
+  },
+
+  // ---- 配置页（弹窗内）----
+  async renderConfigPage(matrixId) {
+    const m = this.matrices.find((x) => x.id === matrixId);
+    if (!m) return;
+    let cfg = m.autoPublishConfig || {};
+    // 拉取最新配置
+    try {
+      cfg = await request(`/api/auto-publish/matrix-config/${encodeURIComponent(matrixId)}`) || {};
+      m.autoPublishConfig = cfg;
+    } catch {
+      // 使用默认配置
+    }
+    const body = this.el.modalBody();
+    const title = this.el.modalTitle();
+    if (!body) return;
+    if (title) title.textContent = `发布配置 · ${m.name}`;
+    body.innerHTML = this._renderMatrixConfigHtml(m, cfg);
+    this._bindConfigPageEvents(body, matrixId);
+  },
+
+  _renderMatrixConfigHtml(m, cfg) {
+    const presetOptions = this.presets
+      .map((p) => `<option value="${escapeHtml(p.value)}" ${cfg.presetId === p.value ? 'selected' : ''}>${escapeHtml(p.label)}</option>`)
+      .join('');
+    const slotsVal = cfg.publishTimeSlots ? (typeof cfg.publishTimeSlots === 'string' ? (() => { try { return JSON.parse(cfg.publishTimeSlots).join(', '); } catch { return cfg.publishTimeSlots; } })() : cfg.publishTimeSlots.join(', ')) : '';
+    const cdpOptions = this.cdpInstances.map((inst) => `<option value="${escapeHtml(inst.id)}" ${cfg.cdpInstanceId === inst.id ? 'selected' : ''}>${escapeHtml(inst.name)}</option>`).join('');
+    return `<div class="ap-creator-body" data-body="${escapeHtml(m.id)}">
+      <div class="ap-config-row"><span class="ap-config-label">混剪方案</span><div class="ap-config-value"><select data-config-preset="${escapeHtml(m.id)}">${presetOptions}</select></div></div>
+      <div class="ap-config-row"><span class="ap-config-label">每日发布数</span><div class="ap-config-value"><input type="number" min="0" max="50" value="${escapeHtml(String(cfg.dailyLimit ?? 3))}" data-config-daily="${escapeHtml(m.id)}" style="width:60px;" /> 条</div></div>
+      <div class="ap-config-row"><span class="ap-config-label">监控间隔</span><div class="ap-config-value"><input type="number" min="1" max="168" value="${escapeHtml(String(cfg.monitorIntervalHours ?? 6))}" data-config-interval="${escapeHtml(m.id)}" style="width:70px;" /> 小时</div></div>
+      <div class="ap-config-row"><span class="ap-config-label">CDP实例</span><div class="ap-config-value"><select data-config-cdp="${escapeHtml(m.id)}" style="min-width:160px;"><option value="">未配置（使用绑定实例）</option>${cdpOptions}</select></div></div>
+      <div class="ap-config-row"><span class="ap-config-label">发布时间段</span><div class="ap-config-value"><input type="text" value="${escapeHtml(slotsVal)}" data-config-slots="${escapeHtml(m.id)}" style="width:280px;" placeholder="时间段: 09:00-12:00 或 精确: 09:00, 12:00" /><button class="button button-secondary" type="button" data-config-slots-save="${escapeHtml(m.id)}" style="font-size:11px;padding:2px 8px;margin-left:4px;">保存</button><div style="font-size:10px;color:var(--text-muted,#94a3b8);margin-top:4px;">时间段→范围内随机；精确时间→定点发布</div></div></div>
+      <div class="ap-config-row" style="margin-top:12px;">
+        <button class="button button-primary" type="button" data-config-save="${escapeHtml(m.id)}" style="font-size:12px;padding:4px 16px;">保存配置</button>
+        <button class="button button-secondary" type="button" data-config-back="${escapeHtml(m.id)}" style="font-size:12px;padding:4px 16px;margin-left:6px;">返回账号列表</button>
+      </div>
+    </div>`;
+  },
+
+  _bindConfigPageEvents(scope, matrixId) {
+    // 保存按钮：收集表单值并 PUT
+    scope.querySelectorAll('[data-config-save]').forEach((btn) => {
       btn.addEventListener('click', () => {
-        const creatorId = btn.dataset.configSlotsSave;
-        const input = container.querySelector(`[data-config-slots="${CSS.escape(creatorId)}"]`);
+        const m = this.matrices.find((x) => x.id === matrixId);
+        if (!m) return;
+        const cfg = m.autoPublishConfig || {};
+        const presetSel = scope.querySelector(`[data-config-preset="${CSS.escape(matrixId)}"]`);
+        const dailyInp = scope.querySelector(`[data-config-daily="${CSS.escape(matrixId)}"]`);
+        const intervalInp = scope.querySelector(`[data-config-interval="${CSS.escape(matrixId)}"]`);
+        const cdpSel = scope.querySelector(`[data-config-cdp="${CSS.escape(matrixId)}"]`);
+        const slotsInp = scope.querySelector(`[data-config-slots="${CSS.escape(matrixId)}"]`);
+        const payload = {
+          presetId: presetSel?.value || null,
+          dailyLimit: parseInt(dailyInp?.value, 10) || 0,
+          monitorIntervalHours: parseInt(intervalInp?.value, 10) || 1,
+          cdpInstanceId: cdpSel?.value || null,
+        };
+        // 时间段校验
+        const raw = slotsInp?.value.trim() || '';
+        if (raw) {
+          const slots = raw.split(',').map((s) => s.trim()).filter(Boolean);
+          const valid = slots.every((s) => /^\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}$/.test(s) || /^\d{1,2}:\d{2}$/.test(s));
+          if (!valid) {
+            showToast('格式有误，用 HH:MM-HH:MM(时间段) 或 HH:MM(精确时间)，逗号分隔', true);
+            return;
+          }
+          payload.publishTimeSlots = JSON.stringify(slots);
+        } else {
+          payload.publishTimeSlots = null;
+        }
+        // 保留 enabled 状态
+        payload.enabled = (cfg.enabled === 1 || cfg.enabled === true) ? 1 : 0;
+        this.saveMatrixConfig(matrixId, payload);
+      });
+    });
+    // 返回账号列表
+    scope.querySelectorAll('[data-config-back]').forEach((btn) => {
+      btn.addEventListener('click', () => this.openMatrixAccountsModal(matrixId));
+    });
+    // 时间段单独保存
+    scope.querySelectorAll('[data-config-slots-save]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const input = scope.querySelector(`[data-config-slots="${CSS.escape(matrixId)}"]`);
         if (!input) return;
         const raw = input.value.trim();
         if (!raw) {
-          this.saveCreatorConfig(creatorId, { publishTimeSlots: null });
+          this.saveMatrixConfig(matrixId, { publishTimeSlots: null });
           return;
         }
-        // 解析时间段/精确时间字符串为 JSON 数组
         const slots = raw.split(',').map((s) => s.trim()).filter(Boolean);
-        // 校验：支持时间段(HH:MM-HH:MM)和精确时间(HH:MM)
         const valid = slots.every((s) => /^\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}$/.test(s) || /^\d{1,2}:\d{2}$/.test(s));
         if (!valid) {
           showToast('格式有误，用 HH:MM-HH:MM(时间段) 或 HH:MM(精确时间)，逗号分隔', true);
           return;
         }
-        this.saveCreatorConfig(creatorId, { publishTimeSlots: JSON.stringify(slots) });
+        this.saveMatrixConfig(matrixId, { publishTimeSlots: JSON.stringify(slots) });
       });
     });
-
-  },
-
-  _openConfigModal(creatorId) {
-    const c = this.creators.find((x) => x.id === creatorId);
-    if (!c) return;
-    this.fetchBindings(creatorId).then(() => {
-      document.querySelector('#ap-config-modal')?.remove();
-      const bodyHtml = this._renderCreatorBodyHtml(c);
-      const modal = document.createElement('div');
-      modal.id = 'ap-config-modal';
-      modal.className = 'modal-overlay';
-      modal.style.display = 'flex';
-      modal.innerHTML = `
-        <div class="modal-content" style="max-width:600px;max-height:85vh;overflow-y:auto;">
-          <div class="modal-header">
-            <h3 style="font-size:14px;">自动发布配置 · ${escapeHtml(c.name)}</h3>
-            <button class="modal-close" type="button" onclick="document.querySelector('#ap-config-modal').remove()">×</button>
-          </div>
-          <div class="modal-body">${bodyHtml}</div>
-        </div>
-      `;
-      document.body.appendChild(modal);
-      modal.addEventListener('click', (e) => { if (e.target === modal) modal.remove(); });
-      this._bindModalEvents(modal, creatorId);
-    });
-  },
-
-  _bindModalEvents(scope, creatorId) {
+    // 单字段自动保存
     scope.querySelectorAll('[data-config-preset]').forEach((sel) => {
-      sel.addEventListener('change', () => this.saveCreatorConfig(sel.dataset.configPreset, { presetId: sel.value }));
+      sel.addEventListener('change', () => this.saveMatrixConfig(matrixId, { presetId: sel.value || null }));
     });
     scope.querySelectorAll('[data-config-daily]').forEach((inp) => {
-      inp.addEventListener('change', () => {
-        const val = parseInt(inp.value, 10) || 0;
-        this.saveCreatorConfig(inp.dataset.configDaily, { dailyLimitPerProfile: val });
-      });
+      inp.addEventListener('change', () => this.saveMatrixConfig(matrixId, { dailyLimit: parseInt(inp.value, 10) || 0 }));
     });
     scope.querySelectorAll('[data-config-interval]').forEach((inp) => {
-      inp.addEventListener('change', () => {
-        const val = parseInt(inp.value, 10) || 1;
-        this.saveCreatorConfig(inp.dataset.configInterval, { monitorIntervalHours: val });
-      });
+      inp.addEventListener('change', () => this.saveMatrixConfig(matrixId, { monitorIntervalHours: parseInt(inp.value, 10) || 1 }));
     });
     scope.querySelectorAll('[data-config-cdp]').forEach((sel) => {
-      sel.addEventListener('change', () => this.saveCreatorConfig(sel.dataset.configCdp, { cdpInstanceId: sel.value || null }));
+      sel.addEventListener('change', () => this.saveMatrixConfig(matrixId, { cdpInstanceId: sel.value || null }));
     });
-    scope.querySelectorAll('[data-config-slots-save]').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const cid = btn.dataset.configSlotsSave;
-        const input = scope.querySelector(`[data-config-slots="${CSS.escape(cid)}"]`);
-        if (!input) return;
-        const raw = input.value.trim();
-        if (!raw) { this.saveCreatorConfig(cid, { publishTimeSlots: null }); return; }
-        const slots = raw.split(',').map((s) => s.trim()).filter(Boolean);
-        const valid = slots.every((s) => /^\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}$/.test(s) || /^\d{1,2}:\d{2}$/.test(s));
-        if (!valid) { showToast('格式有误，用 HH:MM-HH:MM(时间段) 或 HH:MM(精确时间)，逗号分隔', true); return; }
-        this.saveCreatorConfig(cid, { publishTimeSlots: JSON.stringify(slots) });
-      });
-    });
-    scope.querySelectorAll('[data-bind-btn]').forEach((btn) => {
-      btn.addEventListener('click', () => this._showBindingForm(btn.dataset.bindBtn));
-    });
-    scope.querySelectorAll('[data-bind-confirm]').forEach((btn) => {
-      btn.addEventListener('click', () => this._confirmBinding(btn.dataset.bindConfirm));
-    });
-    scope.querySelectorAll('[data-bind-cancel]').forEach((btn) => {
-      btn.addEventListener('click', () => this._hideBindingForm(btn.dataset.bindCancel));
-    });
-    scope.querySelectorAll('[data-del-binding]').forEach((btn) => {
-      btn.addEventListener('click', () => this.removeProfileBinding(btn.dataset.delBinding, btn.dataset.creatorId));
-    });
-    scope.querySelectorAll('[data-monitor-trigger]').forEach((btn) => {
-      btn.addEventListener('click', () => this.triggerMonitor(btn.dataset.monitorTrigger));
-    });
-  },
-
-  _renderCreatorBodyHtml(c) {
-    const cfg = c.autoPublishConfig || {};
-    const bindings = c.bindings || [];
-    const presetOptions = this.presets
-      .map((p) => `<option value="${p.value}" ${cfg.presetId === p.value ? 'selected' : ''}>${escapeHtml(p.label)}</option>`)
-      .join('');
-    const bindingsHtml = bindings.length
-      ? bindings.map((b) => {
-          const prof = this.profiles.find((p) => p.id === b.profileId);
-          const seq = prof?.seq ?? '?';
-          const name = prof?.name || b.profileId;
-          return `<div class="ap-binding-item"><span class="ap-binding-seq">#${escapeHtml(String(seq))}</span><span class="ap-binding-name">${escapeHtml(name)}</span><span class="ap-binding-limit">${escapeHtml(String(b.dailyLimit || 0))}条/日</span><button class="ap-binding-del" data-del-binding="${escapeHtml(b.id)}" data-creator-id="${escapeHtml(c.id)}" title="删除">×</button></div>`;
-        }).join('')
-      : '<div style="font-size:11px;color:var(--text-muted,#94a3b8);padding:4px 0;">暂未绑定实例</div>';
-    const slotsVal = cfg.publishTimeSlots ? (typeof cfg.publishTimeSlots === 'string' ? (() => { try { return JSON.parse(cfg.publishTimeSlots).join(', '); } catch { return cfg.publishTimeSlots; } })() : cfg.publishTimeSlots.join(', ')) : '';
-    return `<div class="ap-creator-body" data-body="${escapeHtml(c.id)}">
-      <div class="ap-config-row"><span class="ap-config-label">混剪方案</span><div class="ap-config-value"><select data-config-preset="${escapeHtml(c.id)}">${presetOptions}</select></div></div>
-      <div class="ap-config-row"><span class="ap-config-label">每实例每日发布</span><div class="ap-config-value"><input type="number" min="0" max="50" value="${escapeHtml(String(cfg.dailyLimitPerProfile ?? 3))}" data-config-daily="${escapeHtml(c.id)}" style="width:60px;" /> 条</div></div>
-      <div class="ap-config-row"><span class="ap-config-label">监控间隔</span><div class="ap-config-value"><input type="number" min="1" max="168" value="${escapeHtml(String(cfg.monitorIntervalHours ?? 6))}" data-config-interval="${escapeHtml(c.id)}" style="width:70px;" /> 小时</div></div>
-      <div class="ap-config-row"><span class="ap-config-label">CDP实例</span><div class="ap-config-value"><select data-config-cdp="${escapeHtml(c.id)}" style="min-width:160px;"><option value="">未配置（使用绑定实例）</option>${this.cdpInstances.map((inst) => `<option value="${escapeHtml(inst.id)}" ${cfg.cdpInstanceId === inst.id ? 'selected' : ''}>${escapeHtml(inst.name)}</option>`).join('')}</select></div></div>
-      <div class="ap-config-row"><span class="ap-config-label">发布时间段</span><div class="ap-config-value"><input type="text" value="${escapeHtml(slotsVal)}" data-config-slots="${escapeHtml(c.id)}" style="width:280px;" placeholder="时间段: 09:00-12:00 或 精确: 09:00, 12:00" /><button class="button button-secondary" type="button" data-config-slots-save="${escapeHtml(c.id)}" style="font-size:11px;padding:2px 8px;margin-left:4px;">保存</button><div style="font-size:10px;color:var(--text-muted,#94a3b8);margin-top:4px;">时间段→范围内随机；精确时间→定点发布</div></div></div>
-      <div class="ap-bindings-area"><div class="ap-bindings-head"><span>绑定的指纹浏览器实例 (${bindings.length})</span><button class="button button-secondary" type="button" data-bind-btn="${escapeHtml(c.id)}" style="font-size:11px;padding:2px 10px;">+ 绑定</button></div><div class="ap-binding-form hidden" data-bind-form="${escapeHtml(c.id)}"><select data-bind-select="${escapeHtml(c.id)}" style="flex:1;"><option value="">选择实例…</option></select><input type="number" min="1" max="50" value="3" data-bind-limit="${escapeHtml(c.id)}" style="width:50px;" title="每日发布条数" /><button class="button button-primary" type="button" data-bind-confirm="${escapeHtml(c.id)}" style="font-size:11px;padding:2px 10px;">确认</button><button class="button button-secondary" type="button" data-bind-cancel="${escapeHtml(c.id)}" style="font-size:11px;padding:2px 10px;">取消</button></div>${bindingsHtml}</div>
-      <div class="ap-config-row"><span class="ap-config-label">手动操作</span><button class="button button-secondary" type="button" data-monitor-trigger="${escapeHtml(c.id)}" style="font-size:11px;padding:2px 10px;">立即监控</button></div>
-    </div>`;
-  },
-
-  renderCreatorBody(creatorId) {
-    // 弹窗模式下直接刷新弹窗内容
-    const modal = document.querySelector('#ap-config-modal');
-    if (!modal) return;
-    const c = this.creators.find((x) => x.id === creatorId);
-    if (!c) return;
-    const bodyEl = modal.querySelector('.modal-body');
-    if (bodyEl) {
-      bodyEl.innerHTML = this._renderCreatorBodyHtml(c);
-      this._bindModalEvents(modal, creatorId);
-    }
-  },
-
-  _showBindingForm(creatorId) {
-    const form = document.querySelector(`[data-bind-form="${CSS.escape(creatorId)}"]`);
-    if (!form) return;
-    form.classList.remove('hidden');
-    const select = form.querySelector(`[data-bind-select="${CSS.escape(creatorId)}"]`);
-    const c = this.creators.find((x) => x.id === creatorId);
-    const boundIds = new Set((c?.bindings || []).map((b) => b.profileId));
-    const available = this.profiles.filter((p) => !boundIds.has(p.id));
-    if (!available.length) {
-      select.innerHTML = '<option value="">无可用实例</option>';
-    } else {
-      select.innerHTML = available
-        .map((p) => `<option value="${escapeHtml(p.id)}">#${escapeHtml(String(p.seq))} ${escapeHtml(p.name)}</option>`)
-        .join('');
-    }
-  },
-
-  _hideBindingForm(creatorId) {
-    const form = document.querySelector(`[data-bind-form="${CSS.escape(creatorId)}"]`);
-    form?.classList.add('hidden');
-  },
-
-  _confirmBinding(creatorId) {
-    const form = document.querySelector(`[data-bind-form="${CSS.escape(creatorId)}"]`);
-    if (!form) return;
-    const profileId = form.querySelector(`[data-bind-select="${CSS.escape(creatorId)}"]`).value;
-    const dailyLimit = parseInt(form.querySelector(`[data-bind-limit="${CSS.escape(creatorId)}"]`).value, 10) || 3;
-    if (!profileId) {
-      showToast('请选择实例', true);
-      return;
-    }
-    this.addProfileBinding(creatorId, profileId, dailyLimit);
-    this._hideBindingForm(creatorId);
   },
 
   _updateFilterOptions() {
-    const sel = this.el.filterCreator();
+    const sel = this.el.filterMatrix();
     if (!sel) return;
-    const current = this.filterCreator;
-    sel.innerHTML = '<option value="">全部对标达人</option>' +
-      this.creators.map((c) => `<option value="${escapeHtml(c.id)}" ${current === c.id ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('');
+    const current = this.filterMatrix;
+    sel.innerHTML = '<option value="">全部矩阵</option>' +
+      this.matrices.map((m) => `<option value="${escapeHtml(m.id)}" ${current === m.id ? 'selected' : ''}>${escapeHtml(m.name)}</option>`).join('');
   },
 
   // ---- 渲染：流水线表格 ----
@@ -8297,7 +8228,7 @@ const autoPublish = {
       return;
     }
     tbody.innerHTML = this.pipelineTasks.map((t) => {
-      const creatorName = t.creatorName || t.creatorId || '—';
+      const matrixName = t.matrixName || t.matrixId || '—';
       const status = t.status || 'pending';
       const profileId = t.profileId || '—';
       const attempts = t.attemptCount ?? 0;
@@ -8310,7 +8241,7 @@ const autoPublish = {
 
       return `
         <tr class="${isFailed ? 'failed-row' : ''}">
-          <td class="col-creator">${escapeHtml(creatorName)}</td>
+          <td class="col-creator">${escapeHtml(matrixName)}</td>
           <td class="col-source" title="${escapeHtml(t.sourceVideoId || '')}">${escapeHtml(t.sourceVideoId || '—')}</td>
           <td>
             <span class="ap-status-badge ${this.statusClass(status)}">${escapeHtml(status)}</span>
@@ -8404,7 +8335,7 @@ const autoPublish = {
       const hasNew = newCount > 0;
       return `
         <div class="ap-monitor-item">
-          <span class="ap-monitor-name">${escapeHtml(m.name || m.creatorName || '—')}</span>
+          <span class="ap-monitor-name">${escapeHtml(m.name || '—')}</span>
           <span class="ap-monitor-time">${escapeHtml(lastMonitor)}</span>
           <span class="ap-monitor-count ${hasNew ? 'has-new' : ''}">${hasNew ? `新发现 ${newCount}` : '无新视频'}</span>
         </div>

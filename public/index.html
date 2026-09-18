@@ -1546,13 +1546,13 @@
       <!-- ======================== 自动发布面板 ======================== -->
       <section class="auto-publish-panel auto-publish-tab hidden">
         <div class="ap-layout">
-          <!-- ========== 左栏：对标达人配置 ========== -->
+          <!-- ========== 左栏：矩阵配置 ========== -->
           <aside class="ap-creators-col">
             <div class="ap-section-head">
-              <h3>对标达人自动发布配置</h3>
-              <button id="ap-refresh-creators" class="link-btn" type="button">刷新</button>
+              <h3>矩阵自动发布配置</h3>
+              <button id="ap-refresh-matrices" class="link-btn" type="button">刷新</button>
             </div>
-            <div id="ap-creators-list" class="ap-creators-list">
+            <div id="ap-matrices-list" class="ap-creators-list">
               <div class="empty-state compact" style="padding:16px;">加载中…</div>
             </div>
           </aside>
@@ -1575,8 +1575,8 @@
               <div class="ap-section-head">
                 <h3>流水线任务看板</h3>
                 <div style="display:flex;gap:8px;align-items:center;">
-                  <select id="ap-filter-creator" class="ap-filter-select">
-                    <option value="">全部对标达人</option>
+                  <select id="ap-filter-matrix" class="ap-filter-select">
+                    <option value="">全部矩阵</option>
                   </select>
                   <select id="ap-filter-status" class="ap-filter-select">
                     <option value="">全部状态</option>
@@ -1595,7 +1595,7 @@
                 <table class="ap-table">
                   <thead>
                     <tr>
-                      <th>对标达人</th>
+                      <th>矩阵</th>
                       <th>源视频</th>
                       <th>状态</th>
                       <th>目标实例</th>
@@ -1629,6 +1629,17 @@
                 <div class="empty-state compact" style="padding:16px;">暂无日志</div>
               </div>
             </div>
+          </div>
+        </div>
+
+        <!-- 矩阵账号选择弹窗 -->
+        <div id="ap-matrix-modal" class="modal-overlay" style="display:none;z-index:10001;">
+          <div class="modal-content" style="max-width:600px;max-height:80vh;overflow-y:auto;">
+            <div class="modal-header">
+              <h3 id="ap-modal-title" style="font-size:14px;">矩阵账号列表</h3>
+              <button class="modal-close" type="button" onclick="document.getElementById('ap-matrix-modal').style.display='none'">×</button>
+            </div>
+            <div id="ap-modal-body" class="modal-body"></div>
           </div>
         </div>
       </section>
