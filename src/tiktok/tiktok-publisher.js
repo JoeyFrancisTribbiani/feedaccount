@@ -74,10 +74,11 @@ export class TiktokPublisher {
 
   /**
    * 关闭 TikTok Studio 可能出现的弹窗
+   * 循环检测直到没有已知弹窗按钮
    */
   async _dismissDialogs() {
     const page = this.page;
-    // 用 evaluate 直接找弹窗按钮点击，避免 :has-text 兼容性问题
+
     const dismiss = (texts) => page.evaluate((ts) => {
       const btns = document.querySelectorAll('button');
       for (const b of btns) {
@@ -87,17 +88,25 @@ export class TiktokPublisher {
       return null;
     }, texts).catch(() => null);
 
-    // "Discard" / "放弃" — 丢弃未保存的编辑
-    await dismiss(['Discard', '放弃', '丢弃']);
-    await page.waitForTimeout(500);
+    // 最多循环5轮，每轮点掉一个弹窗
+    for (let i = 0; i < 5; i++) {
+      let clicked = null;
 
-    // "Turn on" / "Don't turn on" — 内容检查弹窗，选关闭
-    await dismiss(['Not now', 'Skip', 'Cancel', 'Don\'t turn on', '以后再说', '跳过', '取消', '暂不开启', '不开启']);
-    await page.waitForTimeout(500);
+      // 优先级1: Discard（丢弃草稿）
+      clicked = await dismiss(['Discard', '放弃', '丢弃']);
+      if (clicked) { await page.waitForTimeout(1500); continue; }
 
-    // "Got it" / "OK" / "Continue" — 其他确认弹窗
-    await dismiss(['Got it', 'OK', 'Continue', '确定', '继续', '我知道了']);
-    await page.waitForTimeout(500);
+      // 优先级2: 内容检查弹窗 - 关闭/跳过
+      clicked = await dismiss(['Not now', 'Skip', "Don't turn on", 'Cancel', '以后再说', '跳过', '取消', '暂不开启', '不开启']);
+      if (clicked) { await page.waitForTimeout(1500); continue; }
+
+      // 优先级3: 其他确认弹窗
+      clicked = await dismiss(['Got it', 'OK', 'Continue', '确定', '继续', '我知道了']);
+      if (clicked) { await page.waitForTimeout(1500); continue; }
+
+      // 没有弹窗了，退出
+      break;
+    }
   }
 
   /**
