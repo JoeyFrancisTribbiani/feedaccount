@@ -4294,14 +4294,26 @@ export function createMonitorServer({
           return;
         }
 
-        // GET /api/auto-publish/analytics/:profileId — 播放数据
+        // GET /api/auto-publish/analytics/:id — 播放数据
         const apAnalyticsMatch = pathname.match(/^\/api\/auto-publish\/analytics\/([^/]+)$/);
         if (apAnalyticsMatch && request.method === "GET") {
           let profileId = decodeURIComponent(apAnalyticsMatch[1]);
           // 如果传的是 matrixId，查找该矩阵绑定的 profileId
           if (profileId.startsWith("mx_")) {
+            // 1. 先查 matrix_profiles
             const mp = store.db.prepare("SELECT profile_id FROM matrix_profiles WHERE matrix_id = ? LIMIT 1").get(profileId);
-            profileId = mp?.profile_id || "";
+            if (mp?.profile_id) {
+              profileId = mp.profile_id;
+            } else {
+              // 2. 查 creator_profile_bindings（通过 matrix_account_creators 找达人，再找达人绑定的 profile）
+              const binding = store.db.prepare(`
+                SELECT cpb.profile_id FROM creator_profile_bindings cpb
+                JOIN matrix_account_creators mac ON mac.creator_id = cpb.creator_id
+                JOIN matrix_accounts ma ON ma.id = mac.matrix_account_id
+                WHERE ma.matrix_id = ? AND cpb.enabled = 1 LIMIT 1
+              `).get(profileId);
+              profileId = binding?.profile_id || "";
+            }
           }
           if (!profileId) {
             sendJson(response, 200, { profileId: "", jobCount: 0, analyticsCount: 0, jobs: [] });
