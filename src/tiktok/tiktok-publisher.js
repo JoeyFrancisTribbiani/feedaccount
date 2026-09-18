@@ -400,7 +400,7 @@ export class TiktokPublisher {
     for (let i = 0; i < 30; i++) {
       await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
       await page.waitForTimeout(2000);
-      const count = await page.evaluate(() => document.querySelectorAll('a[href*="/video/"]').length).catch(() => 0);
+      const count = await page.evaluate(() => document.querySelectorAll('[data-e2e="user-post-item"]').length).catch(() => 0);
       if (count === prevCount) break;
       prevCount = count;
     }
@@ -408,39 +408,31 @@ export class TiktokPublisher {
     // 抓取每个视频的数据
     const videos = await page.evaluate(() => {
       const items = [];
-      const videoLinks = document.querySelectorAll('a[href*="/video/"]');
+      const cards = document.querySelectorAll('[data-e2e="user-post-item"]');
       const seen = new Set();
 
-      for (const link of videoLinks) {
+      for (const card of cards) {
+        // 从卡片内找视频链接
+        const link = card.querySelector('a[href*="/video/"], a[href*="/photo/"]');
+        if (!link) continue;
         const href = link.getAttribute('href') || '';
-        const match = href.match(/\/video\/(\d+)/);
-        if (!match || seen.has(match[1])) continue;
-        seen.add(match[1]);
+        const match = href.match(/\/(video|photo)\/(\d+)/);
+        if (!match || seen.has(match[2])) continue;
+        seen.add(match[2]);
 
-        // 找到视频卡片容器（向上找带播放量的容器）
-        let card = link;
-        for (let depth = 0; depth < 5; depth++) {
-          card = card.parentElement;
-          if (!card) break;
-          const text = card.innerText || '';
-          // TikTok 主页视频卡片通常有播放次数
-          if (text.includes('views') || text.includes('播放') || /\d+.*K|M|B/.test(text)) break;
-        }
-
-        const cardText = card?.innerText || '';
-        const viewsMatch = cardText.match(/([\d.]+)\s*([KMB])?\s*views/i) || cardText.match(/([\d.]+)\s*([KMB])?\s*播放/);
-        const likesMatch = cardText.match(/([\d.]+)\s*([KMB])?\s*likes/i) || cardText.match(/([\d.]+)\s*([KMB])?\s*点赞/);
-
-        // 也尝试从 data 属性抓取
-        const viewsEl = card?.querySelector('[data-e2e="video-views"], .video-views, [class*="views"]');
+        // 播放量在 <strong data-e2e="video-views">
+        const viewsEl = card.querySelector('[data-e2e="video-views"]');
         const viewsText = viewsEl?.innerText || viewsEl?.textContent || '';
 
+        // 视频标题在 img alt
+        const imgEl = card.querySelector('img');
+        const title = imgEl?.getAttribute('alt') || '';
+
         items.push({
-          videoId: match[1],
+          videoId: match[2],
           videoUrl: href,
-          views: viewsText || (viewsMatch ? viewsMatch[0] : ''),
-          likes: likesMatch ? likesMatch[0] : '',
-          title: link.getAttribute('title') || link.innerText?.substring(0, 60) || '',
+          views: viewsText,
+          title: title.substring(0, 100),
         });
       }
       return items;
