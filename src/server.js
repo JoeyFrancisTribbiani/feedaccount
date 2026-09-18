@@ -5,6 +5,14 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawn, execSync } from "node:child_process";
 
+// 全局异常处理，防止进程崩溃
+process.on("uncaughtException", (err) => {
+  console.error("[FATAL] 未捕获异常:", err.message, err.stack?.substring(0, 200));
+});
+process.on("unhandledRejection", (reason) => {
+  console.error("[FATAL] 未处理的Promise拒绝:", reason?.message || String(reason).substring(0, 200));
+});
+
 import { BitBrowserApi } from "./bitbrowser-api.js";
 import {
   DEFAULT_BITBROWSER_API,
