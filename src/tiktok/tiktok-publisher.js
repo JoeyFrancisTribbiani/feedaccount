@@ -62,13 +62,13 @@ export class TiktokPublisher {
     // 等待页面加载
     await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
 
-    // 等待弹窗出现（草稿弹窗是异步渲染的，最多等10秒）
+    // 等待弹窗出现（草稿弹窗是异步渲染的，最多等20秒）
     try {
       await page.waitForFunction(
         () => [...document.querySelectorAll('button')].some(b =>
           ['Discard', 'Not now', 'Continue', 'Discard this post'].includes(b.innerText.trim())
         ),
-        { timeout: 10000 }
+        { timeout: 20000 }
       );
     } catch {
       // 没弹窗也继续
