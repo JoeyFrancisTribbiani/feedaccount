@@ -98,10 +98,10 @@ export class TiktokPublishManager extends EventTarget {
         });
         this._log(jobId, "info", `发布成功! videoId=${result.publishedVideoId || "—"}, url=${result.publishedVideoUrl || "—"}`);
 
-        // 发布成功后，去账号主页记录播放量
+        // 发布成功后，去我们自己的账号主页记录播放量
         try {
-          this._log(jobId, "info", `正在访问账号主页记录播放量…`);
-          const analyticsResult = await publisher.recordAnalytics(username);
+          this._log(jobId, "info", `正在访问发布账号主页记录播放量…`);
+          const analyticsResult = await publisher.recordAnalytics();
           this._log(jobId, "info", `播放量记录完成: ${analyticsResult.videoCount} 个视频`);
 
           // 存入 tk_video_analytics 表

@@ -460,13 +460,37 @@ export class TiktokPublisher {
   }
 
   /**
-   * 访问账号主页，抓取所有视频的播放量/点赞/评论/分享数据
-   * @param {string} username - TikTok 用户名
-   * @returns {Array<{videoId, videoUrl, views, likes, comments, shares, title}>}
+   * 访问当前登录账号的主页，抓取所有视频的播放量
+   * @returns {Array<{videoId, videoUrl, views, title}>}
    */
-  async recordAnalytics(username) {
+  async recordAnalytics() {
     const page = this.page;
-    if (!username) throw new Error('缺失 TikTok 用户名');
+
+    // 先导航到 TikTok 主页获取当前登录账号的用户名
+    await page.goto('https://www.tiktok.com/', { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await page.waitForTimeout(3000);
+
+    const username = await page.evaluate(() => {
+      try {
+        var el = document.getElementById('__UNIVERSAL_DATA_FOR_REHYDRATION__');
+        if (!el) return null;
+        var data = JSON.parse(el.textContent);
+        var scopes = data?.__DEFAULT_SCOPE__ || {};
+        for (var k of Object.keys(scopes)) {
+          var scope = scopes[k];
+          if (scope?.userInfo?.user?.uniqueId) return scope.userInfo.user.uniqueId;
+          if (scope?.user?.uniqueId) return scope.user.uniqueId;
+        }
+        return null;
+      } catch(e) { return null; }
+    }).catch(() => null);
+
+    if (!username) {
+      console.log('[recordAnalytics] 无法获取当前登录账号用户名');
+      return { profileUrl: '', videoCount: 0, videos: [] };
+    }
+
+    console.log(`[recordAnalytics] 当前登录账号: ${username}`);
 
     // 导航到账号主页
     const profileUrl = `https://www.tiktok.com/@${username}`;
