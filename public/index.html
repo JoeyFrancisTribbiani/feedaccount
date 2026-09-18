@@ -1610,6 +1610,25 @@
                 </table>
               </div>
             </div>
+
+            <!-- 发布日志 -->
+            <div class="ap-pipeline-section">
+              <div class="ap-section-head">
+                <h3>发布日志</h3>
+                <div style="display:flex;gap:8px;align-items:center;">
+                  <select id="ap-log-filter" class="ap-filter-select">
+                    <option value="">全部日志</option>
+                    <option value="info">信息</option>
+                    <option value="error">错误</option>
+                    <option value="warning">警告</option>
+                  </select>
+                  <button id="ap-refresh-logs" class="link-btn" type="button">刷新</button>
+                </div>
+              </div>
+              <div id="ap-logs-list" style="max-height:400px;overflow-y:auto;border:1px solid var(--border,#e2e8f0);border-radius:8px;">
+                <div class="empty-state compact" style="padding:16px;">暂无日志</div>
+              </div>
+            </div>
           </div>
         </div>
       </section>

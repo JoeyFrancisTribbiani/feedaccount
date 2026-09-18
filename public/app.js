@@ -7649,6 +7649,7 @@ const autoPublish = {
     this.fetchProfiles();
     this.fetchCdpInstances();
     this.fetchMonitorData();
+    this.fetchPublishLogs();
     this._startPolling();
   },
 
@@ -7683,6 +7684,9 @@ const autoPublish = {
       this.filterStatus = e.target.value;
       this.renderPipeline();
     });
+    // 发布日志
+    document.querySelector('#ap-refresh-logs')?.addEventListener('click', () => this.fetchPublishLogs());
+    document.querySelector('#ap-log-filter')?.addEventListener('change', () => this.renderPublishLogs());
   },
 
   _startPolling() {
@@ -7691,6 +7695,7 @@ const autoPublish = {
       // 仅在 auto-publish tab 可见时轮询
       if (!document.querySelector('.auto-publish-tab')?.classList.contains('hidden')) {
         this.fetchPipelineTasks({ quiet: true });
+        this.fetchPublishLogs({ quiet: true });
       }
     }, 10000);
   },
@@ -8216,6 +8221,45 @@ const autoPublish = {
           <span class="ap-monitor-count ${hasNew ? 'has-new' : ''}">${hasNew ? `新发现 ${newCount}` : '无新视频'}</span>
         </div>
       `;
+    }).join('');
+  },
+
+  // ---- 发布日志 ----
+  publishLogs: [],
+
+  async fetchPublishLogs(opts = {}) {
+    try {
+      const filterEl = document.querySelector('#ap-log-filter');
+      const level = filterEl?.value || '';
+      const params = new URLSearchParams();
+      if (level) params.set('level', level);
+      params.set('limit', '50');
+      const data = await request(`/api/auto-publish/logs?${params}`);
+      this.publishLogs = Array.isArray(data) ? data : [];
+      this.renderPublishLogs();
+    } catch (e) {
+      if (!opts.quiet) showToast(`加载日志失败: ${e.message}`, true);
+    }
+  },
+
+  renderPublishLogs() {
+    const container = document.querySelector('#ap-logs-list');
+    if (!container) return;
+    if (!this.publishLogs.length) {
+      container.innerHTML = '<div class="empty-state compact" style="padding:16px;">暂无日志</div>';
+      return;
+    }
+    const levelFilter = document.querySelector('#ap-log-filter')?.value || '';
+    const filtered = levelFilter ? this.publishLogs.filter((l) => l.level === levelFilter) : this.publishLogs;
+    container.innerHTML = filtered.map((l) => {
+      const time = l.createdAt ? formatDateTime(l.createdAt) : '—';
+      const color = l.level === 'error' ? '#dc2626' : (l.level === 'warning' ? '#d97706' : '#3b82f6');
+      const levelTag = `<span style="color:${color};font-weight:600;font-size:11px;text-transform:uppercase;">${escapeHtml(l.level)}</span>`;
+      return `<div style="padding:6px 12px;border-bottom:1px solid #f0f0f0;font-size:12px;display:flex;gap:8px;align-items:flex-start;">
+        <span style="color:#94a3b8;flex-shrink:0;min-width:120px;">${escapeHtml(time)}</span>
+        ${levelTag}
+        <span style="color:#1e293b;flex:1;word-break:break-all;">${escapeHtml(l.message?.substring(0, 300) || '')}</span>
+      </div>`;
     }).join('');
   },
 };

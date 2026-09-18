@@ -4262,6 +4262,30 @@ export function createMonitorServer({
           return;
         }
 
+        // GET /api/auto-publish/logs — 发布相关日志
+        if (request.method === "GET" && pathname === "/api/auto-publish/logs") {
+          const url = new URL(request.url, "http://localhost");
+          const level = url.searchParams.get("level") || null;
+          const limit = parseInt(url.searchParams.get("limit") || "50", 10);
+          let query = "SELECT * FROM cdp_logs WHERE message LIKE ?";
+          const params = ["%发布任务%"];
+          if (level) {
+            query += " AND level = ?";
+            params.push(level);
+          }
+          query += " ORDER BY id DESC LIMIT ?";
+          params.push(limit);
+          const logs = store.db.prepare(query).all(...params);
+          sendJson(response, 200, logs.map((l) => ({
+            id: l.id,
+            createdAt: l.created_at,
+            level: l.level,
+            message: l.message,
+            taskId: l.task_id,
+          })));
+          return;
+        }
+
         // ---- 自动发布 API（原有 /api/remix/* 路径） ----
         const autoPublishConfigMatch = pathname.match(/^\/api\/remix\/creators\/([^/]+)\/auto-publish-config$/);
         if (autoPublishConfigMatch) {
