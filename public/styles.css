@@ -4591,17 +4591,11 @@ footer span {
 .ap-creator-header:hover {
   background: var(--bg-subtle, #f8f9fa);
 }
-.ap-creator-header.expanded {
-  background: rgba(79, 70, 229, 0.06);
-}
 .ap-creator-toggle {
   font-size: 10px;
   color: var(--text-muted, #94a3b8);
   transition: transform 0.2s ease;
   flex-shrink: 0;
-}
-.ap-creator-toggle.expanded {
-  transform: rotate(90deg);
 }
 .ap-creator-info {
   flex: 1;

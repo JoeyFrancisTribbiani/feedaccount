@@ -5858,7 +5858,7 @@ async function openAnalyticsModal(matrixId, accountName) {
     <div class="modal-content" style="max-width:900px;max-height:90vh;overflow-y:auto;">
       <div class="modal-header">
         <h3 style="font-size:14px;">播放数据 · ${escapeHtml(accountName || '—')}</h3>
-        <button class="modal-close" type="button" onclick="document.querySelector('#analytics-overlay').remove()">×</button>
+        <button class="modal-close" type="button" data-analytics-close>×</button>
       </div>
       <div class="modal-body" id="analytics-body" style="min-height:200px;">
         <div class="empty-state compact" style="padding:24px;">加载中…</div>
@@ -5867,6 +5867,7 @@ async function openAnalyticsModal(matrixId, accountName) {
   `;
   document.body.appendChild(overlay);
   overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+  overlay.querySelector('[data-analytics-close]')?.addEventListener('click', () => overlay.remove());
 
   try {
     const data = await request(`/api/auto-publish/analytics/${encodeURIComponent(matrixId)}`);
@@ -5948,7 +5949,7 @@ async function openAnalyticsModal(matrixId, accountName) {
         <div style="border:1px solid #e2e8f0;border-radius:8px;padding:12px;margin-bottom:8px;">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
             <span style="font-size:11px;font-weight:600;">${escapeHtml(job.jobId.substring(0, 25))}</span>
-            <span style="font-size:10px;color:#64748b;">${job.executedAt?.substring(0, 16) || '—'} · ${job.recordCount}条记录</span>
+            <span style="font-size:10px;color:#64748b;">${escapeHtml(job.executedAt?.substring(0, 16) || '—')} · ${escapeHtml(String(job.recordCount))}条记录</span>
           </div>
           <div style="display:flex;gap:12px;align-items:center;">
             <svg width="${chartW}" height="${chartH}" style="flex-shrink:0;">
@@ -7821,7 +7822,7 @@ const autoPublish = {
     });
     this.el.filterStatus()?.addEventListener('change', (e) => {
       this.filterStatus = e.target.value;
-      this.renderPipeline();
+      this.fetchPipelineTasks();
     });
     // 弹窗关闭：点击遮罩或关闭按钮
     this.el.matrixModal()?.addEventListener('click', (e) => {
@@ -7842,6 +7843,7 @@ const autoPublish = {
       if (!document.querySelector('.auto-publish-tab')?.classList.contains('hidden')) {
         this.fetchPipelineTasks({ quiet: true });
         this.fetchPublishLogs({ quiet: true });
+        this.fetchMatrices().then(() => this.fetchMonitorData());
       }
     }, 10000);
   },
@@ -7890,8 +7892,16 @@ const autoPublish = {
   },
 
   async fetchMonitorData() {
+    // 复用已拉取的 matrices 数据，避免重复请求
+    if (this.matrices && this.matrices.length) {
+      this.monitorData = this.matrices.filter((m) => {
+        const cfg = m.autoPublishConfig || {};
+        return cfg.enabled === 1 || cfg.enabled === true;
+      });
+      this.renderMonitor();
+      return;
+    }
     try {
-      // 获取所有矩阵的监控状态（复用 matrices 接口，取 enabled 的）
       const data = await request('/api/auto-publish/matrices');
       this.monitorData = (Array.isArray(data) ? data : []).filter((m) => {
         const cfg = m.autoPublishConfig || {};
@@ -8299,10 +8309,8 @@ const autoPublish = {
 
     try {
       const taskId = btn.dataset.logs;
-      const data = await request(`/api/auto-publish/logs?limit=20`);
-      const logs = (Array.isArray(data) ? data : []).filter((l) =>
-        (l.message || '').includes(taskId) || (l.taskId && l.taskId.includes(taskId))
-      );
+      const data = await request(`/api/auto-publish/logs?taskId=${encodeURIComponent(taskId)}&limit=200`);
+      const logs = Array.isArray(data) ? data : [];
       if (!logs.length) {
         content.innerHTML = '<span class="muted-activity" style="font-size:11px;">该任务暂无日志</span>';
         return;

@@ -123,6 +123,18 @@ export class AutoPublishScheduler extends EventTarget {
     if (changed) this._emitChange();
   }
 
+  // 手动触发单个矩阵监控（不受间隔限制）
+  async monitorSingleMatrix(matrixId) {
+    const cfg = this._getMatrixConfig(matrixId);
+    if (!cfg) throw new Error(`未找到矩阵 ${matrixId} 的配置`);
+    if (!cfg.enabled) throw new Error(`矩阵 ${matrixId} 未启用自动发布`);
+    await this._checkMatrixNewVideos(cfg);
+    this.store.db
+      .prepare("UPDATE matrix_auto_publish_config SET last_monitor_at = ?, updated_at = ? WHERE matrix_id = ?")
+      .run(nowIso(), nowIso(), cfg.matrixId);
+    this._emitChange();
+  }
+
   async _checkMatrixNewVideos(cfg) {
     // 1. 查矩阵绑定的实例（1:1）
     const mp = this.store.db

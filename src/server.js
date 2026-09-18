@@ -4260,9 +4260,13 @@ export function createMonitorServer({
         // POST /api/auto-publish/monitor/:matrixId
         const apMonitorMatch = pathname.match(/^\/api\/auto-publish\/monitor\/([^/]+)$/);
         if (apMonitorMatch && request.method === "POST") {
-          // 手动触发监控，通过事件通知调度器
-          autoScheduler?.monitorMatrixVideos?.().catch(() => {});
-          sendJson(response, 200, { ok: true, message: "监控已触发" });
+          const matrixId = decodeURIComponent(apMonitorMatch[1]);
+          try {
+            await autoScheduler?.monitorSingleMatrix?.(matrixId);
+            sendJson(response, 200, { ok: true, message: "监控已触发" });
+          } catch (err) {
+            sendJson(response, 400, { ok: false, error: err.message });
+          }
           return;
         }
 
@@ -4270,9 +4274,17 @@ export function createMonitorServer({
         if (request.method === "GET" && pathname === "/api/auto-publish/logs") {
           const url = new URL(request.url, "http://localhost");
           const level = url.searchParams.get("level") || null;
+          const taskId = url.searchParams.get("taskId") || null;
           const limit = parseInt(url.searchParams.get("limit") || "50", 10);
-          let query = "SELECT * FROM cdp_logs WHERE message LIKE ?";
-          const params = ["%发布任务%"];
+          let query = "SELECT * FROM cdp_logs WHERE 1=1";
+          const params = [];
+          if (taskId) {
+            query += " AND (task_id = ? OR message LIKE ?)";
+            params.push(taskId, `%${taskId}%`);
+          } else {
+            query += " AND message LIKE ?";
+            params.push("%发布任务%");
+          }
           if (level) {
             query += " AND level = ?";
             params.push(level);
