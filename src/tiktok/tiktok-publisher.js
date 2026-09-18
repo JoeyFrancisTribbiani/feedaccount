@@ -78,22 +78,25 @@ export class TiktokPublisher {
   async _dismissDialogs() {
     const page = this.page;
     // 用 evaluate 直接找弹窗按钮点击，避免 :has-text 兼容性问题
-    await page.evaluate(() => {
+    const dismiss = (texts) => page.evaluate((ts) => {
       const btns = document.querySelectorAll('button');
       for (const b of btns) {
         const t = b.innerText.trim();
-        if (t === 'Discard' || t === '放弃' || t === '丢弃') { b.click(); return; }
+        if (ts.includes(t)) { b.click(); return t; }
       }
-    }).catch(() => {});
-    await page.waitForTimeout(1000);
-    // 再关其他弹窗
-    await page.evaluate(() => {
-      const btns = document.querySelectorAll('button');
-      for (const b of btns) {
-        const t = b.innerText.trim();
-        if (t === 'Continue' || t === 'OK' || t === 'Got it' || t === '继续' || t === '确定') { b.click(); return; }
-      }
-    }).catch(() => {});
+      return null;
+    }, texts).catch(() => null);
+
+    // "Discard" / "放弃" — 丢弃未保存的编辑
+    await dismiss(['Discard', '放弃', '丢弃']);
+    await page.waitForTimeout(500);
+
+    // "Turn on" / "Don't turn on" — 内容检查弹窗，选关闭
+    await dismiss(['Not now', 'Skip', 'Cancel', 'Don\'t turn on', '以后再说', '跳过', '取消', '暂不开启', '不开启']);
+    await page.waitForTimeout(500);
+
+    // "Got it" / "OK" / "Continue" — 其他确认弹窗
+    await dismiss(['Got it', 'OK', 'Continue', '确定', '继续', '我知道了']);
     await page.waitForTimeout(500);
   }
 
@@ -137,6 +140,9 @@ export class TiktokPublisher {
     // 2. 用 Playwright setInputFiles 上传文件（跳过已上传的情况）
     if (fileInput) {
       await fileInput.setInputFiles(localFilePath);
+      // 上传后可能弹出内容检查弹窗
+      await page.waitForTimeout(3000);
+      await this._dismissDialogs();
     }
 
     // 3. 等待视频上传并解析完成（编辑器就绪）
