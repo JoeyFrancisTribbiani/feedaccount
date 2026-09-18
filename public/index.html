@@ -44,7 +44,7 @@
 
       <!-- Platform Switching Navigation Tabs -->
       <nav class="platform-tabs" role="tablist">
-        <button class="platform-tab active" data-platform="remix" role="tab" aria-selected="true" type="button">
+        <button class="platform-tab" data-platform="remix" role="tab" aria-selected="false" type="button">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 6px; vertical-align: -2px;">
             <path d="M5 3v18l7-5 7 5V3z"/>
           </svg>
@@ -80,7 +80,7 @@
           </svg>
           Chrome CDP
         </button>
-        <button class="platform-tab" data-platform="auto-publish" role="tab" aria-selected="false" type="button">
+        <button class="platform-tab active" data-platform="auto-publish" role="tab" aria-selected="true" type="button">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 6px; vertical-align: -2px;">
             <path d="M12 2v20M2 12h20" />
           </svg>
@@ -1106,7 +1106,7 @@
       </section>
 
       <!-- ====== Remix: 视频去重与混剪面板 ====== -->
-      <section class="remix-panel remix-tab">
+      <section class="remix-panel remix-tab hidden">
         <!-- 路径配置 + 按钮 -->
         <div class="remix-controls-bar">
           <label class="remix-path-label">
@@ -1527,6 +1527,17 @@
               <div id="mx-accounts-list" class="matrix-accounts-list"></div>
             </div>
 
+            <!-- 自动发布配置区域 -->
+            <div class="matrix-autopublish-area">
+              <div class="matrix-section-head">
+                <strong>自动发布配置</strong>
+                <button id="mx-save-autopublish" class="button button-primary" type="button" style="font-size:11px;padding:2px 10px;">保存配置</button>
+              </div>
+              <div id="mx-autopublish-config" class="mx-autopublish-config-body">
+                <div class="empty-state compact" style="padding:12px;">选择矩阵后加载配置</div>
+              </div>
+            </div>
+
             <!-- 成品视频库区域 -->
             <div class="matrix-videos-area">
               <div class="matrix-section-head">
@@ -1543,23 +1554,10 @@
         </div>
       </section>
 
-      <!-- ======================== 自动发布面板 ======================== -->
-      <section class="auto-publish-panel auto-publish-tab hidden">
-        <div class="ap-layout">
-          <!-- ========== 左栏：矩阵配置 ========== -->
-          <aside class="ap-creators-col">
-            <div class="ap-section-head">
-              <h3>矩阵自动发布配置</h3>
-              <button id="ap-refresh-matrices" class="link-btn" type="button">刷新</button>
-            </div>
-            <div id="ap-matrices-list" class="ap-creators-list">
-              <div class="empty-state compact" style="padding:16px;">加载中…</div>
-            </div>
-          </aside>
-
-          <!-- ========== 右栏：流水线看板 + 监控 ========== -->
-          <div class="ap-main-col">
-            <!-- 视频监控状态 -->
+      <!-- ======================== 自动发布面板（发布历史页） ======================== -->
+      <section class="auto-publish-panel auto-publish-tab">
+        <div class="ap-main-col">
+            <!-- 监控状态栏 -->
             <div class="ap-monitor-section">
               <div class="ap-section-head">
                 <h3>视频监控状态</h3>
@@ -1570,13 +1568,16 @@
               </div>
             </div>
 
-            <!-- 流水线状态看板 -->
+            <!-- ========== 上半部分：全部发布历史 ========== -->
             <div class="ap-pipeline-section">
               <div class="ap-section-head">
-                <h3>流水线任务看板</h3>
-                <div style="display:flex;gap:8px;align-items:center;">
+                <h3>发布历史看板</h3>
+                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
                   <select id="ap-filter-matrix" class="ap-filter-select">
                     <option value="">全部矩阵</option>
+                  </select>
+                  <select id="ap-filter-account" class="ap-filter-select">
+                    <option value="">全部账号</option>
                   </select>
                   <select id="ap-filter-status" class="ap-filter-select">
                     <option value="">全部状态</option>
@@ -1596,18 +1597,43 @@
                   <thead>
                     <tr>
                       <th>矩阵</th>
+                      <th>平台账号</th>
                       <th>源视频</th>
+                      <th>标题</th>
                       <th>状态</th>
-                      <th>目标实例</th>
+                      <th>播放量</th>
+                      <th>发布时间</th>
                       <th>尝试</th>
-                      <th>创建时间</th>
                       <th>操作</th>
                     </tr>
                   </thead>
                   <tbody id="ap-pipeline-tbody">
-                    <tr><td colspan="7" class="empty-state compact" style="padding:16px;">加载中…</td></tr>
+                    <tr><td colspan="9" class="empty-state compact" style="padding:16px;">加载中…</td></tr>
                   </tbody>
                 </table>
+              </div>
+            </div>
+
+            <!-- ========== 下半部分：按矩阵×账号查看发布历史 ========== -->
+            <div class="ap-history-split">
+              <!-- 左侧：矩阵→账号树形选择器 -->
+              <aside class="ap-tree-col">
+                <div class="ap-section-head">
+                  <h3>矩阵×账号</h3>
+                  <button id="ap-refresh-tree" class="link-btn" type="button">刷新</button>
+                </div>
+                <div id="ap-account-tree" class="ap-tree-list">
+                  <div class="empty-state compact" style="padding:12px;">加载中…</div>
+                </div>
+              </aside>
+              <!-- 右侧：选中账号的发布历史 -->
+              <div class="ap-history-detail-col">
+                <div class="ap-section-head">
+                  <h3 id="ap-history-title">选择左侧账号查看发布历史</h3>
+                </div>
+                <div id="ap-account-history-list" class="ap-history-list">
+                  <div class="empty-state compact" style="padding:16px;">请选择一个账号</div>
+                </div>
               </div>
             </div>
 
@@ -1629,18 +1655,6 @@
                 <div class="empty-state compact" style="padding:16px;">暂无日志</div>
               </div>
             </div>
-          </div>
-        </div>
-
-        <!-- 矩阵账号选择弹窗 -->
-        <div id="ap-matrix-modal" class="modal-overlay" style="display:none;z-index:10001;">
-          <div class="modal-content" style="max-width:600px;max-height:80vh;overflow-y:auto;">
-            <div class="modal-header">
-              <h3 id="ap-modal-title" style="font-size:14px;">矩阵账号列表</h3>
-              <button class="modal-close" type="button">×</button>
-            </div>
-            <div id="ap-modal-body" class="modal-body"></div>
-          </div>
         </div>
       </section>
 

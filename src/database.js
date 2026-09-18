@@ -2079,22 +2079,47 @@ export class LocalDatabase {
     };
   }
 
-  listPipelineTasks({ matrixId = null, creatorId = null, status = null, profileId = null, limit = 100 } = {}) {
+  listPipelineTasks({ matrixId = null, creatorId = null, status = null, profileId = null, accountId = null, limit = 100 } = {}) {
     const where = [];
     const params = [];
     if (matrixId) { where.push("p.matrix_id = ?"); params.push(matrixId); }
     if (creatorId) { where.push("p.creator_id = ?"); params.push(creatorId); }
     if (status) { where.push("p.status = ?"); params.push(status); }
     if (profileId) { where.push("p.profile_id = ?"); params.push(profileId); }
+    if (accountId) {
+      // 按 matrix_account.id 筛选：先查出 account，再用 account_name 匹配 publish_jobs 链路
+      const acc = (() => {
+        if (matrixId) return this.listMatrixAccounts(matrixId).find(a => a.id === accountId);
+        const matrices = this.listMatrices();
+        for (const m of matrices) {
+          const found = this.listMatrixAccounts(m.id).find(a => a.id === accountId);
+          if (found) return found;
+        }
+        return null;
+      })();
+      if (acc) {
+        where.push("(p.publish_job_id IN (SELECT j.id FROM tk_publish_jobs j WHERE j.account_id = ?) OR ? IN (SELECT ma.id FROM matrix_accounts ma WHERE ma.matrix_id = p.matrix_id AND ma.account_name = ?))");
+        params.push(acc.accountName, accountId, acc.accountName);
+      }
+    }
     const clause = where.length ? `WHERE ${where.join(" AND ")}` : "";
     const rows = this.db.prepare(`
       SELECT p.*, c.name AS creator_name,
              m.name AS matrix_name,
              (SELECT ma.platform FROM matrix_accounts ma WHERE ma.matrix_id = p.matrix_id LIMIT 1) AS platform,
-             (SELECT ma.account_name FROM matrix_accounts ma WHERE ma.matrix_id = p.matrix_id LIMIT 1) AS account_name
+             (SELECT ma.account_name FROM matrix_accounts ma WHERE ma.matrix_id = p.matrix_id LIMIT 1) AS account_name,
+             j.material_id AS material_id,
+             vm.title AS material_title,
+             vm.file_path AS material_file_path,
+             j.executed_at AS job_executed_at,
+             j.status AS job_status,
+             j.published_video_id AS published_video_id,
+             j.published_video_url AS published_video_url
       FROM auto_remix_publish_pipeline p
       LEFT JOIN remix_creators c ON p.creator_id = c.id
       LEFT JOIN media_matrices m ON m.id = p.matrix_id
+      LEFT JOIN tk_publish_jobs j ON j.id = p.publish_job_id
+      LEFT JOIN tk_video_materials vm ON vm.id = j.material_id
       ${clause}
       ORDER BY p.created_at DESC
       LIMIT ?
@@ -2117,6 +2142,12 @@ export class LocalDatabase {
       attemptCount: Number(row.attempt_count || 0),
       createdAt: row.created_at,
       updatedAt: row.updated_at,
+      materialTitle: row.material_title || null,
+      materialFilePath: row.material_file_path || null,
+      jobExecutedAt: row.job_executed_at || null,
+      jobStatus: row.job_status || null,
+      publishedVideoId: row.published_video_id || null,
+      publishedVideoUrl: row.published_video_url || null,
     }));
   }
 

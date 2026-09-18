@@ -4244,7 +4244,137 @@ export function createMonitorServer({
           const matrixId = url.searchParams.get("matrixId");
           const status = url.searchParams.get("status");
           const limit = url.searchParams.get("limit");
-          sendJson(response, 200, store.listPipelineTasks({ matrixId, status, limit: limit ? Number(limit) : 100 }));
+          const accountId = url.searchParams.get("accountId");
+          // 传入 accountId 以支持按账号筛选（发布历史页用）
+          sendJson(response, 200, store.listPipelineTasks({ matrixId, status, accountId, limit: limit ? Number(limit) : 100 }));
+          return;
+        }
+
+        // GET /api/auto-publish/publish-history?matrixId=&accountId=&limit=
+        // 返回 tk_publish_jobs JOIN auto_remix_publish_pipeline JOIN matrix_accounts 的数据
+        // 包含播放数据聚合（SUM views/likes/comments/shares）
+        if (request.method === "GET" && pathname === "/api/auto-publish/publish-history") {
+          const url = new URL(request.url, "http://localhost");
+          const matrixId = url.searchParams.get("matrixId") || null;
+          const accountId = url.searchParams.get("accountId") || null;
+          const limit = Math.min(Number(url.searchParams.get("limit") || "100"), 500);
+
+          // 构建 SQL：pipeline JOIN publish_jobs LEFT JOIN materials LEFT JOIN matrix_accounts
+          // 通过 publish_job_id 关联 tk_publish_jobs，再取 material 标题和 analytics 聚合
+          const where = [];
+          const params = [];
+          if (matrixId) { where.push("p.matrix_id = ?"); params.push(matrixId); }
+          // accountId 对应 matrix_accounts.id；publish_jobs.account_id 不一定等于 matrix_account.id
+          // 因此按矩阵筛选时用 matrix_id；按账号筛选时用 j.account_id（若存在对应 matrix_account）
+          // 这里简化：accountId 传入时按 matrix_accounts.id 查出该账号（含 platform+name），
+          // 再用 account_name + platform 在 publish_jobs 链路匹配
+          let accountName = null;
+          let accountPlatform = null;
+          if (accountId) {
+            const acc = store.listMatrixAccounts(matrixId || '').find(a => a.id === accountId);
+            // 若未通过 matrixId 限定，则全表搜
+            const acc2 = acc || (() => {
+              const matrices = store.listMatrices();
+              for (const m of matrices) {
+                const found = store.listMatrixAccounts(m.id).find(a => a.id === accountId);
+                if (found) return found;
+              }
+              return null;
+            })();
+            if (acc2) {
+              accountName = acc2.accountName;
+              accountPlatform = acc2.platform;
+            }
+            if (accountName) { where.push("(ma.account_name = ? OR j.account_id = ?)"); params.push(accountName, accountId); }
+          }
+          const clause = where.length ? `WHERE ${where.join(" AND ")}` : "";
+
+          const rows = store.db.prepare(`
+            SELECT
+              p.id AS task_id,
+              p.matrix_id,
+              mm.name AS matrix_name,
+              p.creator_id,
+              p.source_video_id,
+              p.remix_task_id,
+              p.profile_id,
+              p.publish_job_id,
+              p.status,
+              p.fail_reason,
+              p.attempt_count,
+              p.created_at,
+              p.updated_at,
+              j.account_id,
+              j.material_id,
+              j.scheduled_at,
+              j.executed_at,
+              j.status AS job_status,
+              j.published_video_id,
+              j.published_video_url,
+              j.error_message,
+              m.title AS material_title,
+              m.file_path AS material_file_path,
+              ma.id AS matrix_account_id,
+              ma.platform,
+              ma.account_name,
+              COALESCE(
+                (SELECT SUM(va.views_count) FROM tk_video_analytics va WHERE va.publish_job_id = j.id), 0
+              ) AS views_count,
+              COALESCE(
+                (SELECT SUM(va.likes_count) FROM tk_video_analytics va WHERE va.publish_job_id = j.id), 0
+              ) AS likes_count,
+              COALESCE(
+                (SELECT SUM(va.comments_count) FROM tk_video_analytics va WHERE va.publish_job_id = j.id), 0
+              ) AS comments_count,
+              COALESCE(
+                (SELECT SUM(va.shares_count) FROM tk_video_analytics va WHERE va.publish_job_id = j.id), 0
+              ) AS shares_count
+            FROM auto_remix_publish_pipeline p
+            LEFT JOIN tk_publish_jobs j ON j.id = p.publish_job_id
+            LEFT JOIN tk_video_materials m ON m.id = j.material_id
+            LEFT JOIN media_matrices mm ON mm.id = p.matrix_id
+            LEFT JOIN matrix_accounts ma ON ma.matrix_id = p.matrix_id
+              AND (ma.account_name = j.account_id OR ma.platform = 'tiktok')
+            ${clause}
+            ORDER BY COALESCE(j.executed_at, p.created_at) DESC
+            LIMIT ?
+          `).all(...params, limit);
+
+          // 去重：pipeline 与 matrix_accounts 是 1:N，会产生重复行，按 task_id 去重
+          const seen = new Set();
+          const result = [];
+          for (const r of rows) {
+            if (seen.has(r.task_id)) continue;
+            seen.add(r.task_id);
+            result.push({
+              jobId: r.publish_job_id,
+              taskId: r.task_id,
+              matrixId: r.matrix_id,
+              matrixName: r.matrix_name,
+              accountId: r.matrix_account_id,
+              accountName: r.account_name,
+              platform: r.platform,
+              creatorId: r.creator_id,
+              sourceVideoId: r.source_video_id,
+              materialTitle: r.material_title,
+              materialFilePath: r.material_file_path,
+              status: r.job_status || r.status,
+              pipelineStatus: r.status,
+              viewsCount: Number(r.views_count || 0),
+              likesCount: Number(r.likes_count || 0),
+              commentsCount: Number(r.comments_count || 0),
+              sharesCount: Number(r.shares_count || 0),
+              executedAt: r.executed_at,
+              scheduledAt: r.scheduled_at,
+              failReason: r.error_message || r.fail_reason,
+              attemptCount: Number(r.attempt_count || 0),
+              publishedVideoId: r.published_video_id,
+              publishedVideoUrl: r.published_video_url,
+              createdAt: r.created_at,
+              updatedAt: r.updated_at,
+            });
+          }
+          sendJson(response, 200, result);
           return;
         }
 

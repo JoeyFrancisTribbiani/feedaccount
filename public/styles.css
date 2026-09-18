@@ -4885,6 +4885,190 @@ footer span {
   transform: translateX(16px);
 }
 
+/* ---- 发布历史：矩阵×账号分栏 ---- */
+.ap-history-split {
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  gap: 20px;
+  background: var(--surface, #fff);
+  border: 1px solid var(--line, #e2e8f0);
+  border-radius: var(--radius-md, 12px);
+  overflow: hidden;
+}
+.ap-tree-col {
+  border-right: 1px solid var(--line, #e2e8f0);
+  max-height: 520px;
+  overflow-y: auto;
+}
+.ap-tree-list {
+  padding: 8px;
+}
+.ap-tree-matrix {
+  margin-bottom: 8px;
+}
+.ap-tree-matrix-name {
+  font-size: 12px;
+  font-weight: 700;
+  padding: 6px 8px;
+  color: var(--text-muted, #475569);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.ap-tree-matrix-name:hover {
+  background: var(--bg-subtle, #f8f9fa);
+  border-radius: 4px;
+}
+.ap-tree-accounts {
+  padding-left: 12px;
+}
+.ap-tree-account {
+  font-size: 12px;
+  padding: 5px 8px;
+  cursor: pointer;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text, #1e293b);
+}
+.ap-tree-account:hover {
+  background: var(--bg-subtle, #f8f9fa);
+}
+.ap-tree-account.active {
+  background: #3b82f6;
+  color: #fff;
+}
+.ap-tree-account-platform {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 4px;
+  border-radius: 3px;
+  text-transform: uppercase;
+}
+.ap-history-detail-col {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.ap-history-list {
+  padding: 8px 12px;
+  max-height: 480px;
+  overflow-y: auto;
+}
+.ap-history-item {
+  padding: 10px 12px;
+  border: 1px solid var(--line, #e2e8f0);
+  border-radius: var(--radius-sm, 8px);
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+.ap-history-item-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.ap-history-item-title {
+  font-weight: 600;
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ap-history-item-meta {
+  display: flex;
+  gap: 12px;
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--text-muted, #64748b);
+  flex-wrap: wrap;
+}
+.ap-history-item-fail {
+  color: #dc2626;
+  font-size: 11px;
+  margin-top: 4px;
+}
+
+/* ---- 矩阵 tab 内自动发布配置区 ---- */
+.matrix-autopublish-area {
+  background: var(--surface, #fff);
+  border: 1px solid var(--line, #e2e8f0);
+  border-radius: var(--radius-sm, 8px);
+  padding: 14px;
+}
+.mx-autopublish-config-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.mx-ap-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+}
+.mx-ap-label {
+  min-width: 90px;
+  font-weight: 600;
+  color: var(--text-muted, #475569);
+}
+.mx-ap-value {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.mx-ap-value input,
+.mx-ap-value select {
+  font-size: 12px;
+  padding: 4px 8px;
+  border: 1px solid var(--line, #e2e8f0);
+  border-radius: 4px;
+}
+.mx-ap-hint {
+  font-size: 10px;
+  color: var(--text-muted, #94a3b8);
+}
+.mx-ap-switch {
+  position: relative;
+  display: inline-block;
+  width: 44px;
+  height: 22px;
+}
+.mx-ap-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.mx-ap-switch-slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: #ccc;
+  transition: 0.3s;
+  border-radius: 22px;
+}
+.mx-ap-switch-slider:before {
+  position: absolute;
+  content: "";
+  height: 16px;
+  width: 16px;
+  left: 3px;
+  bottom: 3px;
+  background: #fff;
+  transition: 0.3s;
+  border-radius: 50%;
+}
+.mx-ap-switch input:checked + .mx-ap-switch-slider {
+  background: #3b82f6;
+}
+.mx-ap-switch input:checked + .mx-ap-switch-slider:before {
+  transform: translateX(22px);
+}
+
 /* ---- 响应式 ---- */
 @media (max-width: 900px) {
   .ap-layout {
@@ -4892,6 +5076,9 @@ footer span {
   }
   .ap-creators-col {
     max-height: none;
+  }
+  .ap-history-split {
+    grid-template-columns: 1fr;
   }
 }
 
