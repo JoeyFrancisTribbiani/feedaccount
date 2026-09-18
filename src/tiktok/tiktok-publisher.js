@@ -61,7 +61,19 @@ export class TiktokPublisher {
 
     // 等待页面加载
     await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
-    await page.waitForTimeout(2000);
+
+    // 等待弹窗出现（草稿弹窗是异步渲染的，最多等10秒）
+    try {
+      await page.waitForFunction(
+        () => [...document.querySelectorAll('button')].some(b =>
+          ['Discard', 'Not now', 'Continue', 'Discard this post'].includes(b.innerText.trim())
+        ),
+        { timeout: 10000 }
+      );
+    } catch {
+      // 没弹窗也继续
+    }
+    await page.waitForTimeout(1000);
 
     // 处理可能出现的弹窗（"A video you were editing wasn't saved. Continue editing?"）
     await this._dismissDialogs();
