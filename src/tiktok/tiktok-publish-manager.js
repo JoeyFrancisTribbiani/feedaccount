@@ -69,10 +69,16 @@ export class TiktokPublishManager extends EventTarget {
       this._log(jobId, "info", `CDP 发布引擎已连接`);
 
       // 3. 执行全自动发布
-      this._log(jobId, "info", `开始上传视频: ${job.materialFilePath?.substring(0, 80) || "—"}`);
+      // 标题处理：去掉 "AI混剪 · " 前缀和 " → N个矩阵" 后缀，再从 "创作的 " 后面取内容
+      let publishTitle = job.materialTitle || '';
+      publishTitle = publishTitle.replace(/^AI混剪\s*·\s*/, '').replace(/\s*→\s*\d+个矩阵$/, '');
+      const creativeMatch = publishTitle.match(/创作的\s*(.+)$/);
+      if (creativeMatch) publishTitle = creativeMatch[1].trim();
+      
+      this._log(jobId, "info", `开始上传视频: ${job.materialFilePath?.substring(0, 80) || "—"} | 标题: ${publishTitle.substring(0, 60)}`);
       const result = await publisher.uploadVideo({
         filePath: job.materialFilePath,
-        title: job.materialTitle,
+        title: publishTitle,
         hashtags: job.materialHashtags,
         privacyLevel: job.materialPrivacy
       });
