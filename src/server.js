@@ -4262,7 +4262,7 @@ export function createMonitorServer({
           // 构建 SQL：pipeline JOIN publish_jobs LEFT JOIN materials LEFT JOIN matrix_accounts
           const where = [];
           const params = [];
-          if (matrixId) { where.push("p.matrix_id = ?"); params.push(matrixId); }
+          if (matrixId) { where.push("COALESCE(p.matrix_id, (SELECT mp.matrix_id FROM matrix_profiles mp WHERE mp.profile_id = p.profile_id)) = ?"); params.push(matrixId); }
 
           // accountId 查找：先在有 matrixId 时从该矩阵查，否则全表搜
           let accountName = null;
@@ -4332,8 +4332,9 @@ export function createMonitorServer({
             FROM auto_remix_publish_pipeline p
             LEFT JOIN tk_publish_jobs j ON j.id = p.publish_job_id
             LEFT JOIN tk_video_materials m ON m.id = j.material_id
-            LEFT JOIN media_matrices mm ON mm.id = p.matrix_id
-            LEFT JOIN matrix_accounts ma ON ma.matrix_id = p.matrix_id
+            -- pipeline.matrix_id 可能为 null（旧数据），通过 profile_id 反查 matrix_profiles 获取 matrix_id
+            LEFT JOIN media_matrices mm ON mm.id = COALESCE(p.matrix_id, (SELECT mp.matrix_id FROM matrix_profiles mp WHERE mp.profile_id = p.profile_id))
+            LEFT JOIN matrix_accounts ma ON ma.matrix_id = COALESCE(p.matrix_id, (SELECT mp.matrix_id FROM matrix_profiles mp WHERE mp.profile_id = p.profile_id))
             ${clause}
             ORDER BY COALESCE(j.executed_at, p.created_at) DESC
             LIMIT ?
