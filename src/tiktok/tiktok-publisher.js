@@ -59,6 +59,9 @@ export class TiktokPublisher {
     this.page = page;
     this.context = ctx;
 
+    // 创建 CDP session 用于大文件上传
+    this.cdpSession = await this.context.newCDPSession(page);
+
     // 等待页面加载
     await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
 
@@ -146,30 +149,6 @@ export class TiktokPublisher {
       localFilePath = filePath.replace(/^\/data\//, 'D:/WILLLUXE/yix-repo/feedaccount/data/');
     }
 
-    // 检查文件大小，超过50MB则压缩（Playwright setInputFiles 限制50MB）
-    try {
-      const { statSync } = await import('node:fs');
-      const stat = statSync(localFilePath);
-      const sizeMB = stat.size / 1024 / 1024;
-      if (sizeMB > 48) {
-        console.log(`[uploadVideo] 文件 ${sizeMB.toFixed(1)}MB 超过48MB限制，正在压缩…`);
-        const compressedPath = localFilePath.replace(/\.mp4$/, '_compressed.mp4');
-        const { execFileSync } = await import('node:child_process');
-        execFileSync('ffmpeg', [
-          '-y', '-i', localFilePath,
-          '-c:v', 'libx264', '-crf', '28', '-preset', 'fast',
-          '-c:a', 'aac', '-b:a', '128k',
-          '-movflags', '+faststart',
-          compressedPath,
-        ], { stdio: 'pipe', timeout: 300000 });
-        const compStat = statSync(compressedPath);
-        console.log(`[uploadVideo] 压缩完成: ${(compStat.size / 1024 / 1024).toFixed(1)}MB`);
-        localFilePath = compressedPath;
-      }
-    } catch (e) {
-      console.log(`[uploadVideo] 压缩跳过: ${e.message}`);
-    }
-
     // 1. 等待并找到 file input
     let fileInput = null;
     let alreadyUploaded = false;
@@ -194,9 +173,21 @@ export class TiktokPublisher {
       throw new Error(`未找到 file input。URL=${url}, inputs=${inputCount}, body=${bodyText.substring(0, 150)}`);
     }
 
-    // 2. 用 Playwright setInputFiles 上传文件（跳过已上传的情况）
+    // 2. 用 CDP DOM.setFileInputFiles 上传文件（无50MB限制）
     if (fileInput) {
-      await fileInput.setInputFiles(localFilePath);
+      // 用 CDP session 直接传文件路径，绕过 Playwright 50MB 限制
+      const doc = await this.cdpSession.send('DOM.getDocument', { depth: -1 });
+      const node = await this.cdpSession.send('DOM.querySelector', {
+        nodeId: doc.root.nodeId,
+        selector: 'input[type="file"]',
+      });
+      if (!node || !node.nodeId) {
+        throw new Error('CDP 查找 file input 失败');
+      }
+      await this.cdpSession.send('DOM.setFileInputFiles', {
+        files: [localFilePath],
+        nodeId: node.nodeId,
+      });
       // 上传后可能弹出内容检查弹窗
       await page.waitForTimeout(3000);
       await this._dismissDialogs();
@@ -330,7 +321,19 @@ export class TiktokPublisher {
       throw new Error("未在 TikTok Studio 上传页面找到 <input type='file'> 元素（请确认已登录账号）");
     }
 
-    await fileInput.setInputFiles(localFilePath);
+    // 用 CDP 上传（无50MB限制）
+    const doc = await this.cdpSession.send('DOM.getDocument', { depth: -1 });
+    const node = await this.cdpSession.send('DOM.querySelector', {
+      nodeId: doc.root.nodeId,
+      selector: 'input[type="file"]',
+    });
+    if (!node || !node.nodeId) {
+      throw new Error('CDP 查找 file input 失败');
+    }
+    await this.cdpSession.send('DOM.setFileInputFiles', {
+      files: [localFilePath],
+      nodeId: node.nodeId,
+    });
 
     let editorReady = false;
     for (let i = 0; i < 20; i++) {
