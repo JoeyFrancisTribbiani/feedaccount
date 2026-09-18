@@ -5911,8 +5911,18 @@ async function saveMatrixAutoPublishConfig() {
   }
 }
 
-// 绑定保存按钮（页面加载时绑定一次）
+// 绑定保存按钮和自动保存事件（页面加载时绑定一次）
 mxEl.saveAutopublish?.addEventListener('click', () => saveMatrixAutoPublishConfig());
+
+// 自动发布开关 change 事件 — 自动保存
+document.addEventListener('change', (e) => {
+  if (e.target?.id === 'mx-ap-enabled') {
+    saveMatrixAutoPublishConfig();
+  }
+  if (e.target?.id === 'mx-ap-preset' || e.target?.id === 'mx-ap-daily' || e.target?.id === 'mx-ap-interval') {
+    saveMatrixAutoPublishConfig();
+  }
+});
 
 // 编辑社媒账号弹窗
 function openEditAccountModal(data) {
@@ -7857,7 +7867,10 @@ fetchRemixCreators();
 fetchRemixTasks();
 
 // 初始化默认显示第一个 tab（自动发布）
-document.querySelector('.platform-tab[data-platform="auto-publish"]')?.click();
+// 延迟执行，确保 autoPublish 对象已声明
+setTimeout(() => {
+  document.querySelector('.platform-tab[data-platform="auto-publish"]')?.click();
+}, 0);
 
 // ==========================================================================
 // 自动发布流水线
@@ -7968,7 +7981,10 @@ const autoPublish = {
     });
     // 发布日志
     document.querySelector('#ap-refresh-logs')?.addEventListener('click', () => this.fetchPublishLogs());
-    document.querySelector('#ap-log-filter')?.addEventListener('change', () => this.renderPublishLogs());
+    document.querySelector('#ap-log-filter')?.addEventListener('change', (e) => {
+      this.filterLogLevel = e.target.value;
+      this.fetchPublishLogs();
+    });
   },
 
   _startPolling() {

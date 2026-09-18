@@ -4257,34 +4257,33 @@ export function createMonitorServer({
           const url = new URL(request.url, "http://localhost");
           const matrixId = url.searchParams.get("matrixId") || null;
           const accountId = url.searchParams.get("accountId") || null;
-          const limit = Math.min(Number(url.searchParams.get("limit") || "100"), 500);
+          const limit = Math.min(Number(url.searchParams.get("limit")) || 100, 500);
 
           // 构建 SQL：pipeline JOIN publish_jobs LEFT JOIN materials LEFT JOIN matrix_accounts
-          // 通过 publish_job_id 关联 tk_publish_jobs，再取 material 标题和 analytics 聚合
           const where = [];
           const params = [];
           if (matrixId) { where.push("p.matrix_id = ?"); params.push(matrixId); }
-          // accountId 对应 matrix_accounts.id；publish_jobs.account_id 不一定等于 matrix_account.id
-          // 因此按矩阵筛选时用 matrix_id；按账号筛选时用 j.account_id（若存在对应 matrix_account）
-          // 这里简化：accountId 传入时按 matrix_accounts.id 查出该账号（含 platform+name），
-          // 再用 account_name + platform 在 publish_jobs 链路匹配
+
+          // accountId 查找：先在有 matrixId 时从该矩阵查，否则全表搜
           let accountName = null;
           let accountPlatform = null;
           if (accountId) {
-            const acc = store.listMatrixAccounts(matrixId || '').find(a => a.id === accountId);
-            // 若未通过 matrixId 限定，则全表搜
-            const acc2 = acc || (() => {
+            let acc = null;
+            if (matrixId) {
+              acc = store.listMatrixAccounts(matrixId).find(a => a.id === accountId);
+            }
+            if (!acc) {
               const matrices = store.listMatrices();
               for (const m of matrices) {
                 const found = store.listMatrixAccounts(m.id).find(a => a.id === accountId);
-                if (found) return found;
+                if (found) { acc = found; break; }
               }
-              return null;
-            })();
-            if (acc2) {
-              accountName = acc2.accountName;
-              accountPlatform = acc2.platform;
             }
+            if (acc) {
+              accountName = acc.accountName;
+              accountPlatform = acc.platform;
+            }
+            // 按账号名精确匹配 matrix_accounts，不再用 platform='tiktok' 宽匹配
             if (accountName) { where.push("(ma.account_name = ? OR j.account_id = ?)"); params.push(accountName, accountId); }
           }
           const clause = where.length ? `WHERE ${where.join(" AND ")}` : "";
@@ -4334,7 +4333,7 @@ export function createMonitorServer({
             LEFT JOIN tk_video_materials m ON m.id = j.material_id
             LEFT JOIN media_matrices mm ON mm.id = p.matrix_id
             LEFT JOIN matrix_accounts ma ON ma.matrix_id = p.matrix_id
-              AND (ma.account_name = j.account_id OR ma.platform = 'tiktok')
+              AND ma.account_name = COALESCE(j.account_id, '')
             ${clause}
             ORDER BY COALESCE(j.executed_at, p.created_at) DESC
             LIMIT ?
