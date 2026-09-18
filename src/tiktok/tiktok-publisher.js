@@ -85,54 +85,65 @@ export class TiktokPublisher {
   }
 
   /**
-   * 关闭 TikTok Studio 可能出现的弹窗
-   * 循环检测直到没有已知弹窗按钮
+   * 关闭 TikTok Studio 的草稿提示和弹窗
+   * 流程: 1.点内联Discard → 2.等弹窗出现 → 3.点弹窗里的Discard
+   * 循环处理直到没有草稿提示
    */
   async _dismissDialogs() {
     const page = this.page;
 
-    const dismiss = (texts) => page.evaluate((ts) => {
-      const els = document.querySelectorAll('button, a, [role="button"], [data-e2e], div[data-e2e]');
-      for (const el of els) {
-        const t = el.innerText.trim();
-        if (ts.includes(t)) { el.click(); return t; }
-      }
-      return null;
-    }, texts).catch(() => null);
-
-    // 最多循环8轮，每轮点掉一个弹窗
     for (let i = 0; i < 8; i++) {
-      let clicked = null;
-
-      // 优先级1: Discard（丢弃草稿/确认丢弃）
-      clicked = await dismiss(['Discard', '放弃', '丢弃']);
-      if (clicked) { console.log(`[_dismissDialogs] round ${i}: clicked Discard`); await page.waitForTimeout(2000); continue; }
-
-      // 优先级2: 内容检查弹窗 - 关闭/跳过
-      clicked = await dismiss(['Not now', 'Skip', "Don't turn on", 'Cancel', '以后再说', '跳过', '取消', '暂不开启', '不开启']);
-      if (clicked) { console.log(`[_dismissDialogs] round ${i}: clicked ${clicked}`); await page.waitForTimeout(2000); continue; }
-
-      // 优先级3: 其他确认弹窗
-      clicked = await dismiss(['Got it', 'OK', 'Continue', '确定', '继续', '我知道了']);
-      if (clicked) { console.log(`[_dismissDialogs] round ${i}: clicked ${clicked}`); await page.waitForTimeout(2000); continue; }
-
-      // 没有弹窗了，退出
-      break;
-    }
-
-    // 最终检查：页面是否还有弹窗文本
-    const bodyText = await page.innerText('body').catch(() => '');
-    if (bodyText.includes('Discard this post') || bodyText.includes("wasn't saved")) {
-      console.log('[_dismissDialogs] WARNING: 弹窗仍在页面上！');
-      // 最后一次尝试：用更宽泛的匹配
-      await page.evaluate(() => {
-        const all = document.querySelectorAll('button, a, [role="button"], [data-e2e]');
-        for (const el of all) {
-          const t = (el.innerText || '').trim();
-          if (t === 'Discard') { el.click(); return; }
+      // 1. 找弹窗里的 Discard（TUXButton，在 modal 里）优先点
+      let clicked = await page.evaluate(() => {
+        var btns = document.querySelectorAll('button');
+        // 优先: 弹窗内的 Discard
+        for (var b of btns) {
+          var t = b.innerText.trim();
+          if (t === 'Discard') {
+            var inModal = b.closest('[role="dialog"], [class*="modal"], [class*="Modal"], [class*="overlay"], [class*="TUX"]');
+            if (inModal) { b.click(); return 'modal Discard'; }
+          }
         }
-      }).catch(() => {});
-      await page.waitForTimeout(1000);
+        // 其次: 弹窗内的 Not now
+        for (var b of btns) {
+          var t = b.innerText.trim();
+          if (t === 'Not now' || t === 'Cancel') {
+            var inModal = b.closest('[role="dialog"], [class*="modal"], [class*="Modal"], [class*="overlay"], [class*="TUX"]');
+            if (inModal) { b.click(); return 'modal ' + t; }
+          }
+        }
+        // 再次: 内联的 Discard（local-draft-card 里的）
+        for (var b of btns) {
+          var t = b.innerText.trim();
+          if (t === 'Discard' && b.closest('.local-draft-card, [class*="local-draft"]')) {
+            b.click();
+            return 'inline Discard';
+          }
+        }
+        // 最后: 其他确认弹窗
+        for (var b of btns) {
+          var t = b.innerText.trim();
+          if (['Got it', 'OK', 'Continue', '确定', '继续', '我知道了'].includes(t)) {
+            var inModal = b.closest('[role="dialog"], [class*="modal"], [class*="Modal"], [class*="overlay"], [class*="TUX"]');
+            if (inModal) { b.click(); return 'modal ' + t; }
+          }
+        }
+        return null;
+      }).catch(() => null);
+
+      if (clicked) {
+        console.log(`[_dismissDialogs] round ${i}: clicked ${clicked}`);
+        await page.waitForTimeout(2500);
+        continue;
+      }
+
+      // 没找到弹窗按钮，检查是否还有草稿提示
+      const bodyText = await page.innerText('body').catch(() => '');
+      if (!bodyText.includes("wasn't saved") && !bodyText.includes('Discard this post') && !bodyText.includes('Not now')) {
+        break;
+      }
+      // 还有文本但没找到按钮，等一下再试
+      await page.waitForTimeout(2000);
     }
   }
 
