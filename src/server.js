@@ -4286,6 +4286,51 @@ export function createMonitorServer({
           return;
         }
 
+        // GET /api/auto-publish/analytics/:profileId — 播放数据
+        const apAnalyticsMatch = pathname.match(/^\/api\/auto-publish\/analytics\/([^/]+)$/);
+        if (apAnalyticsMatch && request.method === "GET") {
+          let profileId = decodeURIComponent(apAnalyticsMatch[1]);
+          // 如果传的是 matrixId，查找该矩阵绑定的 profileId
+          if (profileId.startsWith("mx_")) {
+            const mp = store.db.prepare("SELECT profile_id FROM matrix_profiles WHERE matrix_id = ? LIMIT 1").get(profileId);
+            profileId = mp?.profile_id || "";
+          }
+          if (!profileId) {
+            sendJson(response, 200, { profileId: "", jobCount: 0, analyticsCount: 0, jobs: [] });
+            return;
+          }
+          // 查这个 profile 的所有发布任务的播放数据
+          const jobs = store.db.prepare("SELECT id, executed_at, status, published_video_id FROM tk_publish_jobs WHERE profile_id = ? ORDER BY executed_at DESC").all(profileId);
+          const result = [];
+          for (const job of jobs) {
+            const records = store.db.prepare("SELECT * FROM tk_video_analytics WHERE publish_job_id = ? ORDER BY recorded_at ASC").all(job.id);
+            if (records.length) {
+              result.push({
+                jobId: job.id,
+                executedAt: job.executed_at,
+                status: job.status,
+                publishedVideoId: job.published_video_id,
+                recordCount: records.length,
+                firstRecorded: records[0]?.recorded_at,
+                lastRecorded: records[records.length - 1]?.recorded_at,
+                totalViews: records.reduce((s, r) => s + (r.views_count || 0), 0),
+                maxViews: Math.max(...records.map(r => r.views_count || 0)),
+                minViews: Math.min(...records.map(r => r.views_count || 0)),
+                avgViews: Math.round(records.reduce((s, r) => s + (r.views_count || 0), 0) / records.length),
+                records: records.map(r => ({
+                  views: r.views_count,
+                  likes: r.likes_count,
+                  comments: r.comments_count,
+                  shares: r.shares_count,
+                  recordedAt: r.recorded_at,
+                })),
+              });
+            }
+          }
+          sendJson(response, 200, { profileId, jobCount: jobs.length, analyticsCount: result.length, jobs: result });
+          return;
+        }
+
         // ---- 自动发布 API（原有 /api/remix/* 路径） ----
         const autoPublishConfigMatch = pathname.match(/^\/api\/remix\/creators\/([^/]+)\/auto-publish-config$/);
         if (autoPublishConfigMatch) {

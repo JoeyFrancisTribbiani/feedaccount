@@ -5630,6 +5630,7 @@ function renderMatrixAccounts() {
       ${a.language ? `<span style="font-size:10px;color:#64748b;">${escapeHtml(a.language)}</span>` : ""}
       <span class="mx-bound-creators" data-acc-id="${escapeHtml(a.id)}" style="font-size:10px;color:#3b82f6;"></span>
       <button class="button button-secondary mx-bind-creator-btn" data-acc-id="${escapeHtml(a.id)}" style="font-size:10px;padding:2px 6px;">绑定对标达人</button>
+      <button class="button button-secondary mx-analytics-btn" data-mx-id="${escapeHtml(mxState.selectedId || '')}" data-acc-name="${escapeHtml(a.accountName)}" style="font-size:10px;padding:2px 6px;">播放数据</button>
       <button class="button button-secondary mx-edit-acc-btn" data-acc-id="${escapeHtml(a.id)}" data-platform="${escapeHtml(a.platform)}" data-name="${escapeHtml(a.accountName)}" data-language="${escapeHtml(a.language || "")}" style="font-size:10px;padding:2px 6px;">编辑</button>
       <button class="remix-del-btn" data-del-acc="${escapeHtml(a.id)}" title="删除" style="margin-left:auto;">×</button>
     </div>
@@ -5649,6 +5650,10 @@ function renderMatrixAccounts() {
   // 编辑账号按钮
   mxEl.accountsList.querySelectorAll(".mx-edit-acc-btn").forEach((btn) => {
     btn.addEventListener("click", () => openEditAccountModal(btn.dataset));
+  });
+  // 播放数据按钮
+  mxEl.accountsList.querySelectorAll(".mx-analytics-btn").forEach((btn) => {
+    btn.addEventListener("click", () => openAnalyticsModal(btn.dataset.mxId, btn.dataset.accName));
   });
   // 删除账号
   mxEl.accountsList.querySelectorAll("[data-del-acc]").forEach((btn) => {
@@ -5833,6 +5838,137 @@ function openEditAccountModal(data) {
       await fetchMatrices();
     } catch (e) { showToast(e.message, true); }
   });
+}
+
+// 播放数据弹窗
+async function openAnalyticsModal(matrixId, accountName) {
+  if (!matrixId) {
+    showToast('请先选择我的社媒矩阵', true);
+    return;
+  }
+
+  // 移除已有弹窗
+  document.querySelector('#analytics-overlay')?.remove();
+
+  const overlay = document.createElement('div');
+  overlay.id = 'analytics-overlay';
+  overlay.className = 'modal-overlay';
+  overlay.style.cssText = 'display:flex;z-index:10001;';
+  overlay.innerHTML = `
+    <div class="modal-content" style="max-width:900px;max-height:90vh;overflow-y:auto;">
+      <div class="modal-header">
+        <h3 style="font-size:14px;">播放数据 · ${escapeHtml(accountName || '—')}</h3>
+        <button class="modal-close" type="button" onclick="document.querySelector('#analytics-overlay').remove()">×</button>
+      </div>
+      <div class="modal-body" id="analytics-body" style="min-height:200px;">
+        <div class="empty-state compact" style="padding:24px;">加载中…</div>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+
+  try {
+    const data = await request(`/api/auto-publish/analytics/${encodeURIComponent(matrixId)}`);
+    const body = overlay.querySelector('#analytics-body');
+
+    if (!data.jobs || !data.jobs.length) {
+      body.innerHTML = '<div class="empty-state compact" style="padding:24px;">暂无播放数据</div>';
+      return;
+    }
+
+    // 汇总统计
+    const allRecords = data.jobs.flatMap(j => j.records);
+    const totalViews = data.jobs.reduce((s, j) => s + j.totalViews, 0);
+    const allViews = allRecords.map(r => r.views);
+    const maxView = Math.max(...allViews);
+    const minView = Math.min(...allViews);
+    const avgView = Math.round(totalViews / allRecords.length);
+
+    let html = `
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px;">
+        <div style="background:#f1f5f9;border-radius:8px;padding:12px;text-align:center;">
+          <div style="font-size:11px;color:#64748b;">总播放量</div>
+          <div style="font-size:20px;font-weight:700;color:#1e293b;">${totalViews.toLocaleString()}</div>
+        </div>
+        <div style="background:#f1f5f9;border-radius:8px;padding:12px;text-align:center;">
+          <div style="font-size:11px;color:#64748b;">最高播放</div>
+          <div style="font-size:20px;font-weight:700;color:#059669;">${maxView.toLocaleString()}</div>
+        </div>
+        <div style="background:#f1f5f9;border-radius:8px;padding:12px;text-align:center;">
+          <div style="font-size:11px;color:#64748b;">最低播放</div>
+          <div style="font-size:20px;font-weight:700;color:#dc2626;">${minView.toLocaleString()}</div>
+        </div>
+        <div style="background:#f1f5f9;border-radius:8px;padding:12px;text-align:center;">
+          <div style="font-size:11px;color:#64748b;">平均播放</div>
+          <div style="font-size:20px;font-weight:700;color:#3b82f6;">${avgView.toLocaleString()}</div>
+        </div>
+      </div>
+      <div style="font-size:11px;color:#64748b;margin-bottom:12px;">视频数: ${allRecords.length} · 发布任务数: ${data.jobs.length} · 首次记录: ${data.jobs[0]?.firstRecorded?.substring(0,10) || '—'} · 最近记录: ${data.jobs[0]?.lastRecorded?.substring(0,10) || '—'}</div>
+    `;
+
+    // 播放量分布直方图（按播放量区间）
+    const buckets = [0, 1000, 5000, 10000, 50000, 100000, 500000, Infinity];
+    const bucketLabels = ['<1K', '1K-5K', '5K-10K', '10K-50K', '50K-100K', '100K-500K', '500K+'];
+    const bucketCounts = buckets.slice(0, -1).map((min, i) => {
+      return allViews.filter(v => v >= min && v < buckets[i + 1]).length;
+    });
+    const maxBucketCount = Math.max(...bucketCounts, 1);
+
+    html += `
+      <h4 style="font-size:12px;margin:16px 0 8px;">播放量分布</h4>
+      <div style="display:flex;align-items:flex-end;gap:8px;height:120px;padding:8px 0;border-bottom:1px solid #e2e8f0;">
+        ${bucketCounts.map((cnt, i) => `
+          <div style="flex:1;text-align:center;">
+            <div style="font-size:10px;color:#64748b;margin-bottom:4px;">${cnt}</div>
+            <div style="background:linear-gradient(to top,#3b82f6,#60a5fa);border-radius:4px 4px 0 0;height:${Math.max(cnt / maxBucketCount * 80, 2)}px;min-height:2px;"></div>
+            <div style="font-size:9px;color:#64748b;margin-top:4px;">${bucketLabels[i]}</div>
+          </div>
+        `).join('')}
+      </div>
+    `;
+
+    // 每个发布任务的数据
+    html += `<h4 style="font-size:12px;margin:16px 0 8px;">各发布任务详情</h4>`;
+    for (const job of data.jobs.slice(0, 10)) {
+      const jobViews = job.records.map(r => r.views);
+      const jobMax = Math.max(...jobViews);
+      const jobMin = Math.min(...jobViews);
+      const jobAvg = Math.round(job.totalViews / job.records.length);
+
+      // 迷你折线图（SVG）
+      const chartW = 300, chartH = 60;
+      const points = jobViews.map((v, i) => {
+        const x = (i / Math.max(jobViews.length - 1, 1)) * chartW;
+        const y = chartH - ((v - jobMin) / Math.max(jobMax - jobMin, 1)) * chartH * 0.9 - 3;
+        return `${x},${y}`;
+      }).join(' ');
+
+      html += `
+        <div style="border:1px solid #e2e8f0;border-radius:8px;padding:12px;margin-bottom:8px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+            <span style="font-size:11px;font-weight:600;">${escapeHtml(job.jobId.substring(0, 25))}</span>
+            <span style="font-size:10px;color:#64748b;">${job.executedAt?.substring(0, 16) || '—'} · ${job.recordCount}条记录</span>
+          </div>
+          <div style="display:flex;gap:12px;align-items:center;">
+            <svg width="${chartW}" height="${chartH}" style="flex-shrink:0;">
+              <polyline points="${points}" fill="none" stroke="#3b82f6" stroke-width="1.5"/>
+              <polyline points="${points} ${chartW},${chartH} 0,${chartH}" fill="rgba(59,130,246,0.1)" stroke="none"/>
+            </svg>
+            <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;flex:1;">
+              <div style="text-align:center;"><div style="font-size:10px;color:#64748b;">最高</div><div style="font-size:13px;font-weight:600;color:#059669;">${jobMax.toLocaleString()}</div></div>
+              <div style="text-align:center;"><div style="font-size:10px;color:#64748b;">最低</div><div style="font-size:13px;font-weight:600;color:#dc2626;">${jobMin.toLocaleString()}</div></div>
+              <div style="text-align:center;"><div style="font-size:10px;color:#64748b;">平均</div><div style="font-size:13px;font-weight:600;color:#3b82f6;">${jobAvg.toLocaleString()}</div></div>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    body.innerHTML = html;
+  } catch (e) {
+    overlay.querySelector('#analytics-body').innerHTML = `<div class="empty-state compact" style="padding:24px;color:#dc2626;">加载失败: ${escapeHtml(e.message)}</div>`;
+  }
 }
 
 // 绑定对标达人弹窗
