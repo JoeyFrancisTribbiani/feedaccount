@@ -32,11 +32,15 @@ export class TiktokPublishManager extends EventTarget {
     const nowIso = new Date().toISOString();
     const pendingJobs = this.persistence.listTkPublishJobs({ status: "pending", limit: 20 });
     
+    // 发布并发限制：同时只执行一个发布任务
+    if (this.runningJobIds.size > 0) return;
+    
     for (const job of pendingJobs) {
       if (job.scheduledAt <= nowIso && !this.runningJobIds.has(job.id)) {
         this.executeJob(job.id).catch((err) => {
           console.error(`[TiktokPublishManager] 任务 ${job.id} 执行失败:`, err);
         });
+        break; // 只取第一个到时间的任务，等它完成后再取下一个
       }
     }
   }
