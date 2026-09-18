@@ -90,7 +90,7 @@ export class TiktokPublishManager extends EventTarget {
         }
       }
 
-      if (result.ok || (result.message && result.message.includes("已提交发布"))) {
+      if (result.ok) {
         this.persistence?.updateTkPublishJobStatus(jobId, {
           status: "success",
           publishedVideoId: result.publishedVideoId || null,
@@ -111,7 +111,6 @@ export class TiktokPublishManager extends EventTarget {
               `INSERT INTO tk_video_analytics (publish_job_id, views_count, likes_count, comments_count, shares_count, recorded_at)
                VALUES (?, ?, ?, ?, ?, ?)`
             );
-            // 记录当前发布的视频的数据
             for (const v of analyticsResult.videos) {
               const views = this._parseCount(v.views);
               const likes = this._parseCount(v.likes);

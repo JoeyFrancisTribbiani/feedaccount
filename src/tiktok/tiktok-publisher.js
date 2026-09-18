@@ -149,14 +149,22 @@ export class TiktokPublisher {
       localFilePath = filePath.replace(/^\/data\//, 'D:/WILLLUXE/yix-repo/feedaccount/data/');
     }
 
-    // 1. 等待并找到 file input
+    // 1. 等待并找到 file input，先确保所有弹窗关闭
     let fileInput = null;
     let alreadyUploaded = false;
-    for (let i = 0; i < 10; i++) {
-      fileInput = await page.$('input[type="file"]');
-      if (fileInput) break;
-      // 每次 retry 前 dismiss 弹窗
+    for (let i = 0; i < 15; i++) {
+      // 每次都先尝试关闭弹窗
       await this._dismissDialogs();
+      
+      fileInput = await page.$('input[type="file"]');
+      if (fileInput) {
+        // 检查 file input 是否可见且可操作（弹窗可能挡住）
+        const isVisible = await fileInput.isVisible().catch(() => false);
+        if (isVisible) break;
+        // 不可见说明弹窗还在挡着，继续等
+        fileInput = null;
+      }
+      
       // 检查是否已经在上传/已上传状态（之前的上传残留）
       const bodyText = await page.innerText('body').catch(() => '');
       if (bodyText.includes('Uploaded') || bodyText.includes('已上传') || bodyText.includes('Replace') || bodyText.includes('替换')) {
