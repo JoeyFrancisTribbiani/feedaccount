@@ -146,6 +146,30 @@ export class TiktokPublisher {
       localFilePath = filePath.replace(/^\/data\//, 'D:/WILLLUXE/yix-repo/feedaccount/data/');
     }
 
+    // 检查文件大小，超过50MB则压缩（Playwright setInputFiles 限制50MB）
+    try {
+      const { statSync } = await import('node:fs');
+      const stat = statSync(localFilePath);
+      const sizeMB = stat.size / 1024 / 1024;
+      if (sizeMB > 48) {
+        console.log(`[uploadVideo] 文件 ${sizeMB.toFixed(1)}MB 超过48MB限制，正在压缩…`);
+        const compressedPath = localFilePath.replace(/\.mp4$/, '_compressed.mp4');
+        const { execFileSync } = await import('node:child_process');
+        execFileSync('ffmpeg', [
+          '-y', '-i', localFilePath,
+          '-c:v', 'libx264', '-crf', '28', '-preset', 'fast',
+          '-c:a', 'aac', '-b:a', '128k',
+          '-movflags', '+faststart',
+          compressedPath,
+        ], { stdio: 'pipe', timeout: 300000 });
+        const compStat = statSync(compressedPath);
+        console.log(`[uploadVideo] 压缩完成: ${(compStat.size / 1024 / 1024).toFixed(1)}MB`);
+        localFilePath = compressedPath;
+      }
+    } catch (e) {
+      console.log(`[uploadVideo] 压缩跳过: ${e.message}`);
+    }
+
     // 1. 等待并找到 file input
     let fileInput = null;
     let alreadyUploaded = false;
