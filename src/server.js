@@ -4539,6 +4539,12 @@ export function createMonitorServer({
           if (request.method === "POST") {
             const body = await readJson(request);
             if (!body.profileId) { sendJson(response, 400, { error: "缺少 profileId" }); return; }
+            // 限制：一个社媒矩阵只能绑定一个浏览器实例
+            const existing = store.getMatrixProfiles(matrixId);
+            if (existing.length > 0) {
+              sendJson(response, 400, { error: "一个我的社媒矩阵只能绑定一个浏览器实例，请先解绑当前实例" });
+              return;
+            }
             const bindings = store.bindMatrixProfile({ matrixId, profileId: body.profileId });
             sendJson(response, 200, bindings);
             return;

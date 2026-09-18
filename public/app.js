@@ -2326,14 +2326,14 @@ async function initTiktokExt() {
 document.querySelector("#tk-account-config-btn")?.addEventListener("click", async () => {
   const modal = document.querySelector("#tk-account-modal");
   modal.classList.remove("hidden");
-  // 加载社媒矩阵账号到下拉框
+  // 加载我的社媒矩阵账号到下拉框
   await loadMatrixAccountsForBind();
 });
 document.querySelector("#tk-account-modal-close")?.addEventListener("click", () => {
   document.querySelector("#tk-account-modal").classList.add("hidden");
 });
 
-// 加载社媒矩阵账号到绑定下拉框
+// 加载我的社媒矩阵账号到绑定下拉框
 async function loadMatrixAccountsForBind() {
   try {
     const matrices = await request("/api/matrices");
@@ -3411,7 +3411,7 @@ function updateRemixPolling() {
 
 function renderRemixCreators() {
   if (!remix.creators.length) {
-    remixEl.creatorsList.innerHTML = '<div class="empty-state compact" style="padding: 16px;">点击 + 添加达人</div>';
+    remixEl.creatorsList.innerHTML = '<div class="empty-state compact" style="padding: 16px;">点击 + 添加对标达人</div>';
     return;
   }
   remixEl.creatorsList.innerHTML = remix.creators.map((c) => `
@@ -3444,7 +3444,7 @@ function renderRemixCreators() {
   remixEl.creatorsList.querySelectorAll("[data-del-creator]").forEach((btn) => {
     btn.addEventListener("click", async (e) => {
       e.stopPropagation();
-      if (!confirm("删除达人将同时删除其所有视频，确认？")) return;
+      if (!confirm("删除对标达人将同时删除其所有视频，确认？")) return;
       await request(`/api/remix/creators/${encodeURIComponent(btn.dataset.delCreator)}`, { method: "DELETE" });
       if (remix.selectedCreatorId === btn.dataset.delCreator) {
         remix.selectedCreatorId = null;
@@ -3452,9 +3452,9 @@ function renderRemixCreators() {
         remix.resources = [];
         remixEl.addVideoBtn.disabled = true;
         remixEl.uploadBtns.forEach((btn) => { btn.disabled = true; });
-        remixEl.resourcesHint.textContent = "选择达人后可上传开头/结尾片段和背景音乐";
+        remixEl.resourcesHint.textContent = "选择对标达人后可上传开头/结尾片段和背景音乐";
         remixEl.currentCreator.textContent = "视频去重与混剪工作台";
-        remixEl.videoCount.textContent = "在左侧选择达人查看视频";
+        remixEl.videoCount.textContent = "在左侧选择对标达人查看视频";
         renderRemixVideos();
         renderRemixResources();
       }
@@ -4208,7 +4208,7 @@ tiktokDl.parseBtn?.addEventListener("click", async () => {
                 renderTiktokVideoList(tiktokDl.parsedVideos, creatorName);
               }
             } catch (e) { console.warn('加载视频列表失败:', e); }
-            // 同时选中达人刷新主列表
+            // 同时选中对标达人刷新主列表
             const creatorEl = [...document.querySelectorAll('.remix-creator-item')].find(el => el.textContent.includes(creatorName));
             if (creatorEl) creatorEl.click();
             else if (remix.selectedCreatorId) {
@@ -4339,7 +4339,7 @@ async function tiktokBatchDownload(urls) {
   const failCount = results.length - okCount;
   showToast(`下载完成：成功 ${okCount} 个${failCount ? `，失败 ${failCount} 个` : ""}`, failCount > 0);
 
-  // 刷新达人列表和视频列表
+  // 刷新对标达人列表和视频列表
   await fetchRemixCreators();
   if (remix.selectedCreatorId) {
     await fetchRemixVideos(remix.selectedCreatorId);
@@ -4778,7 +4778,7 @@ document.querySelector("#video-preview-modal")?.addEventListener("click", (e) =>
   }
 });
 
-// 达人添加
+// 对标达人添加
 remixEl.addCreatorBtn.addEventListener("click", () => remixEl.addCreatorForm.classList.toggle("hidden"));
 
 // 全选
@@ -4869,7 +4869,7 @@ remixEl.videoFile.addEventListener("change", async () => {
   if (!files.length) return;
   remixEl.videoFile.value = "";
   const creatorId = remix.selectedCreatorId;
-  if (!creatorId) { showToast("请先选择达人", true); return; }
+  if (!creatorId) { showToast("请先选择对标达人", true); return; }
 
   remixEl.addVideoBtn.disabled = true;
   remixEl.addVideoBtn.textContent = `上传中 (0/${files.length})...`;
@@ -4935,7 +4935,7 @@ remixEl.aiBtn?.addEventListener("click", () => {
 
 remixEl.refreshTasks.addEventListener("click", fetchRemixTasks);
 
-// 达人资源上传
+// 对标达人资源上传
 remixEl.uploadBtns.forEach((btn) => {
   btn.addEventListener("click", () => {
     const type = btn.dataset.type;
@@ -4950,7 +4950,7 @@ Object.entries(remixEl.uploadInputs).forEach(([type, input]) => {
     if (!files.length) return;
     input.value = "";
     const creatorId = remix.selectedCreatorId;
-    if (!creatorId) { showToast("请先选择达人", true); return; }
+    if (!creatorId) { showToast("请先选择对标达人", true); return; }
 
     const btn = document.querySelector(`.remix-upload-btn[data-type="${type}"]`);
     const origText = btn.textContent;
@@ -5481,7 +5481,7 @@ cdpEl.logsClear?.addEventListener("click", async () => {
 });
 
 // ==========================================================================
-// 社媒矩阵管理模块
+// 我的社媒矩阵管理模块
 // ==========================================================================
 const mxState = {
   matrices: [],
@@ -5629,20 +5629,20 @@ function renderMatrixAccounts() {
       <span class="matrix-account-name">${escapeHtml(a.accountName)}</span>
       ${a.language ? `<span style="font-size:10px;color:#64748b;">${escapeHtml(a.language)}</span>` : ""}
       <span class="mx-bound-creators" data-acc-id="${escapeHtml(a.id)}" style="font-size:10px;color:#3b82f6;"></span>
-      <button class="button button-secondary mx-bind-creator-btn" data-acc-id="${escapeHtml(a.id)}" style="font-size:10px;padding:2px 6px;">绑定达人</button>
+      <button class="button button-secondary mx-bind-creator-btn" data-acc-id="${escapeHtml(a.id)}" style="font-size:10px;padding:2px 6px;">绑定对标达人</button>
       <button class="button button-secondary mx-edit-acc-btn" data-acc-id="${escapeHtml(a.id)}" data-platform="${escapeHtml(a.platform)}" data-name="${escapeHtml(a.accountName)}" data-language="${escapeHtml(a.language || "")}" style="font-size:10px;padding:2px 6px;">编辑</button>
       <button class="remix-del-btn" data-del-acc="${escapeHtml(a.id)}" title="删除" style="margin-left:auto;">×</button>
     </div>
   `).join("");
-  // 加载每个账号绑定的达人
+  // 加载每个账号绑定的对标达人
   mxState.accounts.forEach(async (a) => {
     try {
       const creators = await request(`/api/matrices/accounts/${encodeURIComponent(a.id)}/creators`);
       const el = mxEl.accountsList.querySelector(`.mx-bound-creators[data-acc-id="${a.id}"]`);
-      if (el) el.textContent = creators.length ? `达人: ${creators.map(c => c.name).join("、")}` : "未绑定达人";
+      if (el) el.textContent = creators.length ? `对标达人: ${creators.map(c => c.name).join("、")}` : "未绑定对标达人";
     } catch {}
   });
-  // 绑定达人按钮
+  // 绑定对标达人按钮
   mxEl.accountsList.querySelectorAll(".mx-bind-creator-btn").forEach((btn) => {
     btn.addEventListener("click", () => openBindCreatorModal(btn.dataset.accId));
   });
@@ -5835,11 +5835,11 @@ function openEditAccountModal(data) {
   });
 }
 
-// 绑定达人弹窗
+// 绑定对标达人弹窗
 async function openBindCreatorModal(accountId) {
-  // 加载所有达人
+  // 加载所有对标达人
   const allCreators = await request("/api/remix/creators").catch(() => []);
-  // 加载已绑定的达人
+  // 加载已绑定的对标达人
   const boundCreators = await request(`/api/matrices/accounts/${encodeURIComponent(accountId)}/creators`).catch(() => []);
   const boundIds = new Set(boundCreators.map(c => c.id));
 
@@ -5852,9 +5852,9 @@ async function openBindCreatorModal(accountId) {
 
   const html = `<div id="bind-creator-overlay" class="modal-overlay" style="z-index:10001;">
     <div class="modal-content" style="max-width:400px;">
-      <div class="modal-header"><h3>绑定达人</h3><button class="modal-close" onclick="document.getElementById('bind-creator-overlay').remove()">×</button></div>
+      <div class="modal-header"><h3>绑定对标达人</h3><button class="modal-close" onclick="document.getElementById('bind-creator-overlay').remove()">×</button></div>
       <div class="modal-body" style="max-height:60vh;overflow-y:auto;">
-        ${allCreators.length ? list : '<div class="empty-state compact">暂无达人</div>'}
+        ${allCreators.length ? list : '<div class="empty-state compact">暂无对标达人</div>'}
       </div>
       <div class="modal-footer" style="padding:8px;">
         <button id="bind-creator-confirm" class="button button-primary" style="width:100%;">保存</button>
@@ -5965,6 +5965,11 @@ mxEl.refreshVideos?.addEventListener("click", () => {
 
 // 实例绑定
 mxEl.bindProfileBtn?.addEventListener("click", async () => {
+  // 限制：一个矩阵只能绑定一个实例，已绑定时不允许再绑
+  if (mxState.profiles.length > 0) {
+    showToast("一个我的社媒矩阵只能绑定一个浏览器实例，请先解绑当前实例", true);
+    return;
+  }
   mxEl.bindProfileForm.classList.toggle("hidden");
   if (!mxEl.bindProfileForm.classList.contains("hidden")) {
     // 加载可用实例列表
@@ -6075,7 +6080,7 @@ async function openRemixTaskModal(presetMode = "stitch") {
   } catch { modalState.matrices = []; }
   renderModalMatrices();
 
-  // 加载达人列表
+  // 加载对标达人列表
   try {
     const data = await request("/api/remix/creators");
     modalState.creators = Array.isArray(data) ? data : [];
@@ -6158,7 +6163,7 @@ function renderModalMatrices() {
         modalState.selectedMatrixIds.add(cb.value);
         // 创建 tab
         modalState.tabs[cb.value] = { creatorId: null, videoIds: new Set() };
-        // 加载绑定的达人
+        // 加载绑定的对标达人
         const matrix = modalState.matrices.find(m => m.id === cb.value);
         if (matrix?._count?.accounts) {
           const accounts = await request(`/api/matrices/${encodeURIComponent(cb.value)}/accounts`);
@@ -6168,10 +6173,10 @@ function renderModalMatrices() {
             boundCreators.push(...creators);
           }
           modalState.tabs[cb.value].boundCreators = boundCreators;
-          // 默认选中第一个绑定的达人
+          // 默认选中第一个绑定的对标达人
           if (boundCreators.length) {
             modalState.tabs[cb.value].creatorId = boundCreators[0].id;
-            // 加载达人的视频
+            // 加载对标达人的视频
             const vids = await request(`/api/remix/creators/${encodeURIComponent(boundCreators[0].id)}/videos`);
             modalState.tabs[cb.value].videos = vids;
           }
@@ -6197,7 +6202,7 @@ function renderModalTabs() {
   const matrixIds = [...modalState.selectedMatrixIds];
   if (!matrixIds.length) {
     tabsHeader.innerHTML = "";
-    tabsContent.innerHTML = '<div class="empty-state compact">请先选择社媒矩阵</div>';
+    tabsContent.innerHTML = '<div class="empty-state compact">请先选择我的社媒矩阵</div>';
     updateSelectedVideosSummary();
     return;
   }
@@ -6229,7 +6234,7 @@ function renderModalTabs() {
   const m = modalState.matrices.find(x => x.id === modalState.activeTabId);
   const tabName = m ? escapeHtml(m.name) : "";
 
-  // 达人选择区
+  // 对标达人选择区
   const boundCreators = tab.boundCreators || [];
   let creatorHtml = "";
   if (boundCreators.length) {
@@ -6241,7 +6246,7 @@ function renderModalTabs() {
       </label>`;
     }).join("");
   } else {
-    creatorHtml = '<span class="muted-activity" style="font-size:11px;">该矩阵未绑定达人</span>';
+    creatorHtml = '<span class="muted-activity" style="font-size:11px;">该矩阵未绑定对标达人</span>';
   }
 
   // 视频选择区
@@ -6264,16 +6269,16 @@ function renderModalTabs() {
       </label>`;
     }).join("");
   } else if (tab.creatorId) {
-    videoHtml = '<div class="empty-state compact">该达人暂无视频</div>';
+    videoHtml = '<div class="empty-state compact">该对标达人暂无视频</div>';
   } else {
-    videoHtml = '<div class="empty-state compact">请先选择达人</div>';
+    videoHtml = '<div class="empty-state compact">请先选择对标达人</div>';
   }
 
   tabsContent.innerHTML = `
     <div style="border:1px solid #e2e8f0;border-radius:8px;padding:12px;margin-bottom:8px;">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
-        <strong style="font-size:12px;">达人</strong>
-        <button id="tab-select-other-creator" class="button button-secondary" type="button" style="font-size:10px;padding:2px 8px;">选择其他达人</button>
+        <strong style="font-size:12px;">对标达人</strong>
+        <button id="tab-select-other-creator" class="button button-secondary" type="button" style="font-size:10px;padding:2px 8px;">选择其他对标达人</button>
       </div>
       <div style="display:flex;flex-wrap:wrap;gap:6px;">${creatorHtml}</div>
     </div>
@@ -6282,7 +6287,7 @@ function renderModalTabs() {
         <strong style="font-size:12px;">原视频</strong>
         <span class="muted-activity" style="font-size:11px;">${tabName}</span>
         <div style="margin-left:auto;display:flex;gap:6px;">
-          <button id="tab-upload-video" class="button button-secondary" type="button" style="font-size:10px;padding:2px 8px;" ${!tab.creatorId ? 'disabled title="请先选择达人"' : ''}>上传视频</button>
+          <button id="tab-upload-video" class="button button-secondary" type="button" style="font-size:10px;padding:2px 8px;" ${!tab.creatorId ? 'disabled title="请先选择对标达人"' : ''}>上传视频</button>
         </div>
       </div>
       <div id="tab-video-drop-zone" style="position:relative;">
@@ -6294,12 +6299,12 @@ function renderModalTabs() {
     </div>
   `;
 
-  // 达人 radio 事件
+  // 对标达人 radio 事件
   tabsContent.querySelectorAll('input[name="tab-creator"]').forEach(r => {
     r.addEventListener("change", async () => {
       tab.creatorId = r.value;
       tab.videoIds.clear();
-      // 加载新达人的视频
+      // 加载新对标达人的视频
       const vids = await request(`/api/remix/creators/${encodeURIComponent(r.value)}/videos`);
       tab.videos = vids;
       renderModalTabs();
@@ -6318,14 +6323,14 @@ function renderModalTabs() {
     });
   });
 
-  // 选择其他达人
+  // 选择其他对标达人
   document.querySelector("#tab-select-other-creator")?.addEventListener("click", () => {
     openOtherCreatorModal(modalState.activeTabId);
   });
 
   // 上传视频按钮
   document.querySelector("#tab-upload-video")?.addEventListener("click", () => {
-    if (!tab.creatorId) { showToast("请先选择达人", true); return; }
+    if (!tab.creatorId) { showToast("请先选择对标达人", true); return; }
     const inp = document.createElement("input");
     inp.type = "file";
     inp.accept = "video/*";
@@ -6359,7 +6364,7 @@ function renderModalTabs() {
       e.preventDefault();
       dragCounter = 0;
       dropHint.classList.add("hidden");
-      if (!tab.creatorId) { showToast("请先选择达人", true); return; }
+      if (!tab.creatorId) { showToast("请先选择对标达人", true); return; }
       const files = [...e.dataTransfer.files].filter(f => f.type.startsWith("video/"));
       for (const file of files) {
         await uploadVideoToTabCreator(tab, file);
@@ -6370,7 +6375,7 @@ function renderModalTabs() {
   updateSelectedVideosSummary();
 }
 
-// 上传视频到当前 Tab 选中的达人
+// 上传视频到当前 Tab 选中的对标达人
 async function uploadVideoToTabCreator(tab, file) {
   try {
     showToast(`正在上传 ${file.name}...`);
@@ -6379,7 +6384,7 @@ async function uploadVideoToTabCreator(tab, file) {
     const res = await fetch("/api/remix/upload", { method: "POST", body: formData });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "上传失败");
-    // 创建视频记录关联到达人
+    // 创建视频记录关联到对标达人
     await request(`/api/remix/creators/${encodeURIComponent(tab.creatorId)}/videos`, {
       method: "POST",
       body: JSON.stringify({ url: data.url, title: file.name.replace(/\.[^.]+$/, "") }),
@@ -6394,17 +6399,17 @@ async function uploadVideoToTabCreator(tab, file) {
   }
 }
 
-// 选择其他达人弹窗
+// 选择其他对标达人弹窗
 function openOtherCreatorModal(tabId) {
   const allCreators = modalState.creators;
   const boundIds = new Set((modalState.tabs[tabId]?.boundCreators || []).map(c => c.id));
   const unbound = allCreators.filter(c => !boundIds.has(c.id));
-  if (!unbound.length) { showToast("没有其他达人可选", true); return; }
+  if (!unbound.length) { showToast("没有其他对标达人可选", true); return; }
   // 用 confirm 风格的弹窗
   const list = unbound.map(c => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)}</option>`).join("");
   const html = `<div id="other-creator-overlay" class="modal-overlay" style="z-index:10001;">
     <div class="modal-content" style="max-width:400px;">
-      <div class="modal-header"><h3>选择其他达人</h3><button class="modal-close" onclick="document.getElementById('other-creator-overlay').remove()">×</button></div>
+      <div class="modal-header"><h3>选择其他对标达人</h3><button class="modal-close" onclick="document.getElementById('other-creator-overlay').remove()">×</button></div>
       <div class="modal-body">
         <select id="other-creator-select" style="width:100%;padding:8px;">${list}</select>
         <button id="other-creator-confirm" class="button button-primary" style="margin-top:12px;width:100%;">确认</button>
@@ -6452,13 +6457,13 @@ function updateSelectedVideosSummary() {
 }
 
 function renderModalCreators() {
-  // tab 页模式下达人列表由 renderModalTabs 渲染
+  // tab 页模式下对标达人列表由 renderModalTabs 渲染
   renderModalTabs();
 }
 
 function renderModalVideos() {
   if (!modalState.videos.length) {
-    modalEl.videoList.innerHTML = '<div class="empty-state compact">该达人暂无视频</div>';
+    modalEl.videoList.innerHTML = '<div class="empty-state compact">该对标达人暂无视频</div>';
     modalEl.videoList.className = "modal-video-list";
     return;
   }
@@ -6542,7 +6547,7 @@ modalEl.cdpInstance?.addEventListener("change", updateModalStartBtn);
 let aiPresets = [];
 
 // 内置默认提示词（新数据库或无默认方案时使用）
-const BUILTIN_DEFAULT_PROMPT = `请直接处理我上传的【1个原始包包视频】，完整分析视频中的真实包包、真实达人和真实场景，并最终生成【10张独立的9:16高清图片】。
+const BUILTIN_DEFAULT_PROMPT = `请直接处理我上传的【1个原始包包视频】，完整分析视频中的真实包包、真实对标达人和真实场景，并最终生成【10张独立的9:16高清图片】。
 
 本任务只做图片生成，不做视频、音频、MP4、GIF、ZIP。
 
@@ -6554,16 +6559,16 @@ const BUILTIN_DEFAULT_PROMPT = `请直接处理我上传的【1个原始包包�
 4. 用户只提交一次任务；系统内部可逐张生成、逐张QC，但最终必须一次性返回10张独立图片。
 
 【核心原则】
-产品身份 > 产品真实性 > 达人身份 > 场景身份 > 物理合理性 > 摄影质感 > 多样性
+产品身份 > 产品真实性 > 对标达人身份 > 场景身份 > 物理合理性 > 摄影质感 > 多样性
 
 所有新增图片都必须让人感觉：
-【原视频中的同一个达人、同一个包，在同一天、同一个真实空间继续补拍。】
+【原视频中的同一个对标达人、同一个包，在同一天、同一个真实空间继续补拍。】
 
 【生成原则】
 
 1. 必须先完整分析原视频，并提取真实参考帧。
 2. 后续生成必须主要依赖这些真实参考帧，不能只凭文字重新想象。
-3. 必须分别建立：产品参考、达人参考、场景参考。
+3. 必须分别建立：产品参考、对标达人参考、场景参考。
 4. 每张目标图只选择4–8张最相关参考帧。
 5. 产品结构分为：
 
@@ -6580,7 +6585,7 @@ const BUILTIN_DEFAULT_PROMPT = `请直接处理我上传的【1个原始包包�
    * 链条/肩带必须自然下垂
    * 人物与包不能穿模
    * 抓握、受力、肩带绕身关系必须合理
-10. 所有真人图必须是原视频中的同一个达人本人，禁止换脸、换人或明显漂移。
+10. 所有真人图必须是原视频中的同一个对标达人本人，禁止换脸、换人或明显漂移。
 11. 所有图片必须保持同一个真实房间，不得换场景、换装修、加专柜、加摄影棚、加新家具。
 12. 画面风格必须是【真实TikTok UGC + 高质量手机补拍】，可以增强纹理、缝线、五金反光和材质层次，但不能改变真实颜色、材质和结构。
 
@@ -6589,18 +6594,18 @@ const BUILTIN_DEFAULT_PROMPT = `请直接处理我上传的【1个原始包包�
 图2：产品45°角，无字
 图3：产品侧面 / 顶部 / 包口，无字
 图4：内部（仅在CONFIRMED时）或其他CONFIRMED细节，无字
-图5：原达人在原场景背起同一个包，无字
-图6：原达人以明显不同姿势再次背起同一个包，无字
+图5：原对标达人在原场景背起同一个包，无字
+图6：原对标达人以明显不同姿势再次背起同一个包，无字
 图7：产品正面 / 材质 / 纹理 / 五金 + 英文讲解
 图8：产品侧面 / 厚度 / 底部 / 支撑结构 + 英文讲解
 图9：顶部 / 包口 / 内部；如内部不可靠则改为其他CONFIRMED细节 + 英文讲解
-图10：原达人展示同一个包 + 英文讲解
+图10：原对标达人展示同一个包 + 英文讲解
 
 【图7–图10文字规则】
 
 1. 每张都必须有一段独立英文讲解。
 2. 每段英文必须 >35个英文单词，建议36–60词。
-3. 语气必须像真实美国女性TikTok达人自然分享，不要像官网，不要硬广。
+3. 语气必须像真实美国女性TikTok对标达人自然分享，不要像官网，不要硬广。
 4. 禁止CTA，例如：BUY NOW、SHOP NOW、LINK IN BIO、SALE、DISCOUNT、ORDER NOW。
 5. 不要让生图模型直接生成复杂长英文；应先生成无字底图，QC通过后，再叠加正确英文。
 6. 文字优先放在画面中上区域，必须可读、完整，不遮挡包主体、Logo、关键五金和人物脸。
@@ -6613,7 +6618,7 @@ const BUILTIN_DEFAULT_PROMPT = `请直接处理我上传的【1个原始包包�
 
 1. 是否仍然是原视频中的同一个包
 2. 产品颜色、比例、轮廓、材质、纹理、五金、Logo、肩带/链条是否正确
-3. 真人图是否仍然是原达人本人
+3. 真人图是否仍然是原对标达人本人
 4. 场景是否仍然是同一个真实空间
 5. 物理关系是否合理
 6. 图7–图10的英文是否 >35词、无乱码、无明显语法错误、与画面内容对应、无遮挡核心主体
@@ -7693,10 +7698,10 @@ const autoPublish = {
   // ---- 加载数据 ----
   async fetchCreators() {
     try {
-      // 获取所有已添加的达人（复用 remix 的 creator 列表）
+      // 获取所有已添加的对标达人（复用 remix 的 creator 列表）
       const data = await request('/api/remix/creators');
       const allCreators = Array.isArray(data) ? data : (data?.creators || []);
-      // 为每个达人获取自动发布配置
+      // 为每个对标达人获取自动发布配置
       const enriched = await Promise.all(
         allCreators.map(async (c) => {
           try {
@@ -7757,7 +7762,7 @@ const autoPublish = {
 
   async fetchMonitorData() {
     try {
-      // 获取所有 enabled 的达人监控状态
+      // 获取所有 enabled 的对标达人监控状态
       const data = await request('/api/auto-publish/creators');
       const enabledCreators = Array.isArray(data) ? data : [];
       this.monitorData = enabledCreators;
@@ -7768,7 +7773,7 @@ const autoPublish = {
     }
   },
 
-  // ---- 达人配置操作 ----
+  // ---- 对标达人配置操作 ----
   async toggleAutoPublish(creatorId, enabled) {
     try {
       await request(`/api/auto-publish/config/${encodeURIComponent(creatorId)}`, {
@@ -7889,12 +7894,12 @@ const autoPublish = {
     }
   },
 
-  // ---- 渲染：达人列表 ----
+  // ---- 渲染：对标达人列表 ----
   renderCreators() {
     const container = this.el.creatorsList();
     if (!container) return;
     if (!this.creators.length) {
-      container.innerHTML = '<div class="empty-state compact" style="padding:16px;">暂无达人，请先在「视频混剪」中添加</div>';
+      container.innerHTML = '<div class="empty-state compact" style="padding:16px;">暂无对标达人，请先在「视频混剪」中添加</div>';
       return;
     }
     container.innerHTML = this.creators.map((c) => {
@@ -8138,7 +8143,7 @@ const autoPublish = {
     const sel = this.el.filterCreator();
     if (!sel) return;
     const current = this.filterCreator;
-    sel.innerHTML = '<option value="">全部达人</option>' +
+    sel.innerHTML = '<option value="">全部对标达人</option>' +
       this.creators.map((c) => `<option value="${escapeHtml(c.id)}" ${current === c.id ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('');
   },
 

@@ -54,7 +54,7 @@
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 6px; vertical-align: -2px;">
             <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/>
           </svg>
-          社媒矩阵
+          我的社媒矩阵
         </button>
         <button class="platform-tab" data-platform="scheduler" role="tab" aria-selected="false" type="button">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 6px; vertical-align: -2px;">
@@ -772,7 +772,7 @@
                   <select id="bind-profile-select"></select>
                 </label>
                 <label>
-                  <span>TK 账号句柄（社媒矩阵账号）</span>
+                  <span>TK 账号句柄（我的社媒矩阵账号）</span>
                   <select id="bind-account-select"></select>
                 </label>
                 <label>
@@ -1123,14 +1123,14 @@
         </div>
 
         <div class="remix-layout">
-          <!-- 左栏：达人列表 -->
+          <!-- 左栏：对标达人列表 -->
           <aside class="remix-sidebar">
             <div class="remix-sidebar-head">
-              <h3>原创达人</h3>
+              <h3>原创对标达人</h3>
               <button id="remix-add-creator-btn" class="link-btn" type="button">+ 添加</button>
             </div>
             <div id="remix-add-creator-form" class="remix-add-form hidden">
-              <input type="text" id="remix-creator-name" placeholder="达人名称" />
+              <input type="text" id="remix-creator-name" placeholder="对标达人名称" />
               <input type="text" id="remix-creator-platform" placeholder="平台 (如 TikTok)" />
               <button id="remix-confirm-creator" class="button button-primary" type="button">确认</button>
               <button id="remix-cancel-creator" class="button button-secondary" type="button">取消</button>
@@ -1169,7 +1169,7 @@
               <div class="remix-video-area">
                 <div class="remix-video-head">
                   <div>
-                    <p id="remix-video-count" class="muted-activity" style="font-size: 12px;">在左侧选择达人查看视频</p>
+                    <p id="remix-video-count" class="muted-activity" style="font-size: 12px;">在左侧选择对标达人查看视频</p>
                   </div>
                   <div style="display:flex;gap:6px;">
                     <button id="remix-tiktok-download-btn" class="button button-secondary" type="button" style="font-size:12px;padding:4px 10px;">TikTok下载</button>
@@ -1189,7 +1189,7 @@
                   <div id="remix-pagination" class="remix-pagination"></div>
                 </div>
                 <div id="remix-video-grid" class="remix-video-grid">
-                  <div class="empty-state compact">选择达人后显示视频</div>
+                  <div class="empty-state compact">选择对标达人后显示视频</div>
                 </div>
               </div>
 
@@ -1205,12 +1205,12 @@
                 <button id="remix-dedup-btn" class="button button-secondary" type="button" disabled>去重处理</button>
               </div>
 
-              <!-- 达人专属资源（默认折叠） -->
+              <!-- 对标达人专属资源（默认折叠） -->
               <details class="remix-resources-area">
               <summary class="remix-resources-head" style="cursor:pointer;list-style:none;display:flex;align-items:center;gap:8px;">
                   <span style="font-size:12px;color:var(--text-muted);">▶</span>
-                  <h3>达人专属资源</h3>
-                  <span id="remix-resources-hint" class="muted-activity" style="font-size: 12px;">选择达人后可上传开头/结尾片段和背景音乐</span>
+                  <h3>对标达人专属资源</h3>
+                  <span id="remix-resources-hint" class="muted-activity" style="font-size: 12px;">选择对标达人后可上传开头/结尾片段和背景音乐</span>
               </summary>
                 <div id="remix-resources-sections" class="remix-resources-sections" style="margin-top:8px;">
                 <div class="remix-resource-section" data-type="intro">
@@ -1259,7 +1259,7 @@
             </div>
             <div class="modal-body">
               <div style="margin-bottom:12px;">
-                <p class="muted-activity" style="font-size:12px;margin-bottom:6px;">粘贴 TikTok 视频链接（每行一条）或达人主页链接：</p>
+                <p class="muted-activity" style="font-size:12px;margin-bottom:6px;">粘贴 TikTok 视频链接（每行一条）或对标达人主页链接：</p>
                 <textarea id="tiktok-url-input" rows="5" style="width:100%;font-size:13px;padding:8px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--text);resize:vertical;" placeholder="https://www.tiktok.com/@username/video/123456&#10;https://vm.tiktok.com/xxxxx/&#10;https://www.tiktok.com/@username"></textarea>
               </div>
               <div style="display:flex;gap:8px;margin-bottom:12px;">
@@ -1454,13 +1454,13 @@
         </article>
       </section>
 
-      <!-- 社媒矩阵面板 -->
+      <!-- 我的社媒矩阵面板 -->
       <section class="matrix-panel matrix-tab hidden">
         <div class="matrix-layout">
           <!-- 左栏：矩阵列表 -->
           <aside class="matrix-sidebar">
             <div class="matrix-sidebar-head">
-              <h3>社媒矩阵</h3>
+              <h3>我的社媒矩阵</h3>
               <button id="mx-add-btn" class="link-btn" type="button">+ 新建</button>
             </div>
             <div id="mx-add-form" class="remix-add-form hidden">
@@ -1546,10 +1546,10 @@
       <!-- ======================== 自动发布面板 ======================== -->
       <section class="auto-publish-panel auto-publish-tab hidden">
         <div class="ap-layout">
-          <!-- ========== 左栏：达人配置 ========== -->
+          <!-- ========== 左栏：对标达人配置 ========== -->
           <aside class="ap-creators-col">
             <div class="ap-section-head">
-              <h3>达人自动发布配置</h3>
+              <h3>对标达人自动发布配置</h3>
               <button id="ap-refresh-creators" class="link-btn" type="button">刷新</button>
             </div>
             <div id="ap-creators-list" class="ap-creators-list">
@@ -1576,7 +1576,7 @@
                 <h3>流水线任务看板</h3>
                 <div style="display:flex;gap:8px;align-items:center;">
                   <select id="ap-filter-creator" class="ap-filter-select">
-                    <option value="">全部达人</option>
+                    <option value="">全部对标达人</option>
                   </select>
                   <select id="ap-filter-status" class="ap-filter-select">
                     <option value="">全部状态</option>
@@ -1595,7 +1595,7 @@
                 <table class="ap-table">
                   <thead>
                     <tr>
-                      <th>达人</th>
+                      <th>对标达人</th>
                       <th>源视频</th>
                       <th>状态</th>
                       <th>目标实例</th>
@@ -1622,20 +1622,20 @@
             <button id="remix-task-modal-close" class="modal-close" type="button">×</button>
           </div>
           <div class="modal-body">
-            <!-- Step 1: 选择社媒矩阵（多选） -->
+            <!-- Step 1: 选择我的社媒矩阵（多选） -->
             <div class="modal-step">
               <div class="modal-step-head">
                 <span class="modal-step-num">1</span>
-                <strong>选择社媒矩阵</strong>
+                <strong>选择我的社媒矩阵</strong>
                 <span class="muted-activity" style="font-size: 11px;">可多选，每个矩阵生成一个 Tab 页</span>
               </div>
               <div id="modal-matrix-list" class="modal-matrix-list"></div>
             </div>
-            <!-- Step 2+3: 每个矩阵一个 Tab 页（达人+视频） -->
+            <!-- Step 2+3: 每个矩阵一个 Tab 页（对标达人+视频） -->
             <div class="modal-step">
               <div class="modal-step-head">
                 <span class="modal-step-num">2</span>
-                <strong>达人与视频选择</strong>
+                <strong>对标达人与视频选择</strong>
               </div>
               <!-- Tab 页头 -->
               <div id="modal-tabs-header" style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px;border-bottom:1px solid #e2e8f0;"></div>
