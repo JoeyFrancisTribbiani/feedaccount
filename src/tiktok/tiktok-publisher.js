@@ -51,13 +51,10 @@ export class TiktokPublisher {
     }
     if (!page) {
       page = await ctx.newPage();
-      await page.goto('https://www.tiktok.com/tiktokstudio/upload', { waitUntil: 'domcontentloaded', timeout: 30000 });
-    } else {
-      // 已有 TikTok 页面，导航到上传页
-      if (!/tiktokstudio\/upload|upload/.test(page.url())) {
-        await page.goto('https://www.tiktok.com/tiktokstudio/upload', { waitUntil: 'domcontentloaded', timeout: 30000 });
-      }
     }
+
+    // 始终导航到上传页（刷新页面，清除草稿残留和弹窗状态）
+    await page.goto('https://www.tiktok.com/tiktokstudio/upload', { waitUntil: 'domcontentloaded', timeout: 30000 });
 
     this.page = page;
     this.context = ctx;
