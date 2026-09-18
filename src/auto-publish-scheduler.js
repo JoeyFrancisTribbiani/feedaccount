@@ -79,7 +79,7 @@ export class AutoPublishScheduler extends EventTarget {
     if (this.running) return;
     this.running = true;
     try {
-      await this.monitorCreatorVideos();
+      await this.monitorMatrixVideos();
       await this._createPipelineForExistingVideos();
       await this.triggerRemixTasks();
       await this.checkRemixComplete();
@@ -91,10 +91,10 @@ export class AutoPublishScheduler extends EventTarget {
     }
   }
 
-  // ─── 1. 监控达人新视频 ───
+  // ─── 1. 监控矩阵新视频 ───
 
-  async monitorCreatorVideos() {
-    const configs = this._listEnabledConfigs();
+  async monitorMatrixVideos() {
+    const configs = this._listEnabledMatrixConfigs();
     if (!configs.length) return;
 
     const now = Date.now();
@@ -102,52 +102,84 @@ export class AutoPublishScheduler extends EventTarget {
 
     for (const cfg of configs) {
       // 检查是否到达监控间隔
-      const intervalHours = cfg.monitor_interval_hours || DEFAULT_MONITOR_INTERVAL_HOURS;
+      const intervalHours = cfg.monitorIntervalHours || DEFAULT_MONITOR_INTERVAL_HOURS;
       const intervalMs = intervalHours * 60 * 60 * 1000;
-      const lastMonitorAt = cfg.last_monitor_at ? new Date(cfg.last_monitor_at).getTime() : 0;
+      const lastMonitorAt = cfg.lastMonitorAt ? new Date(cfg.lastMonitorAt).getTime() : 0;
       if (now - lastMonitorAt < intervalMs) continue;
 
       try {
-        await this._checkCreatorNewVideos(cfg);
+        await this._checkMatrixNewVideos(cfg);
         // 更新 last_monitor_at
         this.store.db
-          .prepare("UPDATE creator_auto_publish_config SET last_monitor_at = ?, updated_at = ? WHERE creator_id = ?")
-          .run(nowIso(), nowIso(), cfg.creator_id);
+          .prepare("UPDATE matrix_auto_publish_config SET last_monitor_at = ?, updated_at = ? WHERE matrix_id = ?")
+          .run(nowIso(), nowIso(), cfg.matrixId);
         changed = true;
       } catch (err) {
-        console.error(`[AutoPublishScheduler] 监控达人 ${cfg.creator_id} 失败:`, err.message);
-        this.store.logCdpEvent(null, "error", `自动发布-监控达人失败: ${err.message}`);
+        console.error(`[AutoPublishScheduler] 监控矩阵 ${cfg.matrixId} 失败:`, err.message);
+        this.store.logCdpEvent(null, "error", `自动发布-监控矩阵失败: ${err.message}`);
       }
     }
 
     if (changed) this._emitChange();
   }
 
-  async _checkCreatorNewVideos(cfg) {
-    const creator = this.store.getRemixCreator(cfg.creator_id);
-    if (!creator) return;
+  async _checkMatrixNewVideos(cfg) {
+    // 1. 查矩阵绑定的实例（1:1）
+    const mp = this.store.db
+      .prepare("SELECT profile_id FROM matrix_profiles WHERE matrix_id = ? LIMIT 1")
+      .get(cfg.matrixId);
+    if (!mp?.profile_id) {
+      console.warn(`[AutoPublishScheduler] 矩阵 ${cfg.matrixId} 未绑定实例，跳过`);
+      return;
+    }
+    const profileId = mp.profile_id;
 
-    let username = cfg.tiktok_username || this._extractUsername(creator);
-    if (!username) {
-      console.warn(`[AutoPublishScheduler] 达人 ${creator.name} 无 TikTok 用户名，跳过`);
+    // 2. 查该矩阵所有平台账号选的达人（通过 matrix_account_creators）
+    const creators = this.store.db.prepare(`
+      SELECT DISTINCT c.id AS creator_id, c.name, c.platform
+      FROM matrix_account_creators mac
+      JOIN matrix_accounts ma ON ma.id = mac.matrix_account_id
+      JOIN remix_creators c ON c.id = mac.creator_id
+      WHERE ma.matrix_id = ?
+    `).all(cfg.matrixId);
+
+    if (!creators.length) {
+      console.warn(`[AutoPublishScheduler] 矩阵 ${cfg.matrixId} 无关联达人，跳过`);
       return;
     }
 
-    // 改用 CDP 方式调用 server 自带的 /api/tiktok/parse-profile 接口
-    // 该接口通过 Chrome CDP 打开达人主页提取视频列表（包括自动刷新重试和滚动加载）
+    // 3. 对每个达人查新视频
+    for (const creator of creators) {
+      try {
+        await this._checkCreatorNewVideosForMatrix(cfg, creator, profileId);
+      } catch (err) {
+        console.error(`[AutoPublishScheduler] 矩阵 ${cfg.matrixId} 达人 ${creator.name} 监控失败:`, err.message);
+      }
+    }
+  }
+
+  async _checkCreatorNewVideosForMatrix(cfg, creator, profileId) {
+    const creatorObj = this.store.getRemixCreator(creator.creator_id);
+    if (!creatorObj) return;
+
+    let username = this._extractUsername(creatorObj);
+    if (!username) {
+      console.warn(`[AutoPublishScheduler] 达人 ${creatorObj.name} 无 TikTok 用户名，跳过`);
+      return;
+    }
+
+    // 调用 server 自带的 /api/tiktok/parse-profile 接口
     const parseRes = await fetch(`${this.serverUrl}/api/tiktok/parse-profile`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ url: `https://www.tiktok.com/@${username}` }),
-      signal: AbortSignal.timeout(180000), // CDP 方式可能需要较长时间（滚动加载）
+      signal: AbortSignal.timeout(180000),
     });
     if (!parseRes.ok) {
       const errBody = await parseRes.text().catch(() => "");
       throw new Error(`parse-profile HTTP ${parseRes.status}: ${errBody.slice(0, 200)}`);
     }
     const parseData = await parseRes.json();
-    // parse-profile 返回 { ok, username, userInfo, videos }
-    // videos 每项: { url, title, cover, duration }
     if (parseData.error) throw new Error(parseData.error);
     const feed = parseData.videos || [];
     if (!Array.isArray(feed) || !feed.length) return;
@@ -156,10 +188,10 @@ export class AutoPublishScheduler extends EventTarget {
     const newVideos = [];
     for (const v of feed) {
       const tiktokUrl = v.url || `https://www.tiktok.com/@${username}/video/${v.video_id}`;
-      const monitored = this._getMonitoredVideo(cfg.creator_id, tiktokUrl);
+      const monitored = this._getMonitoredVideo(creator.creator_id, tiktokUrl);
       if (monitored) continue;
 
-      // 从 URL 提取 videoId（CDP 方式返回的是完整 URL）
+      // 从 URL 提取 videoId
       const idMatch = tiktokUrl.match(/\/video\/(\d+)/);
       const videoId = idMatch ? idMatch[1] : (v.video_id || String(Date.now()));
 
@@ -176,11 +208,11 @@ export class AutoPublishScheduler extends EventTarget {
 
     if (!newVideos.length) return;
 
-    console.log(`[AutoPublishScheduler] 达人 ${creator.name} 发现 ${newVideos.length} 个新视频`);
+    console.log(`[AutoPublishScheduler] 矩阵 ${cfg.matrixId} 达人 ${creatorObj.name} 发现 ${newVideos.length} 个新视频`);
 
     for (const v of newVideos) {
       this._recordMonitoredVideo({
-        creatorId: cfg.creator_id,
+        creatorId: creator.creator_id,
         videoId: v.videoId,
         tiktokUrl: v.url,
       });
@@ -189,7 +221,7 @@ export class AutoPublishScheduler extends EventTarget {
     // 下载新视频并创建 pipeline 任务
     for (const v of newVideos) {
       try {
-        await this._downloadAndCreatePipeline(cfg, v);
+        await this._downloadAndCreatePipelineForMatrix(cfg, creator.creator_id, profileId, v);
       } catch (err) {
         console.error(`[AutoPublishScheduler] 下载视频 ${v.url} 失败:`, err.message);
         this.store.logCdpEvent(null, "error", `自动发布-下载视频失败: ${v.url} → ${err.message}`);
@@ -198,7 +230,7 @@ export class AutoPublishScheduler extends EventTarget {
     }
   }
 
-  async _downloadAndCreatePipeline(cfg, videoInfo) {
+  async _downloadAndCreatePipelineForMatrix(cfg, creatorId, profileId, videoInfo) {
     const downloadRes = await fetch(`${this.serverUrl}/api/tiktok/download`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -213,104 +245,94 @@ export class AutoPublishScheduler extends EventTarget {
     if (!downloadData.ok) throw new Error(downloadData.error || "下载失败");
 
     // 更新监控记录
-    this._updateMonitoredVideo(cfg.creator_id, videoInfo.url, {
+    this._updateMonitoredVideo(creatorId, videoInfo.url, {
       remixVideoId: downloadData.videoId || null,
     });
 
-    // 为每个绑定的 profile 创建 pipeline 任务
-    const bindings = this._listCreatorBindings(cfg.creator_id);
-    if (!bindings.length) {
-      console.warn(`[AutoPublishScheduler] 达人 ${cfg.creator_id} 无绑定的 profile，跳过 pipeline 创建`);
-      return;
-    }
-
-    for (const binding of bindings) {
-      const pipelineId = genId("ap");
-      this.store.db
-        .prepare(
-          `INSERT INTO auto_remix_publish_pipeline
-           (id, creator_id, source_video_id, remix_task_id, profile_id, publish_job_id, status, fail_reason, attempt_count, source_url, matrix_id, created_at, updated_at)
-           VALUES (?, ?, ?, NULL, ?, NULL, 'pending', NULL, 0, ?, ?, ?, ?)`,
-        )
-        .run(
-          pipelineId,
-          cfg.creator_id,
-          downloadData.videoId || "pending_download",
-          binding.profile_id,
-          videoInfo.url,
-          cfg.matrix_id || null,
-          nowIso(),
-          nowIso(),
-        );
-
-      this.store.logCdpEvent(
-        null,
-        "info",
-        `自动发布-Pipeline创建: ${pipelineId} (达人=${cfg.creator_id}, profile=${binding.profile_id})`,
+    // 创建 pipeline 任务（一个矩阵一个实例，一条 pipeline）
+    const pipelineId = genId("ap");
+    this.store.db
+      .prepare(
+        `INSERT INTO auto_remix_publish_pipeline
+         (id, creator_id, source_video_id, remix_task_id, profile_id, publish_job_id, status, fail_reason, attempt_count, source_url, matrix_id, created_at, updated_at)
+         VALUES (?, ?, ?, NULL, ?, NULL, 'pending', NULL, 0, ?, ?, ?, ?)`,
+      )
+      .run(
+        pipelineId,
+        creatorId,
+        downloadData.videoId || "pending_download",
+        profileId,                    // ← 从 matrix_profiles 查
+        videoInfo.url,
+        cfg.matrixId,                  // ← 矩阵ID
+        nowIso(),
+        nowIso(),
       );
-    }
+
+    this.store.logCdpEvent(
+      null,
+      "info",
+      `自动发布-Pipeline创建: ${pipelineId} (矩阵=${cfg.matrixId}, 达人=${creatorId}, profile=${profileId})`,
+    );
   }
 
   // ─── 1.5 为已有已下载视频补建 pipeline（手动下载的视频不在 monitor 表里） ───
 
   async _createPipelineForExistingVideos() {
-    const configs = this._listEnabledConfigs();
+    const configs = this._listEnabledMatrixConfigs();
     if (!configs.length) return;
 
     let changed = false;
     for (const cfg of configs) {
-      const bindings = this._listCreatorBindings(cfg.creator_id);
-      if (!bindings.length) continue;
+      // 查矩阵实例
+      const mp = this.store.db
+        .prepare("SELECT profile_id FROM matrix_profiles WHERE matrix_id = ? LIMIT 1")
+        .get(cfg.matrixId);
+      if (!mp?.profile_id) continue;
+      const profileId = mp.profile_id;
 
-      // 查这个达人所有已下载视频
-      const videos = this.store.db
-        .prepare("SELECT id, source_url FROM remix_videos WHERE creator_id = ? AND downloaded = 1")
-        .all(cfg.creator_id);
+      // 查矩阵关联的所有达人
+      const creators = this.store.db.prepare(`
+        SELECT DISTINCT c.id AS creator_id FROM matrix_account_creators mac
+        JOIN matrix_accounts ma ON ma.id = mac.matrix_account_id
+        JOIN remix_creators c ON c.id = mac.creator_id
+        WHERE ma.matrix_id = ?
+      `).all(cfg.matrixId);
 
-      for (const video of videos) {
-        // 检查是否已有 pipeline task
-        for (const binding of bindings) {
+      for (const creator of creators) {
+        const videos = this.store.db
+          .prepare("SELECT id, source_url FROM remix_videos WHERE creator_id = ? AND downloaded = 1")
+          .all(creator.creator_id);
+
+        for (const video of videos) {
           const existing = this.store.db
             .prepare("SELECT id FROM auto_remix_publish_pipeline WHERE source_video_id = ? AND profile_id = ?")
-            .get(video.id, binding.profile_id);
+            .get(video.id, profileId);
           if (existing) continue;
 
-          // 创建 pipeline task
           const pipelineId = genId("ap");
-          this.store.db
-            .prepare(
-              `INSERT INTO auto_remix_publish_pipeline
-               (id, creator_id, source_video_id, remix_task_id, profile_id, publish_job_id, status, fail_reason, attempt_count, source_url, matrix_id, created_at, updated_at)
-               VALUES (?, ?, ?, NULL, ?, NULL, 'pending', NULL, 0, ?, ?, ?, ?)`,
-            )
-            .run(
-              pipelineId,
-              cfg.creator_id,
-              video.id,
-              binding.profile_id,
-              video.source_url || null,
-              cfg.matrix_id || null,
-              nowIso(),
-              nowIso(),
-            );
+          this.store.db.prepare(`
+            INSERT INTO auto_remix_publish_pipeline
+            (id, creator_id, source_video_id, remix_task_id, profile_id,
+             publish_job_id, status, fail_reason, attempt_count,
+             source_url, matrix_id, created_at, updated_at)
+            VALUES (?, ?, ?, NULL, ?, NULL, 'pending', NULL, 0, ?, ?, ?, ?)
+          `).run(
+            pipelineId, creator.creator_id, video.id, profileId,
+            video.source_url || null, cfg.matrixId, nowIso(), nowIso(),
+          );
 
-          // 同时记录到 monitor 表（标记为已下载）
+          // 记录到 monitor 表
           if (video.source_url) {
             this._recordMonitoredVideo({
-              creatorId: cfg.creator_id,
-              videoId: video.id,
-              tiktokUrl: video.source_url,
+              creatorId: creator.creator_id, videoId: video.id, tiktokUrl: video.source_url,
             });
-            this._updateMonitoredVideo(cfg.creator_id, video.source_url, {
+            this._updateMonitoredVideo(creator.creator_id, video.source_url, {
               remixVideoId: video.id,
             });
           }
 
-          this.store.logCdpEvent(
-            null,
-            "info",
-            `自动发布-补建Pipeline: ${pipelineId} (视频=${video.id}, profile=${binding.profile_id})`,
-          );
+          this.store.logCdpEvent(null, "info",
+            `自动发布-补建Pipeline: ${pipelineId} (矩阵=${cfg.matrixId}, 视频=${video.id}, profile=${profileId})`);
           changed = true;
         }
       }
@@ -343,7 +365,8 @@ export class AutoPublishScheduler extends EventTarget {
       pipeline = pendingPipelines[0];
     }
 
-    const cfg = this._getConfig(pipeline.creator_id);
+    // 配置从矩阵查（pipeline.matrix_id）
+    const cfg = pipeline.matrix_id ? this._getMatrixConfig(pipeline.matrix_id) : null;
 
     if (!pipeline.source_video_id) {
       this._updatePipeline(pipeline.id, {
@@ -355,14 +378,31 @@ export class AutoPublishScheduler extends EventTarget {
     }
 
     if (!cfg) {
-      this._updatePipeline(pipeline.id, {
-        status: "failed",
-        failReason: "缺少 creator_auto_publish_config 配置",
-      });
-      this._emitChange();
-      return;
+      // 尝试从旧表补全 matrix_id（7.3 风险处理）
+      if (!pipeline.matrix_id) {
+        const mac = this.store.db
+          .prepare(`SELECT ma.matrix_id FROM matrix_account_creators mac
+                    JOIN matrix_accounts ma ON ma.id = mac.matrix_account_id
+                    WHERE mac.creator_id = ? LIMIT 1`)
+          .get(pipeline.creator_id);
+        if (mac?.matrix_id) {
+          this.store.db.prepare("UPDATE auto_remix_publish_pipeline SET matrix_id = ? WHERE id = ?")
+            .run(mac.matrix_id, pipeline.id);
+          pipeline.matrix_id = mac.matrix_id;
+        }
+      }
+      const cfg2 = pipeline.matrix_id ? this._getMatrixConfig(pipeline.matrix_id) : null;
+      if (!cfg2) {
+        this._updatePipeline(pipeline.id, {
+          status: "failed",
+          failReason: "缺少 matrix_auto_publish_config 配置",
+        });
+        this._emitChange();
+        return;
+      }
     }
 
+    const effectiveCfg = cfg || this._getMatrixConfig(pipeline.matrix_id);
     const video = this.store.getRemixVideo(pipeline.source_video_id);
     if (!video) {
       this._updatePipeline(pipeline.id, {
@@ -373,42 +413,18 @@ export class AutoPublishScheduler extends EventTarget {
       return;
     }
 
-    // 需要配置
-    const matrixId = pipeline.matrix_id || cfg.matrix_id || null; // matrix_id 改为可选
-    // cdp_instance_id: 优先用 config 的，否则从 binding 关联获取
-    let cdpInstanceId = cfg.cdp_instance_id;
-    if (!cdpInstanceId) {
-      const binding = this._getCreatorBinding(pipeline.creator_id, pipeline.profile_id);
-      cdpInstanceId = binding?.cdp_instance_id || null;
-    }
-    const presetId = cfg.preset_id;
-    const ratio = cfg.ratio || "9:16";
-
-    // matrix_id: 优先用 pipeline/config 配置的，否则从达人绑定的矩阵查
-    let effectiveMatrixId = matrixId;
-    if (!effectiveMatrixId) {
-      const mac = this.store.db
-        .prepare(`SELECT ma.matrix_id FROM matrix_account_creators mac
-                  JOIN matrix_accounts ma ON ma.id = mac.matrix_account_id
-                  WHERE mac.creator_id = ? LIMIT 1`)
-        .get(pipeline.creator_id);
-      effectiveMatrixId = mac?.matrix_id || null;
-    }
-
-    if (!effectiveMatrixId) {
-      this._updatePipeline(pipeline.id, {
-        status: "failed",
-        failReason: "该达人未绑定任何社媒矩阵",
-      });
-      this._emitChange();
-      return;
-    }
+    // matrix_id 直接从 pipeline 获取（已在创建时设置）
+    const effectiveMatrixId = pipeline.matrix_id;
+    // cdp_instance_id 从矩阵配置查
+    const cdpInstanceId = effectiveCfg?.cdpInstanceId || null;
+    const presetId = effectiveCfg?.presetId || null;
+    const ratio = effectiveCfg?.ratio || "9:16";
 
     // cdp_instance_id 仍需校验（混剪需要 CDP 实例运行 ChatGPT）
     if (!cdpInstanceId) {
       this._updatePipeline(pipeline.id, {
         status: "failed",
-        failReason: "缺少 cdp_instance_id 配置（请在自动发布配置或实例绑定中设置 CDP 实例）",
+        failReason: "缺少 cdp_instance_id 配置（请在矩阵自动发布配置中设置 CDP 实例）",
       });
       this._emitChange();
       return;
@@ -529,7 +545,8 @@ export class AutoPublishScheduler extends EventTarget {
   }
 
   async _scheduleOnePipeline(pipeline) {
-    const cfg = this._getConfig(pipeline.creator_id);
+    // 配置从矩阵查（pipeline.matrix_id）
+    const cfg = pipeline.matrix_id ? this._getMatrixConfig(pipeline.matrix_id) : null;
     const profileId = pipeline.profile_id;
 
     if (!profileId) {
@@ -540,9 +557,35 @@ export class AutoPublishScheduler extends EventTarget {
       return true;
     }
 
-    // 检查今日已发布数量是否达到 daily_limit
-    const binding = this._getCreatorBinding(pipeline.creator_id, profileId);
-    const dailyLimit = binding?.daily_limit || cfg?.daily_limit_per_profile || 3;
+    if (!cfg) {
+      // 尝试从旧表补全 matrix_id（7.3 风险处理）
+      if (!pipeline.matrix_id) {
+        const mac = this.store.db
+          .prepare(`SELECT ma.matrix_id FROM matrix_account_creators mac
+                    JOIN matrix_accounts ma ON ma.id = mac.matrix_account_id
+                    WHERE mac.creator_id = ? LIMIT 1`)
+          .get(pipeline.creator_id);
+        if (mac?.matrix_id) {
+          this.store.db.prepare("UPDATE auto_remix_publish_pipeline SET matrix_id = ? WHERE id = ?")
+            .run(mac.matrix_id, pipeline.id);
+          pipeline.matrix_id = mac.matrix_id;
+        }
+      }
+      const cfg2 = pipeline.matrix_id ? this._getMatrixConfig(pipeline.matrix_id) : null;
+      if (!cfg2) {
+        this._updatePipeline(pipeline.id, {
+          status: "failed",
+          failReason: "缺少 matrix_auto_publish_config 配置",
+        });
+        this._emitChange();
+        return true;
+      }
+    }
+
+    const effectiveCfg = cfg || this._getMatrixConfig(pipeline.matrix_id);
+
+    // daily_limit 从矩阵配置查（不再查 creator_profile_bindings）
+    const dailyLimit = effectiveCfg?.dailyLimit || 3;
     const todayPublished = this._countTodayPublishedByProfile(profileId);
     if (todayPublished >= dailyLimit) {
       return false; // 达到上限，跳过
@@ -566,17 +609,17 @@ export class AutoPublishScheduler extends EventTarget {
     }
 
     // 计算发布时间
-    const scheduledAt = this._calcNextPublishTime(profileId, cfg);
+    const scheduledAt = this._calcNextPublishTime(profileId, effectiveCfg);
 
     // 创建 tk_video_material（发布需要 material_id）
-    const hashtags = cfg?.hashtags_json
-      ? (typeof cfg.hashtags_json === "string" ? JSON.parse(cfg.hashtags_json) : cfg.hashtags_json)
+    const hashtags = effectiveCfg?.hashtagsJson
+      ? (typeof effectiveCfg.hashtagsJson === "string" ? JSON.parse(effectiveCfg.hashtagsJson) : effectiveCfg.hashtagsJson)
       : [];
     const material = this.store.createTkMaterial({
       filePath: remixTask.outputUrl,
       title: remixTask.title || "自动发布视频",
       hashtags: Array.isArray(hashtags) ? hashtags : [],
-      privacyLevel: cfg?.privacy_level || "public",
+      privacyLevel: effectiveCfg?.privacyLevel || "public",
       category: "auto-publish",
     });
 
@@ -607,9 +650,9 @@ export class AutoPublishScheduler extends EventTarget {
 
     // 如果配置了发布时间段，使用时间段逻辑
     let slots = null;
-    if (cfg?.publish_time_slots) {
+    if (cfg?.publishTimeSlots) {
       try {
-        const raw = typeof cfg.publish_time_slots === "string" ? JSON.parse(cfg.publish_time_slots) : cfg.publish_time_slots;
+        const raw = typeof cfg.publishTimeSlots === "string" ? JSON.parse(cfg.publishTimeSlots) : cfg.publishTimeSlots;
         if (Array.isArray(raw) && raw.length) slots = raw;
       } catch { /* 解析失败，回退到默认逻辑 */ }
     }
@@ -809,17 +852,35 @@ export class AutoPublishScheduler extends EventTarget {
     if (remixingCount > 0) return;
 
     const pipeline = retryPipelines[0];
-    const cfg = this._getConfig(pipeline.creator_id);
+    // 配置从矩阵查
+    const cfg = pipeline.matrix_id ? this._getMatrixConfig(pipeline.matrix_id) : null;
 
     if (!pipeline.source_video_id || !cfg) {
-      this._updatePipeline(pipeline.id, {
-        status: "failed",
-        failReason: "重试失败: 缺少 source_video_id 或配置",
-      });
-      this._emitChange();
-      return;
+      // 尝试从旧表补全 matrix_id
+      if (!pipeline.matrix_id) {
+        const mac = this.store.db
+          .prepare(`SELECT ma.matrix_id FROM matrix_account_creators mac
+                    JOIN matrix_accounts ma ON ma.id = mac.matrix_account_id
+                    WHERE mac.creator_id = ? LIMIT 1`)
+          .get(pipeline.creator_id);
+        if (mac?.matrix_id) {
+          this.store.db.prepare("UPDATE auto_remix_publish_pipeline SET matrix_id = ? WHERE id = ?")
+            .run(mac.matrix_id, pipeline.id);
+          pipeline.matrix_id = mac.matrix_id;
+        }
+      }
+      const cfg2 = pipeline.matrix_id ? this._getMatrixConfig(pipeline.matrix_id) : null;
+      if (!pipeline.source_video_id || !cfg2) {
+        this._updatePipeline(pipeline.id, {
+          status: "failed",
+          failReason: "重试失败: 缺少 source_video_id 或配置",
+        });
+        this._emitChange();
+        return;
+      }
     }
 
+    const effectiveCfg = cfg || this._getMatrixConfig(pipeline.matrix_id);
     const video = this.store.getRemixVideo(pipeline.source_video_id);
     if (!video) {
       this._updatePipeline(pipeline.id, {
@@ -830,41 +891,18 @@ export class AutoPublishScheduler extends EventTarget {
       return;
     }
 
-    const matrixId = pipeline.matrix_id || cfg.matrix_id || null; // matrix_id 改为可选
-    // cdp_instance_id: 优先用 config 的，否则从 binding 关联获取
-    let cdpInstanceId = cfg.cdp_instance_id;
-    if (!cdpInstanceId) {
-      const binding = this._getCreatorBinding(pipeline.creator_id, pipeline.profile_id);
-      cdpInstanceId = binding?.cdp_instance_id || null;
-    }
-    const ratio = cfg.ratio || "9:16";
-    const presetId = cfg.preset_id;
-
-    // matrix_id: 优先用 pipeline/config 配置的，否则从达人绑定的矩阵查
-    let effectiveMatrixId = matrixId;
-    if (!effectiveMatrixId) {
-      const mac = this.store.db
-        .prepare(`SELECT ma.matrix_id FROM matrix_account_creators mac
-                  JOIN matrix_accounts ma ON ma.id = mac.matrix_account_id
-                  WHERE mac.creator_id = ? LIMIT 1`)
-        .get(pipeline.creator_id);
-      effectiveMatrixId = mac?.matrix_id || null;
-    }
-
-    if (!effectiveMatrixId) {
-      this._updatePipeline(pipeline.id, {
-        status: "failed",
-        failReason: "该达人未绑定任何社媒矩阵",
-      });
-      this._emitChange();
-      return;
-    }
+    // matrix_id 直接从 pipeline 获取
+    const effectiveMatrixId = pipeline.matrix_id;
+    // cdp_instance_id 从矩阵配置查
+    const cdpInstanceId = effectiveCfg?.cdpInstanceId || null;
+    const ratio = effectiveCfg?.ratio || "9:16";
+    const presetId = effectiveCfg?.presetId || null;
 
     // cdp_instance_id 仍需校验
     if (!cdpInstanceId) {
       this._updatePipeline(pipeline.id, {
         status: "failed",
-        failReason: "重试失败: 缺少 cdp_instance_id 配置（请在自动发布配置或实例绑定中设置 CDP 实例）",
+        failReason: "重试失败: 缺少 cdp_instance_id 配置（请在矩阵自动发布配置中设置 CDP 实例）",
       });
       this._emitChange();
       return;
@@ -945,23 +983,29 @@ export class AutoPublishScheduler extends EventTarget {
   // ─── 辅助：Schema 扩展 ───
 
   _ensureSchema() {
-    const db = this.store.db;
-
-    // 为 creator_auto_publish_config 补充列（已有表只有基础列）
-    this._ensureColumn("creator_auto_publish_config", "tiktok_username", "TEXT");
-    this._ensureColumn("creator_auto_publish_config", "cdp_instance_id", "TEXT");
-    this._ensureColumn("creator_auto_publish_config", "matrix_id", "TEXT");
-    this._ensureColumn("creator_auto_publish_config", "ratio", "TEXT DEFAULT '9:16'");
-    this._ensureColumn("creator_auto_publish_config", "hashtags_json", "TEXT");
-    this._ensureColumn("creator_auto_publish_config", "privacy_level", "TEXT DEFAULT 'public'");
-    this._ensureColumn("creator_auto_publish_config", "publish_time_slots", "TEXT");
-
-    // 为 creator_profile_bindings 补充列
-    this._ensureColumn("creator_profile_bindings", "cdp_instance_id", "TEXT");
-
-    // 为 auto_remix_publish_pipeline 补充列
+    // 迁移逻辑已在 database.js 的 #migrate() 中统一处理
+    // 这里仅做最后保障：确保 pipeline 表有 source_url 和 matrix_id 列
     this._ensureColumn("auto_remix_publish_pipeline", "source_url", "TEXT");
     this._ensureColumn("auto_remix_publish_pipeline", "matrix_id", "TEXT");
+    // 确保新表存在（database.js 也会建，这里做双重保障）
+    this.store.db.exec(`
+      CREATE TABLE IF NOT EXISTS matrix_auto_publish_config (
+        matrix_id TEXT PRIMARY KEY,
+        enabled INTEGER DEFAULT 0,
+        preset_id TEXT,
+        daily_limit INTEGER DEFAULT 3,
+        monitor_interval_hours INTEGER DEFAULT 6,
+        last_monitor_at TEXT,
+        publish_time_slots TEXT,
+        ratio TEXT DEFAULT '9:16',
+        hashtags_json TEXT,
+        privacy_level TEXT DEFAULT 'public',
+        cdp_instance_id TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (matrix_id) REFERENCES media_matrices(id) ON DELETE CASCADE
+      );
+    `);
   }
 
   _ensureColumn(table, column, definition) {
@@ -1046,69 +1090,12 @@ export class AutoPublishScheduler extends EventTarget {
 
   // ─── 辅助：Config ───
 
-  _listEnabledConfigs() {
-    const rows = this.store.db
-      .prepare("SELECT * FROM creator_auto_publish_config WHERE enabled = 1")
-      .all();
-    return rows.map((r) => this._mapConfig(r));
+  _listEnabledMatrixConfigs() {
+    return this.store.listEnabledMatrixConfigs();
   }
 
-  _getConfig(creatorId) {
-    const row = this.store.db
-      .prepare("SELECT * FROM creator_auto_publish_config WHERE creator_id = ?")
-      .get(creatorId);
-    return row ? this._mapConfig(row) : null;
-  }
-
-  _mapConfig(r) {
-    return {
-      creator_id: r.creator_id,
-      tiktok_username: r.tiktok_username || null,
-      enabled: r.enabled !== 0,
-      preset_id: r.preset_id || null,
-      daily_limit_per_profile: Number(r.daily_limit_per_profile || 3),
-      monitor_interval_hours: Number(r.monitor_interval_hours || 6),
-      last_monitor_at: r.last_monitor_at || null,
-      cdp_instance_id: r.cdp_instance_id || null,
-      matrix_id: r.matrix_id || null,
-      ratio: r.ratio || "9:16",
-      hashtags_json: r.hashtags_json || null,
-      privacy_level: r.privacy_level || "public",
-      publish_time_slots: r.publish_time_slots || null,
-    };
-  }
-
-  // ─── 辅助：Creator Bindings ───
-
-  _listCreatorBindings(creatorId) {
-    const rows = this.store.db
-      .prepare("SELECT * FROM creator_profile_bindings WHERE creator_id = ? AND enabled = 1 ORDER BY created_at ASC")
-      .all(creatorId);
-    return rows.map((r) => ({
-      id: r.id,
-      creator_id: r.creator_id,
-      profile_id: r.profile_id,
-      daily_limit: Number(r.daily_limit || 3),
-      last_publish_at: r.last_publish_at || null,
-      enabled: r.enabled !== 0,
-      cdp_instance_id: r.cdp_instance_id || null,
-    }));
-  }
-
-  _getCreatorBinding(creatorId, profileId) {
-    const row = this.store.db
-      .prepare("SELECT * FROM creator_profile_bindings WHERE creator_id = ? AND profile_id = ?")
-      .get(creatorId, profileId);
-    if (!row) return null;
-    return {
-      id: row.id,
-      creator_id: row.creator_id,
-      profile_id: row.profile_id,
-      daily_limit: Number(row.daily_limit || 3),
-      last_publish_at: row.last_publish_at || null,
-      enabled: row.enabled !== 0,
-      cdp_instance_id: row.cdp_instance_id || null,
-    };
+  _getMatrixConfig(matrixId) {
+    return this.store.getMatrixAutoPublishConfig(matrixId);
   }
 
   // ─── 辅助：Video Monitor ───

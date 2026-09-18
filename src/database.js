@@ -615,6 +615,154 @@ export class LocalDatabase {
     this.#ensureColumn("auto_remix_publish_pipeline", "attempt_count", "INTEGER DEFAULT 0");
     this.#ensureColumn("auto_remix_publish_pipeline", "created_at", "TEXT NOT NULL DEFAULT ''");
     this.#ensureColumn("auto_remix_publish_pipeline", "updated_at", "TEXT NOT NULL DEFAULT ''");
+
+    // ===== 架构重构迁移：按矩阵自动发布 =====
+
+    // 2.4.1 补全 pipeline 缺失列（source_url, matrix_id）
+    this.#ensureColumn("auto_remix_publish_pipeline", "source_url", "TEXT");
+    this.#ensureColumn("auto_remix_publish_pipeline", "matrix_id", "TEXT");
+
+    // 2.4.2 新建 matrix_auto_publish_config 表
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS matrix_auto_publish_config (
+        matrix_id TEXT PRIMARY KEY,
+        enabled INTEGER DEFAULT 0,
+        preset_id TEXT,
+        daily_limit INTEGER DEFAULT 3,
+        monitor_interval_hours INTEGER DEFAULT 6,
+        last_monitor_at TEXT,
+        publish_time_slots TEXT,
+        ratio TEXT DEFAULT '9:16',
+        hashtags_json TEXT,
+        privacy_level TEXT DEFAULT 'public',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (matrix_id) REFERENCES media_matrices(id) ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS idx_matrix_auto_publish_config_enabled
+        ON matrix_auto_publish_config(enabled);
+    `);
+    // 补充 cdp_instance_id 列（调度器混剪仍需要）
+    this.#ensureColumn("matrix_auto_publish_config", "cdp_instance_id", "TEXT");
+
+    // 2.4.3 迁移 creator_auto_publish_config → matrix_auto_publish_config
+    //     当前 creator_auto_publish_config.matrix_id 列为 NULL，
+    //     需通过 matrix_account_creators 反查：creator_id → matrix_account_id → matrix_id
+    {
+      const hasOldConfig = this.db.prepare(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='creator_auto_publish_config'"
+      ).get();
+      if (hasOldConfig) {
+        const oldRows = this.db.prepare("SELECT * FROM creator_auto_publish_config").all();
+        const ts = nowIso();
+        const insertCfg = this.db.prepare(`
+          INSERT OR IGNORE INTO matrix_auto_publish_config
+            (matrix_id, enabled, preset_id, daily_limit, monitor_interval_hours,
+             last_monitor_at, publish_time_slots, ratio, hashtags_json,
+             privacy_level, cdp_instance_id, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `);
+
+        for (const r of oldRows) {
+          // 通过 creator_id 反查 matrix_id
+          let matrixId = r.matrix_id;
+          if (!matrixId) {
+            const mac = this.db.prepare(`
+              SELECT ma.matrix_id FROM matrix_account_creators mac
+              JOIN matrix_accounts ma ON ma.id = mac.matrix_account_id
+              WHERE mac.creator_id = ? LIMIT 1
+            `).get(r.creator_id);
+            matrixId = mac?.matrix_id || null;
+          }
+          if (!matrixId) continue;
+
+          // 幂等：跳过已迁移的
+          const exists = this.db.prepare(
+            "SELECT matrix_id FROM matrix_auto_publish_config WHERE matrix_id = ?"
+          ).get(matrixId);
+          if (exists) continue;
+
+          insertCfg.run(
+            matrixId,
+            r.enabled ?? 0,
+            r.preset_id || null,
+            r.daily_limit_per_profile || 3,
+            r.monitor_interval_hours || 6,
+            r.last_monitor_at || null,
+            r.publish_time_slots || null,
+            r.ratio || '9:16',
+            r.hashtags_json || null,
+            r.privacy_level || 'public',
+            r.cdp_instance_id || null,
+            r.created_at || ts,
+            r.updated_at || ts,
+          );
+        }
+
+        // 2.4.4 迁移 creator_profile_bindings → matrix_profiles
+        //       通过 creator_id → matrix_account_creators → matrix_accounts → matrix_id
+        const hasBindings = this.db.prepare(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name='creator_profile_bindings'"
+        ).get();
+        if (hasBindings) {
+          const bindings = this.db.prepare(`
+            SELECT cpb.creator_id, cpb.profile_id
+            FROM creator_profile_bindings cpb
+            WHERE cpb.profile_id IS NOT NULL
+          `).all();
+
+          for (const b of bindings) {
+            // 通过 creator_id 反查 matrix_id
+            const mac = this.db.prepare(`
+              SELECT ma.matrix_id FROM matrix_account_creators mac
+              JOIN matrix_accounts ma ON ma.id = mac.matrix_account_id
+              WHERE mac.creator_id = ? LIMIT 1
+            `).get(b.creator_id);
+            if (!mac?.matrix_id) continue;
+
+            // 1:1 约束：已有则跳过
+            const existing = this.db.prepare(
+              "SELECT profile_id FROM matrix_profiles WHERE matrix_id = ?"
+            ).get(mac.matrix_id);
+            if (existing) continue;
+
+            const id = `mp_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+            this.db.prepare(
+              "INSERT OR IGNORE INTO matrix_profiles (id, matrix_id, profile_id, created_at) VALUES (?, ?, ?, ?)"
+            ).run(id, mac.matrix_id, b.profile_id, ts);
+          }
+        }
+      }
+    }
+
+    // 2.4.5 matrix_profiles 重建为 1:1 约束（若旧约束仍在）
+    {
+      const mpSchema = this.db.prepare(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='matrix_profiles'"
+      ).get();
+      if (mpSchema && mpSchema.sql.includes("matrix_id, profile_id")) {
+        // 旧约束（组合唯一），需要重建为 1:1
+        this.db.exec(`
+          CREATE TABLE IF NOT EXISTS matrix_profiles_new (
+            id TEXT PRIMARY KEY,
+            matrix_id TEXT NOT NULL,
+            profile_id TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (matrix_id) REFERENCES media_matrices(id) ON DELETE CASCADE,
+            UNIQUE (matrix_id)
+          );
+          INSERT OR IGNORE INTO matrix_profiles_new (id, matrix_id, profile_id, created_at)
+            SELECT id, matrix_id, profile_id, created_at FROM matrix_profiles;
+          DROP TABLE matrix_profiles;
+          ALTER TABLE matrix_profiles_new RENAME TO matrix_profiles;
+          CREATE INDEX IF NOT EXISTS idx_matrix_profiles_matrix ON matrix_profiles(matrix_id);
+        `);
+      }
+    }
+
+    // 2.4.6 旧表保留但标记废弃（不立即删，防止回滚需求）
+    //   creator_auto_publish_config 和 creator_profile_bindings 保留在 DB 中，
+    //   代码不再读写。可在后续版本确认无问题后 DROP。
   }
 
   #ensureColumn(table, column, definition) {
@@ -1702,6 +1850,102 @@ export class LocalDatabase {
     return this.db.prepare(`DELETE FROM tk_publish_jobs WHERE id = ?`).run(id).changes;
   }
 
+  // ===== matrix_auto_publish_config（按矩阵自动发布配置） =====
+
+  getMatrixAutoPublishConfig(matrixId) {
+    const row = this.db
+      .prepare("SELECT * FROM matrix_auto_publish_config WHERE matrix_id = ?")
+      .get(matrixId);
+    if (!row) return null;
+    return {
+      matrixId: row.matrix_id,
+      enabled: row.enabled !== 0,
+      presetId: row.preset_id || null,
+      dailyLimit: Number(row.daily_limit || 3),
+      monitorIntervalHours: Number(row.monitor_interval_hours || 6),
+      lastMonitorAt: row.last_monitor_at || null,
+      publishTimeSlots: row.publish_time_slots || null,
+      ratio: row.ratio || "9:16",
+      hashtagsJson: row.hashtags_json || null,
+      privacyLevel: row.privacy_level || "public",
+      cdpInstanceId: row.cdp_instance_id || null,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  upsertMatrixAutoPublishConfig(matrixId, {
+    enabled = null, presetId = null, dailyLimit = null,
+    monitorIntervalHours = null, lastMonitorAt = null,
+    publishTimeSlots = null, ratio = null,
+    hashtagsJson = null, privacyLevel = null, cdpInstanceId = null,
+  } = {}) {
+    const ts = nowIso();
+    const existing = this.db
+      .prepare("SELECT matrix_id FROM matrix_auto_publish_config WHERE matrix_id = ?")
+      .get(matrixId);
+    if (existing) {
+      const sets = [];
+      const params = [];
+      if (enabled !== null) { sets.push("enabled = ?"); params.push(enabled ? 1 : 0); }
+      if (presetId !== null) { sets.push("preset_id = ?"); params.push(presetId); }
+      if (dailyLimit !== null) { sets.push("daily_limit = ?"); params.push(dailyLimit); }
+      if (monitorIntervalHours !== null) { sets.push("monitor_interval_hours = ?"); params.push(monitorIntervalHours); }
+      if (lastMonitorAt !== null) { sets.push("last_monitor_at = ?"); params.push(lastMonitorAt); }
+      if (publishTimeSlots !== null) { sets.push("publish_time_slots = ?"); params.push(publishTimeSlots); }
+      if (ratio !== null) { sets.push("ratio = ?"); params.push(ratio); }
+      if (hashtagsJson !== null) { sets.push("hashtags_json = ?"); params.push(hashtagsJson); }
+      if (privacyLevel !== null) { sets.push("privacy_level = ?"); params.push(privacyLevel); }
+      if (cdpInstanceId !== null) { sets.push("cdp_instance_id = ?"); params.push(cdpInstanceId); }
+      sets.push("updated_at = ?"); params.push(ts);
+      params.push(matrixId);
+      this.db.prepare(
+        `UPDATE matrix_auto_publish_config SET ${sets.join(", ")} WHERE matrix_id = ?`
+      ).run(...params);
+    } else {
+      this.db.prepare(`
+        INSERT INTO matrix_auto_publish_config
+          (matrix_id, enabled, preset_id, daily_limit, monitor_interval_hours,
+           last_monitor_at, publish_time_slots, ratio, hashtags_json,
+           privacy_level, cdp_instance_id, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        matrixId,
+        enabled !== null ? (enabled ? 1 : 0) : 0,
+        presetId || null,
+        dailyLimit || 3,
+        monitorIntervalHours || 6,
+        lastMonitorAt || null,
+        publishTimeSlots || null,
+        ratio || "9:16",
+        hashtagsJson || null,
+        privacyLevel || "public",
+        cdpInstanceId || null,
+        ts, ts,
+      );
+    }
+    return this.getMatrixAutoPublishConfig(matrixId);
+  }
+
+  listEnabledMatrixConfigs() {
+    const rows = this.db
+      .prepare("SELECT * FROM matrix_auto_publish_config WHERE enabled = 1")
+      .all();
+    return rows.map((r) => ({
+      matrixId: r.matrix_id,
+      enabled: r.enabled !== 0,
+      presetId: r.preset_id || null,
+      dailyLimit: Number(r.daily_limit || 3),
+      monitorIntervalHours: Number(r.monitor_interval_hours || 6),
+      lastMonitorAt: r.last_monitor_at || null,
+      publishTimeSlots: r.publish_time_slots || null,
+      ratio: r.ratio || "9:16",
+      hashtagsJson: r.hashtags_json || null,
+      privacyLevel: r.privacy_level || "public",
+      cdpInstanceId: r.cdp_instance_id || null,
+    }));
+  }
+
   // ===== 自动混剪发布流水线 =====
 
   // --- creator_auto_publish_config ---
@@ -1958,17 +2202,21 @@ export class LocalDatabase {
     };
   }
 
-  listPipelineTasks({ creatorId = null, status = null, profileId = null, limit = 100 } = {}) {
+  listPipelineTasks({ matrixId = null, creatorId = null, status = null, profileId = null, limit = 100 } = {}) {
     const where = [];
     const params = [];
+    if (matrixId) { where.push("p.matrix_id = ?"); params.push(matrixId); }
     if (creatorId) { where.push("p.creator_id = ?"); params.push(creatorId); }
     if (status) { where.push("p.status = ?"); params.push(status); }
     if (profileId) { where.push("p.profile_id = ?"); params.push(profileId); }
     const clause = where.length ? `WHERE ${where.join(" AND ")}` : "";
     const rows = this.db.prepare(`
-      SELECT p.*, c.name AS creator_name
+      SELECT p.*, c.name AS creator_name,
+             m.name AS matrix_name, ma.platform AS platform, ma.account_name AS account_name
       FROM auto_remix_publish_pipeline p
       LEFT JOIN remix_creators c ON p.creator_id = c.id
+      LEFT JOIN media_matrices m ON m.id = p.matrix_id
+      LEFT JOIN matrix_accounts ma ON ma.matrix_id = p.matrix_id
       ${clause}
       ORDER BY p.created_at DESC
       LIMIT ?
@@ -1977,7 +2225,12 @@ export class LocalDatabase {
       id: row.id,
       creatorId: row.creator_id,
       creatorName: row.creator_name,
+      matrixId: row.matrix_id || null,
+      matrixName: row.matrix_name || null,
+      platform: row.platform || null,
+      accountName: row.account_name || null,
       sourceVideoId: row.source_video_id,
+      sourceUrl: row.source_url || null,
       remixTaskId: row.remix_task_id,
       profileId: row.profile_id,
       publishJobId: row.publish_job_id,

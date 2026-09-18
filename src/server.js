@@ -4179,76 +4179,65 @@ export function createMonitorServer({
 
         // 获取达人自动发布配置
         // ---- 自动发布 API（/api/auto-publish/* 别名，兼容前端调用） ----
-        // GET/PUT /api/auto-publish/config/:creatorId
-        const apConfigMatch = pathname.match(/^\/api\/auto-publish\/config\/([^/]+)$/);
-        if (apConfigMatch) {
-          const creatorId = decodeURIComponent(apConfigMatch[1]);
+
+        // GET /api/auto-publish/matrices — 列出所有矩阵+配置+账号+实例+达人数
+        if (request.method === "GET" && pathname === "/api/auto-publish/matrices") {
+          const matrices = store.listMatrices();
+          const result = matrices.map((m) => {
+            const cfg = store.getMatrixAutoPublishConfig(m.id) || { enabled: 0 };
+            const accounts = store.listMatrixAccounts(m.id);
+            const profiles = store.getMatrixProfiles(m.id); // 1:1，返回数组但最多1个
+            return {
+              id: m.id,
+              name: m.name,
+              notes: m.notes,
+              createdAt: m.createdAt,
+              autoPublishConfig: cfg,
+              accounts,
+              profileId: profiles[0]?.profileId || null, // 绑定的实例
+              creatorCount: accounts.reduce((sum, a) => sum + store.getMatrixAccountCreators(a.id).length, 0),
+            };
+          });
+          sendJson(response, 200, result);
+          return;
+        }
+
+        // GET/PUT /api/auto-publish/matrix-config/:matrixId — 矩阵配置
+        const apMatrixCfgMatch = pathname.match(/^\/api\/auto-publish\/matrix-config\/([^/]+)$/);
+        if (apMatrixCfgMatch) {
+          const matrixId = decodeURIComponent(apMatrixCfgMatch[1]);
           if (request.method === "GET") {
-            sendJson(response, 200, store.getAutoPublishConfig(creatorId) || { creatorId, enabled: false, presetId: null, dailyLimitPerProfile: 3, monitorIntervalHours: 6 });
+            const cfg = store.getMatrixAutoPublishConfig(matrixId) || {
+              matrixId, enabled: false, presetId: null, dailyLimit: 3, monitorIntervalHours: 6,
+            };
+            sendJson(response, 200, cfg);
             return;
           }
           if (request.method === "PUT") {
             const body = await readJson(request);
-            const updated = store.upsertAutoPublishConfig(creatorId, {
-              enabled: body.enabled, presetId: body.presetId,
-              dailyLimitPerProfile: body.dailyLimitPerProfile, monitorIntervalHours: body.monitorIntervalHours,
-              tiktokUsername: body.tiktokUsername, cdpInstanceId: body.cdpInstanceId,
-              matrixId: body.matrixId, ratio: body.ratio,
-              hashtagsJson: body.hashtagsJson, privacyLevel: body.privacyLevel,
+            const updated = store.upsertMatrixAutoPublishConfig(matrixId, {
+              enabled: body.enabled,
+              presetId: body.presetId,
+              dailyLimit: body.dailyLimit,
+              monitorIntervalHours: body.monitorIntervalHours,
               publishTimeSlots: body.publishTimeSlots,
+              ratio: body.ratio,
+              hashtagsJson: body.hashtagsJson,
+              privacyLevel: body.privacyLevel,
+              cdpInstanceId: body.cdpInstanceId,
             });
             sendJson(response, 200, updated);
             return;
           }
         }
 
-        // GET /api/auto-publish/creators
-        if (request.method === "GET" && pathname === "/api/auto-publish/creators") {
-          sendJson(response, 200, store.listAutoPublishCreators());
-          return;
-        }
-
-        // GET /api/auto-publish/bindings/:creatorId  (注意：creatorId 在路径末尾)
-        const apBindingsGetMatch = pathname.match(/^\/api\/auto-publish\/bindings\/([^/]+)$/);
-        if (apBindingsGetMatch && request.method === "GET") {
-          const creatorId = decodeURIComponent(apBindingsGetMatch[1]);
-          sendJson(response, 200, store.listProfileBindings(creatorId));
-          return;
-        }
-
-        // POST /api/auto-publish/bindings
-        if (request.method === "POST" && pathname === "/api/auto-publish/bindings") {
-          const body = await readJson(request);
-          if (!body.creatorId || !body.profileId) { sendJson(response, 400, { error: "缺少 creatorId / profileId" }); return; }
-          sendJson(response, 200, store.addProfileBinding(body.creatorId, body.profileId, body.dailyLimit || 3));
-          return;
-        }
-
-        // DELETE /api/auto-publish/bindings/:id
-        const apBindingDelMatch = pathname.match(/^\/api\/auto-publish\/bindings\/([^/]+)$/);
-        if (apBindingDelMatch && request.method === "DELETE") {
-          store.removeProfileBinding(decodeURIComponent(apBindingDelMatch[1]));
-          sendJson(response, 200, { ok: true });
-          return;
-        }
-
-        // PUT /api/auto-publish/bindings/:id
-        if (apBindingDelMatch && request.method === "PUT") {
-          const body = await readJson(request);
-          const updated = store.updateProfileBinding(decodeURIComponent(apBindingDelMatch[1]), {
-            dailyLimit: body.dailyLimit, enabled: body.enabled,
-          });
-          sendJson(response, 200, updated);
-          return;
-        }
-
         // GET /api/auto-publish/pipeline
         if (request.method === "GET" && pathname === "/api/auto-publish/pipeline") {
           const url = new URL(request.url, "http://localhost");
-          const creatorId = url.searchParams.get("creatorId");
+          const matrixId = url.searchParams.get("matrixId");
           const status = url.searchParams.get("status");
           const limit = url.searchParams.get("limit");
-          sendJson(response, 200, store.listPipelineTasks({ creatorId, status, limit: limit ? Number(limit) : 100 }));
+          sendJson(response, 200, store.listPipelineTasks({ matrixId, status, limit: limit ? Number(limit) : 100 }));
           return;
         }
 
@@ -4261,11 +4250,11 @@ export function createMonitorServer({
           return;
         }
 
-        // POST /api/auto-publish/monitor/:creatorId
+        // POST /api/auto-publish/monitor/:matrixId
         const apMonitorMatch = pathname.match(/^\/api\/auto-publish\/monitor\/([^/]+)$/);
         if (apMonitorMatch && request.method === "POST") {
           // 手动触发监控，通过事件通知调度器
-          autoScheduler?.monitorCreatorVideos?.().catch(() => {});
+          autoScheduler?.monitorMatrixVideos?.().catch(() => {});
           sendJson(response, 200, { ok: true, message: "监控已触发" });
           return;
         }
@@ -4300,20 +4289,9 @@ export function createMonitorServer({
           let profileId = decodeURIComponent(apAnalyticsMatch[1]);
           // 如果传的是 matrixId，查找该矩阵绑定的 profileId
           if (profileId.startsWith("mx_")) {
-            // 1. 先查 matrix_profiles
+            // 直接从 matrix_profiles 查（1:1）
             const mp = store.db.prepare("SELECT profile_id FROM matrix_profiles WHERE matrix_id = ? LIMIT 1").get(profileId);
-            if (mp?.profile_id) {
-              profileId = mp.profile_id;
-            } else {
-              // 2. 查 creator_profile_bindings（通过 matrix_account_creators 找达人，再找达人绑定的 profile）
-              const binding = store.db.prepare(`
-                SELECT cpb.profile_id FROM creator_profile_bindings cpb
-                JOIN matrix_account_creators mac ON mac.creator_id = cpb.creator_id
-                JOIN matrix_accounts ma ON ma.id = mac.matrix_account_id
-                WHERE ma.matrix_id = ? AND cpb.enabled = 1 LIMIT 1
-              `).get(profileId);
-              profileId = binding?.profile_id || "";
-            }
+            profileId = mp?.profile_id || "";
           }
           if (!profileId) {
             sendJson(response, 200, { profileId: "", jobCount: 0, analyticsCount: 0, jobs: [] });
