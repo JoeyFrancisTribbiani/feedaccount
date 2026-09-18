@@ -8186,6 +8186,14 @@ const autoPublish = {
           <td class="col-action">
             ${canRetry ? `<button class="button button-secondary" type="button" data-retry="${escapeHtml(t.id)}" style="font-size:11px;padding:2px 10px;">重试</button>` : ''}
             ${canPublish ? `<button class="button button-primary" type="button" data-publish="${escapeHtml(t.id)}" style="font-size:11px;padding:2px 10px;margin-left:4px;">立即发布</button>` : ''}
+            <button class="button button-secondary" type="button" data-logs="${escapeHtml(t.publishJobId || t.id)}" style="font-size:11px;padding:2px 10px;margin-left:4px;">日志</button>
+          </td>
+        </tr>
+        <tr class="pipeline-log-row hidden" data-log-row="${escapeHtml(t.id)}">
+          <td colspan="7" style="padding:8px 12px;background:#f8fafc;">
+            <div data-log-content="${escapeHtml(t.id)}" style="max-height:200px;overflow-y:auto;font-size:12px;">
+              <span class="muted-activity" style="font-size:11px;">点击日志按钮加载…</span>
+            </div>
           </td>
         </tr>
       `;
@@ -8200,6 +8208,50 @@ const autoPublish = {
     tbody.querySelectorAll('[data-publish]').forEach((btn) => {
       btn.addEventListener('click', () => this.triggerPublishTask(btn.dataset.publish));
     });
+
+    // 绑定日志按钮
+    tbody.querySelectorAll('[data-logs]').forEach((btn) => {
+      btn.addEventListener('click', () => this.togglePipelineLogs(btn.dataset.logs, btn));
+    });
+  },
+
+  // ---- 流水线行内日志 ----
+  async togglePipelineLogs(jobId, btn) {
+    const row = btn.closest('tr').nextElementSibling;
+    if (!row) return;
+    const content = row.querySelector('[data-log-content]');
+    if (!content) return;
+
+    if (!row.classList.contains('hidden')) {
+      row.classList.add('hidden');
+      return;
+    }
+
+    row.classList.remove('hidden');
+    content.innerHTML = '<span class="muted-activity" style="font-size:11px;">加载中…</span>';
+
+    try {
+      const taskId = btn.dataset.logs;
+      const data = await request(`/api/auto-publish/logs?limit=20`);
+      const logs = (Array.isArray(data) ? data : []).filter((l) =>
+        (l.message || '').includes(taskId) || (l.taskId && l.taskId.includes(taskId))
+      );
+      if (!logs.length) {
+        content.innerHTML = '<span class="muted-activity" style="font-size:11px;">该任务暂无日志</span>';
+        return;
+      }
+      content.innerHTML = logs.map((l) => {
+        const time = l.createdAt ? formatDateTime(l.createdAt) : '—';
+        const color = l.level === 'error' ? '#dc2626' : (l.level === 'warning' ? '#d97706' : '#3b82f6');
+        return `<div style="padding:3px 0;border-bottom:1px solid #f0f0f0;display:flex;gap:6px;">
+          <span style="color:#94a3b8;min-width:120px;flex-shrink:0;">${escapeHtml(time)}</span>
+          <span style="color:${color};font-weight:600;font-size:10px;text-transform:uppercase;flex-shrink:0;">${escapeHtml(l.level)}</span>
+          <span style="color:#1e293b;flex:1;word-break:break-all;">${escapeHtml((l.message || '').substring(0, 300))}</span>
+        </div>`;
+      }).join('');
+    } catch (e) {
+      content.innerHTML = `<span style="color:#dc2626;font-size:11px;">加载失败: ${escapeHtml(e.message)}</span>`;
+    }
   },
 
   // ---- 渲染：监控状态 ----
