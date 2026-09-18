@@ -168,13 +168,7 @@ export class TiktokPublisher {
       await this._dismissDialogs();
       
       fileInput = await page.$('input[type="file"]');
-      if (fileInput) {
-        // 检查 file input 是否可见且可操作（弹窗可能挡住）
-        const isVisible = await fileInput.isVisible().catch(() => false);
-        if (isVisible) break;
-        // 不可见说明弹窗还在挡着，继续等
-        fileInput = null;
-      }
+      if (fileInput) break;  // file input 本身就是 display:none，不需要可见
       
       // 检查是否已经在上传/已上传状态（之前的上传残留）
       const bodyText = await page.innerText('body').catch(() => '');
