@@ -5882,9 +5882,9 @@ async function openAnalyticsModal(matrixId, accountName) {
     const allRecords = data.jobs.flatMap(j => j.records);
     const totalViews = data.jobs.reduce((s, j) => s + j.totalViews, 0);
     const allViews = allRecords.map(r => r.views);
-    const maxView = Math.max(...allViews);
-    const minView = Math.min(...allViews);
-    const avgView = Math.round(totalViews / allRecords.length);
+    const maxView = allViews.length ? Math.max(...allViews) : 0;
+    const minView = allViews.length ? Math.min(...allViews) : 0;
+    const avgView = allRecords.length ? Math.round(totalViews / allRecords.length) : 0;
 
     let html = `
       <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px;">
@@ -5933,9 +5933,9 @@ async function openAnalyticsModal(matrixId, accountName) {
     html += `<h4 style="font-size:12px;margin:16px 0 8px;">各发布任务详情</h4>`;
     for (const job of data.jobs.slice(0, 10)) {
       const jobViews = job.records.map(r => r.views);
-      const jobMax = Math.max(...jobViews);
-      const jobMin = Math.min(...jobViews);
-      const jobAvg = Math.round(job.totalViews / job.records.length);
+      const jobMax = jobViews.length ? Math.max(...jobViews) : 0;
+      const jobMin = jobViews.length ? Math.min(...jobViews) : 0;
+      const jobAvg = job.records.length ? Math.round(job.totalViews / job.records.length) : 0;
 
       // 迷你折线图（SVG）
       const chartW = 300, chartH = 60;
@@ -7784,12 +7784,11 @@ const autoPublish = {
       this._initialized = true;
     }
     this.fetchPresets();
-    this.fetchMatrices();
-    this.fetchPipelineTasks();
     this.fetchProfiles();
     this.fetchCdpInstances();
-    this.fetchMonitorData();
+    this.fetchPipelineTasks();
     this.fetchPublishLogs();
+    this.fetchMatrices().then(() => this.fetchMonitorData());
     this._startPolling();
   },
 
@@ -7843,7 +7842,12 @@ const autoPublish = {
       if (!document.querySelector('.auto-publish-tab')?.classList.contains('hidden')) {
         this.fetchPipelineTasks({ quiet: true });
         this.fetchPublishLogs({ quiet: true });
-        this.fetchMatrices().then(() => this.fetchMonitorData());
+        // 轮询时静默更新 matrices 数据（不重建DOM避免弹窗闪烁），仅刷新监控区
+        request('/api/auto-publish/matrices').then(data => {
+          this.matrices = Array.isArray(data) ? data : [];
+          this._updateFilterOptions();
+          this.fetchMonitorData();
+        }).catch(() => {});
       }
     }, 10000);
   },

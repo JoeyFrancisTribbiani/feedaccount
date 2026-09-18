@@ -47,8 +47,11 @@ export class TiktokPublishManager extends EventTarget {
 
   async executeJob(jobId) {
     if (this.runningJobIds.has(jobId)) throw new Error("该任务正在执行中");
+    if (this.runningJobIds.size > 0) throw new Error("已有发布任务正在执行，请等待完成");
     const job = this.persistence?.getTkPublishJob(jobId);
     if (!job) throw new Error("未找到指定的发布任务");
+    if (job.status === "success") throw new Error("该任务已发布成功，无需重复发布");
+    if (job.status === "running") throw new Error("该任务正在执行中");
 
     this.runningJobIds.add(jobId);
     this.persistence?.updateTkPublishJobStatus(jobId, { status: "running", executedAt: new Date().toISOString() });
@@ -96,23 +99,27 @@ export class TiktokPublishManager extends EventTarget {
 
         // 发布成功后，去我们自己的账号主页记录播放量（只记录本次发布的视频）
         try {
-          this._log(jobId, "info", `正在访问发布账号主页记录播放量…`);
-          const analyticsResult = await publisher.recordAnalytics(result.publishedVideoId || null);
-          this._log(jobId, "info", `播放量记录完成: ${analyticsResult.videoCount} 个视频`);
+          if (!result.publishedVideoId) {
+            this._log(jobId, "warning", `未获取到发布视频ID，跳过播放量记录`);
+          } else {
+            this._log(jobId, "info", `正在访问发布账号主页记录播放量…`);
+            const analyticsResult = await publisher.recordAnalytics(result.publishedVideoId);
+            this._log(jobId, "info", `播放量记录完成: ${analyticsResult.videoCount} 个视频`);
 
-          // 存入 tk_video_analytics 表
-          if (analyticsResult.videos?.length && this.persistence) {
-            const nowIso = new Date().toISOString();
-            const insertStmt = this.persistence.db.prepare(
-              `INSERT INTO tk_video_analytics (publish_job_id, views_count, likes_count, comments_count, shares_count, recorded_at)
-               VALUES (?, ?, ?, ?, ?, ?)`
-            );
-            for (const v of analyticsResult.videos) {
-              const views = this._parseCount(v.views);
-              const likes = this._parseCount(v.likes);
-              const comments = this._parseCount(v.comments);
-              const shares = this._parseCount(v.shares);
-              insertStmt.run(jobId, views, likes, comments, shares, nowIso);
+            // 存入 tk_video_analytics 表
+            if (analyticsResult.videos?.length && this.persistence) {
+              const nowIso = new Date().toISOString();
+              const insertStmt = this.persistence.db.prepare(
+                `INSERT INTO tk_video_analytics (publish_job_id, views_count, likes_count, comments_count, shares_count, recorded_at)
+                 VALUES (?, ?, ?, ?, ?, ?)`
+              );
+              for (const v of analyticsResult.videos) {
+                const views = this._parseCount(v.views);
+                const likes = this._parseCount(v.likes);
+                const comments = this._parseCount(v.comments);
+                const shares = this._parseCount(v.shares);
+                insertStmt.run(jobId, views, likes, comments, shares, nowIso);
+              }
             }
           }
         } catch (analyticsErr) {

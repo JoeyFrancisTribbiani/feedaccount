@@ -8,6 +8,8 @@
  */
 
 import { chromium } from 'playwright';
+import path from 'node:path';
+import { getOutputDir } from '../video-remix.js';
 
 // 发布按钮定位策略
 const POST_BTN_SELECTORS = [
@@ -157,7 +159,7 @@ export class TiktokPublisher {
     // 转换文件路径为本地绝对路径
     let localFilePath = filePath;
     if (/^\/data\//.test(filePath)) {
-      localFilePath = filePath.replace(/^\/data\//, 'D:/WILLLUXE/yix-repo/feedaccount/data/');
+      localFilePath = path.join(path.dirname(getOutputDir()), filePath.replace(/^\/data\//, ''));
     }
 
     // 1. 等待并找到 file input，先确保所有弹窗关闭
@@ -320,7 +322,7 @@ export class TiktokPublisher {
 
     let localFilePath = filePath;
     if (/^\/data\//.test(filePath)) {
-      localFilePath = filePath.replace(/^\/data\//, 'D:/WILLLUXE/yix-repo/feedaccount/data/');
+      localFilePath = path.join(path.dirname(getOutputDir()), filePath.replace(/^\/data\//, ''));
     }
 
     let fileInput = null;
