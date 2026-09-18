@@ -88,21 +88,21 @@ export class TiktokPublisher {
       return null;
     }, texts).catch(() => null);
 
-    // 最多循环5轮，每轮点掉一个弹窗
-    for (let i = 0; i < 5; i++) {
+    // 最多循环8轮，每轮点掉一个弹窗
+    for (let i = 0; i < 8; i++) {
       let clicked = null;
 
-      // 优先级1: Discard（丢弃草稿）
+      // 优先级1: Discard（丢弃草稿/确认丢弃）
       clicked = await dismiss(['Discard', '放弃', '丢弃']);
-      if (clicked) { await page.waitForTimeout(1500); continue; }
+      if (clicked) { await page.waitForTimeout(2000); continue; }
 
       // 优先级2: 内容检查弹窗 - 关闭/跳过
       clicked = await dismiss(['Not now', 'Skip', "Don't turn on", 'Cancel', '以后再说', '跳过', '取消', '暂不开启', '不开启']);
-      if (clicked) { await page.waitForTimeout(1500); continue; }
+      if (clicked) { await page.waitForTimeout(2000); continue; }
 
       // 优先级3: 其他确认弹窗
       clicked = await dismiss(['Got it', 'OK', 'Continue', '确定', '继续', '我知道了']);
-      if (clicked) { await page.waitForTimeout(1500); continue; }
+      if (clicked) { await page.waitForTimeout(2000); continue; }
 
       // 没有弹窗了，退出
       break;
