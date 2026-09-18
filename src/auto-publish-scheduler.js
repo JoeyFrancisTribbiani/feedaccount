@@ -415,8 +415,14 @@ export class AutoPublishScheduler extends EventTarget {
 
     // matrix_id 直接从 pipeline 获取（已在创建时设置）
     const effectiveMatrixId = pipeline.matrix_id;
-    // cdp_instance_id 从矩阵配置查
-    const cdpInstanceId = effectiveCfg?.cdpInstanceId || null;
+    // cdp_instance_id 从 matrix_profiles 查 profile_id（混剪需要的 CDP 实例就是浏览器实例）
+    let cdpInstanceId = effectiveCfg?.cdpInstanceId || null;
+    if (!cdpInstanceId && effectiveMatrixId) {
+      const mp = this.store.db
+        .prepare("SELECT profile_id FROM matrix_profiles WHERE matrix_id = ? LIMIT 1")
+        .get(effectiveMatrixId);
+      cdpInstanceId = mp?.profile_id || null;
+    }
     const presetId = effectiveCfg?.presetId || null;
     const ratio = effectiveCfg?.ratio || "9:16";
 
@@ -424,7 +430,7 @@ export class AutoPublishScheduler extends EventTarget {
     if (!cdpInstanceId) {
       this._updatePipeline(pipeline.id, {
         status: "failed",
-        failReason: "缺少 cdp_instance_id 配置（请在矩阵自动发布配置中设置 CDP 实例）",
+        failReason: "缺少 CDP 实例（请绑定 matrix_profiles 或在矩阵自动发布配置中设置 cdp_instance_id）",
       });
       this._emitChange();
       return;
@@ -893,8 +899,14 @@ export class AutoPublishScheduler extends EventTarget {
 
     // matrix_id 直接从 pipeline 获取
     const effectiveMatrixId = pipeline.matrix_id;
-    // cdp_instance_id 从矩阵配置查
-    const cdpInstanceId = effectiveCfg?.cdpInstanceId || null;
+    // cdp_instance_id 从 matrix_profiles 查 profile_id（混剪需要的 CDP 实例就是浏览器实例）
+    let cdpInstanceId = effectiveCfg?.cdpInstanceId || null;
+    if (!cdpInstanceId && effectiveMatrixId) {
+      const mp = this.store.db
+        .prepare("SELECT profile_id FROM matrix_profiles WHERE matrix_id = ? LIMIT 1")
+        .get(effectiveMatrixId);
+      cdpInstanceId = mp?.profile_id || null;
+    }
     const ratio = effectiveCfg?.ratio || "9:16";
     const presetId = effectiveCfg?.presetId || null;
 
@@ -902,7 +914,7 @@ export class AutoPublishScheduler extends EventTarget {
     if (!cdpInstanceId) {
       this._updatePipeline(pipeline.id, {
         status: "failed",
-        failReason: "重试失败: 缺少 cdp_instance_id 配置（请在矩阵自动发布配置中设置 CDP 实例）",
+        failReason: "重试失败: 缺少 CDP 实例（请绑定 matrix_profiles 或在矩阵自动发布配置中设置 cdp_instance_id）",
       });
       this._emitChange();
       return;

@@ -8330,14 +8330,12 @@ const autoPublish = {
       return;
     }
     container.innerHTML = this.monitorData.map((m) => {
-      const lastMonitor = m.lastMonitorAt ? formatDateTime(m.lastMonitorAt) : '从未监控';
-      const newCount = m.newVideoCount ?? 0;
-      const hasNew = newCount > 0;
+      // lastMonitorAt 在 m.autoPublishConfig 内（嵌套），不在顶层
+      const lastMonitor = m.autoPublishConfig?.lastMonitorAt ? formatDateTime(m.autoPublishConfig.lastMonitorAt) : '从未监控';
       return `
         <div class="ap-monitor-item">
           <span class="ap-monitor-name">${escapeHtml(m.name || '—')}</span>
           <span class="ap-monitor-time">${escapeHtml(lastMonitor)}</span>
-          <span class="ap-monitor-count ${hasNew ? 'has-new' : ''}">${hasNew ? `新发现 ${newCount}` : '无新视频'}</span>
         </div>
       `;
     }).join('');

@@ -617,6 +617,8 @@ export class LocalDatabase {
     this.#ensureColumn("auto_remix_publish_pipeline", "updated_at", "TEXT NOT NULL DEFAULT ''");
 
     // ===== 架构重构迁移：按矩阵自动发布 =====
+    // 整个迁移块用 try-catch 包裹，避免迁移 SQL 报错导致服务无法启动
+    try {
 
     // 2.4.1 补全 pipeline 缺失列（source_url, matrix_id）
     this.#ensureColumn("auto_remix_publish_pipeline", "source_url", "TEXT");
@@ -644,6 +646,32 @@ export class LocalDatabase {
     `);
     // 补充 cdp_instance_id 列（调度器混剪仍需要）
     this.#ensureColumn("matrix_auto_publish_config", "cdp_instance_id", "TEXT");
+
+    // 2.4.5 matrix_profiles 重建为 1:1 约束（若旧约束仍在）
+    // 注意：必须在数据迁移（2.4.3/2.4.4）之前执行，确保新表已是 1:1 约束
+    {
+      const mpSchema = this.db.prepare(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='matrix_profiles'"
+      ).get();
+      if (mpSchema && mpSchema.sql.includes("matrix_id, profile_id")) {
+        // 旧约束（组合唯一），需要重建为 1:1
+        this.db.exec(`
+          CREATE TABLE IF NOT EXISTS matrix_profiles_new (
+            id TEXT PRIMARY KEY,
+            matrix_id TEXT NOT NULL,
+            profile_id TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (matrix_id) REFERENCES media_matrices(id) ON DELETE CASCADE,
+            UNIQUE (matrix_id)
+          );
+          INSERT OR IGNORE INTO matrix_profiles_new (id, matrix_id, profile_id, created_at)
+            SELECT id, matrix_id, profile_id, created_at FROM matrix_profiles;
+          DROP TABLE matrix_profiles;
+          ALTER TABLE matrix_profiles_new RENAME TO matrix_profiles;
+          CREATE INDEX IF NOT EXISTS idx_matrix_profiles_matrix ON matrix_profiles(matrix_id);
+        `);
+      }
+    }
 
     // 2.4.3 迁移 creator_auto_publish_config → matrix_auto_publish_config
     //     当前 creator_auto_publish_config.matrix_id 列为 NULL，
@@ -735,34 +763,21 @@ export class LocalDatabase {
       }
     }
 
-    // 2.4.5 matrix_profiles 重建为 1:1 约束（若旧约束仍在）
-    {
-      const mpSchema = this.db.prepare(
-        "SELECT sql FROM sqlite_master WHERE type='table' AND name='matrix_profiles'"
-      ).get();
-      if (mpSchema && mpSchema.sql.includes("matrix_id, profile_id")) {
-        // 旧约束（组合唯一），需要重建为 1:1
-        this.db.exec(`
-          CREATE TABLE IF NOT EXISTS matrix_profiles_new (
-            id TEXT PRIMARY KEY,
-            matrix_id TEXT NOT NULL,
-            profile_id TEXT NOT NULL,
-            created_at TEXT NOT NULL,
-            FOREIGN KEY (matrix_id) REFERENCES media_matrices(id) ON DELETE CASCADE,
-            UNIQUE (matrix_id)
-          );
-          INSERT OR IGNORE INTO matrix_profiles_new (id, matrix_id, profile_id, created_at)
-            SELECT id, matrix_id, profile_id, created_at FROM matrix_profiles;
-          DROP TABLE matrix_profiles;
-          ALTER TABLE matrix_profiles_new RENAME TO matrix_profiles;
-          CREATE INDEX IF NOT EXISTS idx_matrix_profiles_matrix ON matrix_profiles(matrix_id);
-        `);
-      }
-    }
-
     // 2.4.6 旧表保留但标记废弃（不立即删，防止回滚需求）
     //   creator_auto_publish_config 和 creator_profile_bindings 保留在 DB 中，
     //   代码不再读写。可在后续版本确认无问题后 DROP。
+
+    } catch (migrateErr) {
+      // 迁移失败记录日志但不阻止服务启动（降级路径）
+      try {
+        this.db.prepare(
+          "INSERT INTO cdp_logs (level, message, created_at) VALUES (?, ?, ?)"
+        ).run("error", `架构重构迁移失败（已降级继续）: ${migrateErr.message}`, nowIso());
+      } catch (_) {
+        // 连日志表都写不了，只能 console
+      }
+      console.error("[Database] 架构重构迁移失败:", migrateErr.message);
+    }
   }
 
   #ensureColumn(table, column, definition) {
@@ -1875,10 +1890,10 @@ export class LocalDatabase {
   }
 
   upsertMatrixAutoPublishConfig(matrixId, {
-    enabled = null, presetId = null, dailyLimit = null,
-    monitorIntervalHours = null, lastMonitorAt = null,
-    publishTimeSlots = null, ratio = null,
-    hashtagsJson = null, privacyLevel = null, cdpInstanceId = null,
+    enabled = undefined, presetId = undefined, dailyLimit = undefined,
+    monitorIntervalHours = undefined, lastMonitorAt = undefined,
+    publishTimeSlots = undefined, ratio = undefined,
+    hashtagsJson = undefined, privacyLevel = undefined, cdpInstanceId = undefined,
   } = {}) {
     const ts = nowIso();
     const existing = this.db
@@ -1887,16 +1902,17 @@ export class LocalDatabase {
     if (existing) {
       const sets = [];
       const params = [];
-      if (enabled !== null) { sets.push("enabled = ?"); params.push(enabled ? 1 : 0); }
-      if (presetId !== null) { sets.push("preset_id = ?"); params.push(presetId); }
-      if (dailyLimit !== null) { sets.push("daily_limit = ?"); params.push(dailyLimit); }
-      if (monitorIntervalHours !== null) { sets.push("monitor_interval_hours = ?"); params.push(monitorIntervalHours); }
-      if (lastMonitorAt !== null) { sets.push("last_monitor_at = ?"); params.push(lastMonitorAt); }
-      if (publishTimeSlots !== null) { sets.push("publish_time_slots = ?"); params.push(publishTimeSlots); }
-      if (ratio !== null) { sets.push("ratio = ?"); params.push(ratio); }
-      if (hashtagsJson !== null) { sets.push("hashtags_json = ?"); params.push(hashtagsJson); }
-      if (privacyLevel !== null) { sets.push("privacy_level = ?"); params.push(privacyLevel); }
-      if (cdpInstanceId !== null) { sets.push("cdp_instance_id = ?"); params.push(cdpInstanceId); }
+      // 改用 !== undefined 判断，这样传 null 可以清空对应字段
+      if (enabled !== undefined) { sets.push("enabled = ?"); params.push(enabled ? 1 : 0); }
+      if (presetId !== undefined) { sets.push("preset_id = ?"); params.push(presetId); }
+      if (dailyLimit !== undefined) { sets.push("daily_limit = ?"); params.push(dailyLimit); }
+      if (monitorIntervalHours !== undefined) { sets.push("monitor_interval_hours = ?"); params.push(monitorIntervalHours); }
+      if (lastMonitorAt !== undefined) { sets.push("last_monitor_at = ?"); params.push(lastMonitorAt); }
+      if (publishTimeSlots !== undefined) { sets.push("publish_time_slots = ?"); params.push(publishTimeSlots); }
+      if (ratio !== undefined) { sets.push("ratio = ?"); params.push(ratio); }
+      if (hashtagsJson !== undefined) { sets.push("hashtags_json = ?"); params.push(hashtagsJson); }
+      if (privacyLevel !== undefined) { sets.push("privacy_level = ?"); params.push(privacyLevel); }
+      if (cdpInstanceId !== undefined) { sets.push("cdp_instance_id = ?"); params.push(cdpInstanceId); }
       sets.push("updated_at = ?"); params.push(ts);
       params.push(matrixId);
       this.db.prepare(
@@ -1911,16 +1927,16 @@ export class LocalDatabase {
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         matrixId,
-        enabled !== null ? (enabled ? 1 : 0) : 0,
-        presetId || null,
-        dailyLimit || 3,
-        monitorIntervalHours || 6,
-        lastMonitorAt || null,
-        publishTimeSlots || null,
-        ratio || "9:16",
-        hashtagsJson || null,
-        privacyLevel || "public",
-        cdpInstanceId || null,
+        enabled !== undefined ? (enabled ? 1 : 0) : 0,
+        presetId !== undefined ? presetId : null,
+        dailyLimit !== undefined ? dailyLimit : 3,
+        monitorIntervalHours !== undefined ? monitorIntervalHours : 6,
+        lastMonitorAt !== undefined ? lastMonitorAt : null,
+        publishTimeSlots !== undefined ? publishTimeSlots : null,
+        ratio !== undefined ? ratio : "9:16",
+        hashtagsJson !== undefined ? hashtagsJson : null,
+        privacyLevel !== undefined ? privacyLevel : "public",
+        cdpInstanceId !== undefined ? cdpInstanceId : null,
         ts, ts,
       );
     }
@@ -1947,156 +1963,6 @@ export class LocalDatabase {
   }
 
   // ===== 自动混剪发布流水线 =====
-
-  // --- creator_auto_publish_config ---
-  getAutoPublishConfig(creatorId) {
-    const row = this.db.prepare(`SELECT * FROM creator_auto_publish_config WHERE creator_id = ?`).get(creatorId);
-    if (!row) return null;
-    return {
-      creatorId: row.creator_id,
-      enabled: Boolean(row.enabled),
-      presetId: row.preset_id,
-      dailyLimitPerProfile: Number(row.daily_limit_per_profile || 3),
-      monitorIntervalHours: Number(row.monitor_interval_hours || 6),
-      lastMonitorAt: row.last_monitor_at,
-      tiktokUsername: row.tiktok_username || null,
-      cdpInstanceId: row.cdp_instance_id || null,
-      matrixId: row.matrix_id || null,
-      ratio: row.ratio || "9:16",
-      hashtagsJson: row.hashtags_json || null,
-      privacyLevel: row.privacy_level || "public",
-      publishTimeSlots: row.publish_time_slots || null,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-    };
-  }
-
-  upsertAutoPublishConfig(creatorId, { enabled = null, presetId = null, dailyLimitPerProfile = null, monitorIntervalHours = null, lastMonitorAt = null, tiktokUsername = null, cdpInstanceId = null, matrixId = null, ratio = null, hashtagsJson = null, privacyLevel = null, publishTimeSlots = null } = {}) {
-    const ts = nowIso();
-    const existing = this.db.prepare(`SELECT creator_id FROM creator_auto_publish_config WHERE creator_id = ?`).get(creatorId);
-    if (existing) {
-      const sets = [];
-      const params = [];
-      if (enabled !== null) { sets.push("enabled = ?"); params.push(booleanInt(enabled)); }
-      if (presetId !== null) { sets.push("preset_id = ?"); params.push(presetId); }
-      if (dailyLimitPerProfile !== null) { sets.push("daily_limit_per_profile = ?"); params.push(dailyLimitPerProfile); }
-      if (monitorIntervalHours !== null) { sets.push("monitor_interval_hours = ?"); params.push(monitorIntervalHours); }
-      if (lastMonitorAt !== null) { sets.push("last_monitor_at = ?"); params.push(lastMonitorAt); }
-      if (tiktokUsername !== null) { sets.push("tiktok_username = ?"); params.push(tiktokUsername); }
-      if (cdpInstanceId !== null) { sets.push("cdp_instance_id = ?"); params.push(cdpInstanceId); }
-      if (matrixId !== null) { sets.push("matrix_id = ?"); params.push(matrixId); }
-      if (ratio !== null) { sets.push("ratio = ?"); params.push(ratio); }
-      if (hashtagsJson !== null) { sets.push("hashtags_json = ?"); params.push(hashtagsJson); }
-      if (privacyLevel !== null) { sets.push("privacy_level = ?"); params.push(privacyLevel); }
-      if (publishTimeSlots !== null) { sets.push("publish_time_slots = ?"); params.push(publishTimeSlots); }
-      sets.push("updated_at = ?"); params.push(ts);
-      params.push(creatorId);
-      this.db.prepare(`UPDATE creator_auto_publish_config SET ${sets.join(", ")} WHERE creator_id = ?`).run(...params);
-    } else {
-      this.db.prepare(`
-        INSERT INTO creator_auto_publish_config (creator_id, enabled, preset_id, daily_limit_per_profile, monitor_interval_hours, last_monitor_at, tiktok_username, cdp_instance_id, matrix_id, ratio, hashtags_json, privacy_level, publish_time_slots, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
-        creatorId,
-        booleanInt(enabled ?? false),
-        presetId,
-        dailyLimitPerProfile ?? 3,
-        monitorIntervalHours ?? 6,
-        lastMonitorAt,
-        tiktokUsername,
-        cdpInstanceId,
-        matrixId,
-        ratio || "9:16",
-        hashtagsJson,
-        privacyLevel || "public",
-        publishTimeSlots,
-        ts, ts
-      );
-    }
-    return this.getAutoPublishConfig(creatorId);
-  }
-
-  listAutoPublishCreators() {
-    const rows = this.db.prepare(`
-      SELECT c.*, cr.name AS creator_name, cr.platform AS creator_platform, cr.avatar AS creator_avatar
-      FROM creator_auto_publish_config c
-      LEFT JOIN remix_creators cr ON c.creator_id = cr.id
-      WHERE c.enabled = 1
-      ORDER BY c.updated_at DESC
-    `).all();
-    return rows.map(row => ({
-      creatorId: row.creator_id,
-      creatorName: row.creator_name,
-      creatorPlatform: row.creator_platform,
-      creatorAvatar: row.creator_avatar,
-      enabled: Boolean(row.enabled),
-      presetId: row.preset_id,
-      dailyLimitPerProfile: Number(row.daily_limit_per_profile || 3),
-      monitorIntervalHours: Number(row.monitor_interval_hours || 6),
-      lastMonitorAt: row.last_monitor_at,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-    }));
-  }
-
-  // --- creator_profile_bindings ---
-  listProfileBindings(creatorId) {
-    const rows = this.db.prepare(`SELECT * FROM creator_profile_bindings WHERE creator_id = ? ORDER BY created_at ASC`).all(creatorId);
-    return rows.map(row => ({
-      id: row.id,
-      creatorId: row.creator_id,
-      profileId: row.profile_id,
-      dailyLimit: Number(row.daily_limit || 3),
-      lastPublishAt: row.last_publish_at,
-      enabled: Boolean(row.enabled),
-      createdAt: row.created_at,
-    }));
-  }
-
-  addProfileBinding(creatorId, profileId, dailyLimit = 3) {
-    const id = `pb_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-    const ts = nowIso();
-    this.db.prepare(`
-      INSERT INTO creator_profile_bindings (id, creator_id, profile_id, daily_limit, enabled, created_at)
-      VALUES (?, ?, ?, ?, 1, ?)
-    `).run(id, creatorId, profileId, dailyLimit, ts);
-    const row = this.db.prepare(`SELECT * FROM creator_profile_bindings WHERE id = ?`).get(id);
-    return {
-      id: row.id,
-      creatorId: row.creator_id,
-      profileId: row.profile_id,
-      dailyLimit: Number(row.daily_limit || 3),
-      lastPublishAt: row.last_publish_at,
-      enabled: Boolean(row.enabled),
-      createdAt: row.created_at,
-    };
-  }
-
-  removeProfileBinding(id) {
-    return this.db.prepare(`DELETE FROM creator_profile_bindings WHERE id = ?`).run(id).changes;
-  }
-
-  updateProfileBinding(id, { dailyLimit = null, enabled = null, lastPublishAt = null } = {}) {
-    const sets = [];
-    const params = [];
-    if (dailyLimit !== null) { sets.push("daily_limit = ?"); params.push(dailyLimit); }
-    if (enabled !== null) { sets.push("enabled = ?"); params.push(booleanInt(enabled)); }
-    if (lastPublishAt !== null) { sets.push("last_publish_at = ?"); params.push(lastPublishAt); }
-    if (!sets.length) return null;
-    params.push(id);
-    this.db.prepare(`UPDATE creator_profile_bindings SET ${sets.join(", ")} WHERE id = ?`).run(...params);
-    const row = this.db.prepare(`SELECT * FROM creator_profile_bindings WHERE id = ?`).get(id);
-    if (!row) return null;
-    return {
-      id: row.id,
-      creatorId: row.creator_id,
-      profileId: row.profile_id,
-      dailyLimit: Number(row.daily_limit || 3),
-      lastPublishAt: row.last_publish_at,
-      enabled: Boolean(row.enabled),
-      createdAt: row.created_at,
-    };
-  }
 
   // --- creator_video_monitor ---
   listMonitoredVideos(creatorId) {
@@ -2161,8 +2027,8 @@ export class LocalDatabase {
     const id = `pl_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     const ts = nowIso();
     this.db.prepare(`
-      INSERT INTO auto_remix_publish_pipeline (id, creator_id, source_video_id, remix_task_id, profile_id, publish_job_id, status, fail_reason, attempt_count, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO auto_remix_publish_pipeline (id, creator_id, source_video_id, remix_task_id, profile_id, publish_job_id, status, fail_reason, attempt_count, source_url, matrix_id, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
       data.creatorId,
@@ -2173,6 +2039,8 @@ export class LocalDatabase {
       data.status || 'pending',
       data.failReason || null,
       data.attemptCount || 0,
+      data.sourceUrl || null,
+      data.matrixId || null,
       ts, ts
     );
     return this.getPipelineTask(id);

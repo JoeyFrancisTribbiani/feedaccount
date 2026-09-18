@@ -4186,6 +4186,11 @@ export function createMonitorServer({
           const result = matrices.map((m) => {
             const cfg = store.getMatrixAutoPublishConfig(m.id) || { enabled: 0 };
             const accounts = store.listMatrixAccounts(m.id);
+            // 给每个 account 加上 creatorCount（查 matrix_account_creators）
+            const accountsWithCount = accounts.map((a) => ({
+              ...a,
+              creatorCount: store.getMatrixAccountCreators(a.id).length,
+            }));
             const profiles = store.getMatrixProfiles(m.id); // 1:1，返回数组但最多1个
             return {
               id: m.id,
@@ -4193,9 +4198,9 @@ export function createMonitorServer({
               notes: m.notes,
               createdAt: m.createdAt,
               autoPublishConfig: cfg,
-              accounts,
+              accounts: accountsWithCount,
               profileId: profiles[0]?.profileId || null, // 绑定的实例
-              creatorCount: accounts.reduce((sum, a) => sum + store.getMatrixAccountCreators(a.id).length, 0),
+              creatorCount: accountsWithCount.reduce((sum, a) => sum + (a.creatorCount || 0), 0),
             };
           });
           sendJson(response, 200, result);
@@ -4329,73 +4334,7 @@ export function createMonitorServer({
           return;
         }
 
-        // ---- 自动发布 API（原有 /api/remix/* 路径） ----
-        const autoPublishConfigMatch = pathname.match(/^\/api\/remix\/creators\/([^/]+)\/auto-publish-config$/);
-        if (autoPublishConfigMatch) {
-          const creatorId = decodeURIComponent(autoPublishConfigMatch[1]);
-          if (request.method === "GET") {
-            sendJson(response, 200, store.getAutoPublishConfig(creatorId) || { creatorId, enabled: false });
-            return;
-          }
-          if (request.method === "PUT") {
-            const body = await readJson(request);
-            const updated = store.upsertAutoPublishConfig(creatorId, {
-              enabled: body.enabled,
-              presetId: body.presetId,
-              dailyLimitPerProfile: body.dailyLimitPerProfile,
-              monitorIntervalHours: body.monitorIntervalHours,
-              tiktokUsername: body.tiktokUsername, cdpInstanceId: body.cdpInstanceId,
-              matrixId: body.matrixId, ratio: body.ratio,
-              hashtagsJson: body.hashtagsJson, privacyLevel: body.privacyLevel,
-              publishTimeSlots: body.publishTimeSlots,
-            });
-            sendJson(response, 200, updated);
-            return;
-          }
-        }
-
-        // 获取所有已启用自动发布的达人列表
-        if (request.method === "GET" && pathname === "/api/remix/auto-publish/creators") {
-          sendJson(response, 200, store.listAutoPublishCreators());
-          return;
-        }
-
-        // 达人绑定指纹浏览器实例
-        const profileBindingMatch = pathname.match(/^\/api\/remix\/creators\/([^/]+)\/profile-bindings$/);
-        if (profileBindingMatch) {
-          const creatorId = decodeURIComponent(profileBindingMatch[1]);
-          if (request.method === "GET") {
-            sendJson(response, 200, store.listProfileBindings(creatorId));
-            return;
-          }
-          if (request.method === "POST") {
-            const body = await readJson(request);
-            if (!body.profileId) { sendJson(response, 400, { error: "缺少 profileId" }); return; }
-            sendJson(response, 200, store.addProfileBinding(creatorId, body.profileId, body.dailyLimit || 3));
-            return;
-          }
-        }
-
-        // 更新/删除单个绑定
-        const profileBindingItemMatch = pathname.match(/^\/api\/remix\/profile-bindings\/([^/]+)$/);
-        if (profileBindingItemMatch) {
-          const bindingId = decodeURIComponent(profileBindingItemMatch[1]);
-          if (request.method === "PATCH") {
-            const body = await readJson(request);
-            const updated = store.updateProfileBinding(bindingId, {
-              dailyLimit: body.dailyLimit,
-              enabled: body.enabled,
-              lastPublishAt: body.lastPublishAt,
-            });
-            sendJson(response, 200, updated);
-            return;
-          }
-          if (request.method === "DELETE") {
-            store.removeProfileBinding(bindingId);
-            sendJson(response, 200, { ok: true });
-            return;
-          }
-        }
+        // ---- 旧达人级自动发布 API 已删除（迁移到矩阵级 /api/auto-publish/*） ----
 
         // 视频监控记录
         const monitoredVideosMatch = pathname.match(/^\/api\/remix\/creators\/([^/]+)\/monitored-videos$/);
