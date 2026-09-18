@@ -4283,8 +4283,9 @@ export function createMonitorServer({
               accountName = acc.accountName;
               accountPlatform = acc.platform;
             }
-            // 按账号名精确匹配 matrix_accounts，不再用 platform='tiktok' 宽匹配
-            if (accountName) { where.push("(ma.account_name = ? OR j.account_id = ?)"); params.push(accountName, accountId); }
+            // 按矩阵账号ID精确匹配
+            where.push("ma.id = ?");
+            params.push(accountId);
           }
           const clause = where.length ? `WHERE ${where.join(" AND ")}` : "";
 
@@ -4333,7 +4334,6 @@ export function createMonitorServer({
             LEFT JOIN tk_video_materials m ON m.id = j.material_id
             LEFT JOIN media_matrices mm ON mm.id = p.matrix_id
             LEFT JOIN matrix_accounts ma ON ma.matrix_id = p.matrix_id
-              AND ma.account_name = COALESCE(j.account_id, '')
             ${clause}
             ORDER BY COALESCE(j.executed_at, p.created_at) DESC
             LIMIT ?
@@ -4411,8 +4411,9 @@ export function createMonitorServer({
             query += " AND (task_id = ? OR message LIKE ?)";
             params.push(taskId, `%${taskId}%`);
           } else {
-            query += " AND message LIKE ?";
-            params.push("%发布任务%");
+            // 无 taskId 时返回所有自动发布相关日志（含发布任务/混剪/监控/排期）
+            query += " AND (message LIKE ? OR message LIKE ? OR message LIKE ? OR message LIKE ?)";
+            params.push("%发布任务%", "%自动发布%", "%混剪%", "%监控%");
           }
           if (level) {
             query += " AND level = ?";
