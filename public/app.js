@@ -3564,6 +3564,10 @@ function renderRemixVideos() {
     const thumbSrc = v.thumbnail || v.thumbUrl || "";
 
     const dlMark = isDownloaded ? "" : '<span style="position:absolute;top:6px;left:6px;background:rgba(245,158,11,0.9);color:#fff;font-size:9px;padding:1px 5px;border-radius:3px;z-index:2;">未下载</span>';
+    // 单独下载按钮（仅未下载的视频显示）
+    const singleDlBtn = !isDownloaded && v.sourceUrl
+      ? `<button class="remix-video-single-dl" data-single-dl-url="${escapeHtml(v.sourceUrl)}" data-single-dl-id="${escapeHtml(v.id)}" title="下载此视频" style="position:absolute;bottom:6px;right:6px;background:rgba(37,99,235,0.9);color:#fff;border:none;border-radius:4px;padding:2px 8px;font-size:11px;cursor:pointer;z-index:2;">下载</button>`
+      : "";
 
     if (isList) {
 
@@ -3591,6 +3595,7 @@ function renderRemixVideos() {
 
           </div>
 
+          ${singleDlBtn}
           <button class="remix-video-del" data-del-video="${escapeHtml(v.id)}">×</button>
 
         </div>
@@ -3614,6 +3619,7 @@ function renderRemixVideos() {
           <div class="remix-video-check ${selected ? "checked" : ""}">${selected ? "✓" : ""}</div>
 
           <button class="remix-video-del" data-del-video="${escapeHtml(v.id)}">×</button>
+          ${singleDlBtn}
           ${isDownloaded ? `<button class="remix-video-folder" data-folder-video="${escapeHtml(v.id)}" title="打开所在文件夹" style="position:absolute;bottom:6px;right:32px;background:rgba(0,0,0,0.6);color:#fff;border:none;border-radius:4px;padding:2px 6px;font-size:11px;cursor:pointer;z-index:2;">📁</button>` : ""}
 
           ${remixBadgeHtml(taskInfo)}
@@ -3688,6 +3694,28 @@ function renderRemixVideos() {
         });
       } catch (e) {
         showToast(e.message, true);
+      }
+    });
+  });
+  // 单独下载按钮
+  remixEl.videoGrid.querySelectorAll("[data-single-dl-url]").forEach((btn) => {
+    btn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      const url = btn.dataset.singleDlUrl;
+      if (!url) return;
+      btn.disabled = true;
+      btn.textContent = "下载中…";
+      try {
+        await request("/api/tiktok/download", {
+          method: "POST",
+          body: JSON.stringify({ url }),
+        });
+        showToast("下载完成");
+        await fetchRemixVideos(remix.selectedCreatorId);
+      } catch (err) {
+        showToast(`下载失败: ${err.message}`, true);
+        btn.disabled = false;
+        btn.textContent = "下载";
       }
     });
   });

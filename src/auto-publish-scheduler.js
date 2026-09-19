@@ -492,7 +492,7 @@ export class AutoPublishScheduler extends EventTarget {
       return;
     }
 
-    // 视频存在性检查（防止 "pending_download" 等无效ID浪费API调用）
+    // 视频存在性检查 + 下载状态检查
     const video = this.store.getRemixVideo(pipeline.source_video_id);
     if (!video) {
       this._updatePipeline(pipeline.id, {
@@ -500,6 +500,11 @@ export class AutoPublishScheduler extends EventTarget {
         failReason: `视频 ${pipeline.source_video_id} 不存在`,
       });
       this._emitChange();
+      return;
+    }
+    if (!video.downloaded) {
+      // 视频未下载，跳过本次混剪（不标记failed，下次窗口再检查）
+      this.store.logCdpEvent(null, "warning", `自动发布-跳过未下载视频: ${pipeline.source_video_id}, source=${video.sourceUrl || "—"}`);
       return;
     }
 
