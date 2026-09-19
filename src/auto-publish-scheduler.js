@@ -376,7 +376,6 @@ export class AutoPublishScheduler extends EventTarget {
     const configs = this._listEnabledMatrixConfigs();
     if (!configs.length) return;
 
-    // 按矩阵计算库存缺口
     const todayStr = new Date().toISOString().slice(0, 10);
     const allPending = this._listPipelinesByStatus("pending");
 
@@ -384,64 +383,41 @@ export class AutoPublishScheduler extends EventTarget {
       const dailyLimit = cfg.dailyLimit ?? 3;
       const targetStock = dailyLimit + 1; // 多混1条备用
 
-      // 统计该矩阵今天的库存（已发布+已排期+已混剪+正在混剪）
-      const matrixPipelines = this.store.db.prepare(
-        `SELECT status, profile_id FROM auto_remix_publish_pipeline
-         WHERE matrix_id = COALESCE(?, (SELECT mp.matrix_id FROM matrix_profiles mp WHERE mp.profile_id = profile_id))`
-      ).all(cfg.matrixId);
-
-      // 也算上 matrix_id 为 null 但 profile_id 匹配的旧数据
+      // 查矩阵绑定的 profile_id
       const mp = this.store.db.prepare("SELECT profile_id FROM matrix_profiles WHERE matrix_id = ?").get(cfg.matrixId);
-      const profileId = mp?.profile_id;
-      const matrixPipelinesAll = profileId
+      const profileId = mp?.profile_id || null;
+
+      // 库存 = 今天已发布的 + 已排期 + 已混剪完成 + 正在混剪
+      // 不含 pending（pending 是待混剪原料，不是成品库存）
+      const stockCount = this.store.db.prepare(
+        `SELECT COUNT(*) as cnt FROM auto_remix_publish_pipeline p
+         WHERE (p.matrix_id = ? ${profileId ? "OR (p.matrix_id IS NULL AND p.profile_id = ?)" : ""})
+         AND p.status IN ('scheduled', 'remixed', 'remixing')`
+      ).get(...(profileId ? [cfg.matrixId, profileId] : [cfg.matrixId])).cnt;
+
+      // 今天的 published 数量（单条 SQL，不用 N+1）
+      const todayPublishedCount = profileId
         ? this.store.db.prepare(
-          `SELECT status FROM auto_remix_publish_pipeline
-           WHERE matrix_id = ? OR (matrix_id IS NULL AND profile_id = ?)`
-        ).all(cfg.matrixId, profileId)
-        : matrixPipelines;
+          `SELECT COUNT(*) as cnt FROM auto_remix_publish_pipeline p
+           JOIN tk_publish_jobs j ON j.id = p.publish_job_id
+           WHERE (p.matrix_id = ? OR (p.matrix_id IS NULL AND p.profile_id = ?))
+           AND p.status = 'published' AND j.executed_at LIKE ?`
+        ).get(cfg.matrixId, profileId, `${todayStr}%`).cnt
+        : 0;
 
-      let stockCount = 0;
-      for (const p of matrixPipelinesAll) {
-        if (["published", "scheduled", "remixed", "remixing"].includes(p.status)) {
-          // published 只算今天的
-          if (p.status === "published") {
-            // 检查是否今天发布的
-            const jobRow = this.store.db.prepare(
-              `SELECT j.executed_at FROM tk_publish_jobs j
-               JOIN auto_remix_publish_pipeline p ON p.publish_job_id = j.id
-               WHERE p.status = 'published' AND (p.matrix_id = ? OR (p.matrix_id IS NULL AND p.profile_id = ?))
-               AND j.executed_at LIKE ?`
-            ).get(cfg.matrixId, profileId, `${todayStr}%`);
-            if (jobRow) stockCount++;
-          } else {
-            stockCount++;
-          }
-        }
+      const totalStock = stockCount + todayPublishedCount;
+
+      if (totalStock >= targetStock) {
+        continue; // 库存够，跳过
       }
 
-      // 也统计今天已发布的（通过 tk_publish_jobs）
-      const todayPublished = profileId ? this._countTodayPublishedByProfile(profileId) : 0;
-      // 库存 = 今天已发布 + 未发布的(scheduled+remixed+remixing+pending)
-      // 其实 stockCount 已经包含了 published(今天的) + scheduled + remixed + remixing
-      // 但 pending 也要算进去（已下载但还没混剪的也是库存的一部分）
-      const pendingForMatrix = allPending.filter(p =>
-        p.matrix_id === cfg.matrixId || (p.matrix_id === null && profileId && p.profile_id === profileId)
-      );
-      stockCount += pendingForMatrix.length;
-
-      if (stockCount >= targetStock) {
-        // 库存够，跳过
-        continue;
-      }
-
-      // 库存不足，需要混剪。找 pending 的 pipeline 来混剪
-      const candidates = pendingForMatrix.length ? pendingForMatrix : allPending.filter(p =>
+      // 库存不足，找 pending 的 pipeline 来混剪
+      const candidates = allPending.filter(p =>
         p.matrix_id === cfg.matrixId || (p.matrix_id === null && profileId && p.profile_id === profileId)
       );
 
       if (!candidates.length) {
-        // 没有 pending 的 pipeline（达人没有新视频），跳过
-        continue;
+        continue; // 没有 pending（达人没有新视频），跳过
       }
 
       // 轮换达人：优先选不同于上次混剪的达人
@@ -453,7 +429,6 @@ export class AutoPublishScheduler extends EventTarget {
         pipeline = candidates[0];
       }
 
-      // 触发混剪
       await this._doRemix(pipeline, cfg);
       return; // 每次只触发一个混剪任务
     }
@@ -469,6 +444,31 @@ export class AutoPublishScheduler extends EventTarget {
       });
       this._emitChange();
       return;
+    }
+
+    // 视频存在性检查（防止 "pending_download" 等无效ID浪费API调用）
+    const video = this.store.getRemixVideo(pipeline.source_video_id);
+    if (!video) {
+      this._updatePipeline(pipeline.id, {
+        status: "failed",
+        failReason: `视频 ${pipeline.source_video_id} 不存在`,
+      });
+      this._emitChange();
+      return;
+    }
+
+    // 先补全 matrix_id（旧数据可能为 null），再查 cdpInstanceId
+    if (!pipeline.matrix_id) {
+      const mac = this.store.db
+        .prepare(`SELECT ma.matrix_id FROM matrix_account_creators mac
+                  JOIN matrix_accounts ma ON ma.id = mac.matrix_account_id
+                  WHERE mac.creator_id = ? LIMIT 1`)
+        .get(pipeline.creator_id);
+      if (mac?.matrix_id) {
+        this.store.db.prepare("UPDATE auto_remix_publish_pipeline SET matrix_id = ? WHERE id = ?")
+          .run(mac.matrix_id, pipeline.id);
+        pipeline.matrix_id = mac.matrix_id;
+      }
     }
 
     const effectiveMatrixId = pipeline.matrix_id;
@@ -489,20 +489,6 @@ export class AutoPublishScheduler extends EventTarget {
       });
       this._emitChange();
       return;
-    }
-
-    // 尝试从旧表补全 matrix_id
-    if (!pipeline.matrix_id) {
-      const mac = this.store.db
-        .prepare(`SELECT ma.matrix_id FROM matrix_account_creators mac
-                  JOIN matrix_accounts ma ON ma.id = mac.matrix_account_id
-                  WHERE mac.creator_id = ? LIMIT 1`)
-        .get(pipeline.creator_id);
-      if (mac?.matrix_id) {
-        this.store.db.prepare("UPDATE auto_remix_publish_pipeline SET matrix_id = ? WHERE id = ?")
-          .run(mac.matrix_id, pipeline.id);
-        pipeline.matrix_id = mac.matrix_id;
-      }
     }
 
     try {
@@ -660,7 +646,7 @@ export class AutoPublishScheduler extends EventTarget {
     const effectiveCfg = cfg || this._getMatrixConfig(pipeline.matrix_id);
 
     // daily_limit 从矩阵配置查（不再查 creator_profile_bindings）
-    const dailyLimit = effectiveCfg?.dailyLimit || 3;
+    const dailyLimit = effectiveCfg?.dailyLimit ?? 3;
     const todayPublished = this._countTodayPublishedByProfile(profileId);
     if (todayPublished >= dailyLimit) {
       return false; // 达到上限，跳过
