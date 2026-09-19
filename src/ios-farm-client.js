@@ -11,7 +11,6 @@
  * 4. 管理设备列表（GET /api/devices）
  */
 
-import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { getOutputDir } from './video-remix.js';
 
@@ -51,7 +50,7 @@ export class IosFarmClient {
     try { data = text ? JSON.parse(text) : null; } catch { data = text; }
 
     if (!response.ok) {
-      const errorMsg = (data && typeof data === 'object' && data.error) || text || `HTTP ${response.status}`;
+      const errorMsg = (data && typeof data === 'object' && data.error) || (typeof text === 'string' ? text.slice(0, 500) : `HTTP ${response.status}`);
       throw new Error(`iOS Farm API ${method} ${pathname} 失败: ${errorMsg}`);
     }
     return data;
@@ -97,9 +96,12 @@ export class IosFarmClient {
       localPath = path.join(path.dirname(getOutputDir()), filePath.replace(/^\/data\//, ''));
     }
 
-    const buffer = readFileSync(localPath);
-    const name = fileName || path.basename(localPath);
-    const ext = path.extname(name).toLowerCase();
+    const { readFile } = await import('node:fs/promises');
+    const buffer = await readFile(localPath);
+    const rawName = fileName || path.basename(localPath);
+    // 转义文件名中的双引号和换行，防止破坏 multipart 帧
+    const safeName = rawName.replace(/"/g, '\\"').replace(/[\r\n]/g, '_');
+    const ext = path.extname(safeName).toLowerCase();
     const mimeType = ext === '.mp4' ? 'video/mp4'
       : ext === '.mov' ? 'video/quicktime'
       : ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg'
@@ -113,7 +115,7 @@ export class IosFarmClient {
     // file part
     parts.push(
       `--${boundary}\r\n` +
-      `Content-Disposition: form-data; name="file"; filename="${name}"\r\n` +
+      `Content-Disposition: form-data; name="file"; filename="${safeName}"\r\n` +
       `Content-Type: ${mimeType}\r\n\r\n`
     );
     const endBoundary = `\r\n--${boundary}--\r\n`;

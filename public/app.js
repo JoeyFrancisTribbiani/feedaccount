@@ -6281,7 +6281,7 @@ mxEl.bindProfileBtn?.addEventListener("click", async () => {
         for (const d of devices) {
           if (d.disabled) continue;
           const status = d.connected ? "在线" : "离线";
-          options.push({ value: `ios_${escapeHtml(d.udid)}`, label: `iPhone ${escapeHtml(d.name)} (${status})`, group: "iOS Farm" });
+          options.push({ value: `ios_${d.udid}`, label: `iPhone ${escapeHtml(d.name)} (${status})`, group: "iOS Farm" });
         }
       }
     } catch {}

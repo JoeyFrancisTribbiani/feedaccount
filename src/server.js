@@ -402,7 +402,7 @@ export function createMonitorServer({
   const jobs = jobManager || new JobManager({ bitBrowserApi: api, persistence: store });
   const tiktokJobs = new TiktokJobManager({ bitBrowserApi: api, persistence: store });
   // 创建 iOS Farm 客户端（如果配置了 baseUrl）
-  const iosFarmClient = createIosFarmClient(store);
+  let iosFarmClient = createIosFarmClient(store);
   const tiktokPublisherManager = new TiktokPublishManager({ bitBrowserApi: api, persistence: store, iosFarm: iosFarmClient });
   tiktokPublisherManager.startScheduler();
 
@@ -1500,9 +1500,12 @@ export function createMonitorServer({
       }
       if (request.method === "POST" && pathname === "/api/path-config") {
         const body = await readJson(request);
+        // merge 写入：先读取已有配置，再覆盖新字段（保留 iosFarmBaseUrl 等）
+        const existing = store.getPathConfig?.() || {};
         const config = store.savePathConfig({
-          videoUploadPath: body.videoUploadPath || "",
-          outputPath: body.outputPath || "",
+          ...existing,
+          videoUploadPath: body.videoUploadPath ?? (existing.videoUploadPath || ""),
+          outputPath: body.outputPath ?? (existing.outputPath || ""),
         });
         // 实时应用路径
         setOutputDir(config.outputPath || null);
@@ -4223,12 +4226,16 @@ export function createMonitorServer({
           try {
             const body = await readJson(request);
             const pathCfg = store.getPathConfig?.() || {};
-            if (body.iosFarmBaseUrl !== undefined) pathCfg.iosFarmBaseUrl = body.iosFarmBaseUrl;
+            if (body.iosFarmBaseUrl !== undefined) {
+              pathCfg.iosFarmBaseUrl = body.iosFarmBaseUrl;
+              // 清空地址时同步清空 apiKey
+              if (!body.iosFarmBaseUrl) pathCfg.iosFarmApiKey = "";
+            }
             if (body.iosFarmApiKey !== undefined) pathCfg.iosFarmApiKey = body.iosFarmApiKey;
             store.savePathConfig?.(pathCfg);
-            // 重新创建客户端
-            const newClient = createIosFarmClient(store);
-            tiktokPublisherManager.iosFarm = newClient;
+            // 重新创建客户端，更新所有引用
+            iosFarmClient = createIosFarmClient(store);
+            tiktokPublisherManager.iosFarm = iosFarmClient;
             sendJson(response, 200, { ok: true });
           } catch (e) {
             sendJson(response, 400, { error: e.message });

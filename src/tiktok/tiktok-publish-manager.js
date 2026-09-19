@@ -177,8 +177,24 @@ export class TiktokPublishManager extends EventTarget {
       const creativeMatch = publishTitle.match(/创作的\s*(.+)$/);
       if (creativeMatch) publishTitle = creativeMatch[1].trim();
 
-      // 3. 创建 TikTok post 任务
-      this._log(jobId, "info", `iOS Farm: 创建发布任务, udid=${udid}, account=${job.accountId || "—"}, 标题=${publishTitle.substring(0, 50)}`);
+      // 3. 从 matrix_accounts 查真实 TikTok 账号名（job.accountId 存的是 profileId 不是账号名）
+      let tiktokAccount = "";
+      if (this.persistence?.db) {
+        try {
+          const matrixProfile = this.persistence.db
+            .prepare("SELECT matrix_id FROM matrix_profiles WHERE profile_id = ?")
+            .get(job.profileId);
+          if (matrixProfile) {
+            const account = this.persistence.db
+              .prepare("SELECT account_name FROM matrix_accounts WHERE matrix_id = ? AND platform = 'tiktok'")
+              .get(matrixProfile.matrix_id);
+            if (account) tiktokAccount = account.account_name;
+          }
+        } catch {}
+      }
+
+      // 4. 创建 TikTok post 任务
+      this._log(jobId, "info", `iOS Farm: 创建发布任务, udid=${udid}, account=${tiktokAccount || "默认"}, 标题=${publishTitle.substring(0, 50)}`);
       const schedule = await this.iosFarm.createPostSchedule({
         deviceUdid: udid,
         media: [{
@@ -186,7 +202,7 @@ export class TiktokPublishManager extends EventTarget {
           name: asset.originalName || fileName,
           mimeType: asset.mimeType || "video/mp4",
         }],
-        account: job.accountId || "",
+        account: tiktokAccount,
         caption: publishTitle,
         destination: "publish",
         timing: { kind: "now" },
@@ -204,11 +220,16 @@ export class TiktokPublishManager extends EventTarget {
       while (attempts < maxWaitAttempts && !executionId) {
         await new Promise(r => setTimeout(r, 2000));
         attempts++;
-        const executions = await this.iosFarm.listExecutions(udid, 5);
-        const found = executions.find(e =>
-          e.status === "queued" || e.status === "running" ||
-          (scheduleId && e.scheduleId === scheduleId)
-        );
+        const executions = await this.iosFarm.listExecutions(udid, 10);
+        // 优先用 scheduleId 精确匹配，避免误匹配其他任务
+        let found = null;
+        if (scheduleId) {
+          found = executions.find(e => e.scheduleId === scheduleId);
+        }
+        // 如果没找到精确匹配，再找最近的 queued/running 任务
+        if (!found) {
+          found = executions.find(e => e.status === "queued" || e.status === "running");
+        }
         if (found) executionId = found.id;
       }
 
@@ -250,6 +271,10 @@ export class TiktokPublishManager extends EventTarget {
       }
 
       if (!finalStatus || (finalStatus.status !== "completed" && finalStatus.status !== "success")) {
+        // 超时后停止远端任务，防止 iPhone 继续执行但本地已判失败
+        if (executionId) {
+          try { await this.iosFarm.stopExecution(executionId); } catch {}
+        }
         throw new Error("iOS Farm: 任务执行超时（等待超过 10 分钟）");
       }
 
