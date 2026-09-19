@@ -152,9 +152,10 @@ export class TiktokPublisher {
   /**
    * 上传视频到 TikTok Studio
    */
-  async uploadVideo({ filePath, title, hashtags = [], privacyLevel = 'public' }) {
+  async uploadVideo({ filePath, title, hashtags = [], privacyLevel = 'public', onProgress = null }) {
     if (!filePath) throw new Error('缺失视频文件路径');
     const page = this.page;
+    const progress = (msg) => { if (onProgress) try { onProgress(msg); } catch {} };
 
     // 转换文件路径为本地绝对路径
     let localFilePath = filePath;
@@ -203,20 +204,47 @@ export class TiktokPublisher {
         files: [localFilePath],
         nodeId: node.nodeId,
       });
+      progress('视频文件已提交到上传队列');
       // 上传后可能弹出内容检查弹窗
       await page.waitForTimeout(3000);
       await this._dismissDialogs();
+      progress('弹窗已清理，等待上传处理…');
     }
 
-    // 3. 等待视频上传并解析完成（编辑器就绪）
+    // 3. 等待视频上传并解析完成（编辑器就绪）— 检测上传进度
     let editorReady = false;
-    for (let i = 0; i < 60; i++) {
+    let lastProgressPercent = -1;
+    for (let i = 0; i < 120; i++) {
       await page.waitForTimeout(1000);
+      // 检测上传进度条
+      const uploadPercent = await page.evaluate(() => {
+        // TikTok Studio 上传进度条
+        const progressBar = document.querySelector('[class*="upload"] [class*="progress"], [class*="Progress"], [role="progressbar"], div[data-e2e*="upload"]');
+        if (progressBar) {
+          const style = progressBar.getAttribute('style') || '';
+          const match = style.match(/width:\s*([\d.]+)%/);
+          if (match) return parseFloat(match[1]);
+          const ariaValuenow = progressBar.getAttribute('aria-valuenow');
+          if (ariaValuenow) return parseFloat(ariaValuenow);
+        }
+        return null;
+      }).catch(() => null);
+
+      if (uploadPercent !== null && uploadPercent !== lastProgressPercent) {
+        lastProgressPercent = uploadPercent;
+        progress(`上传中: ${Math.round(uploadPercent)}%`);
+      }
+
       const editor = await page.$('.public-DraftEditor-content, [contenteditable="true"], div[data-e2e="caption-input"], textarea');
       const postBtn = await this._findPostButton();
       if (editor && postBtn) {
         editorReady = true;
+        progress('上传完成，编辑器就绪');
         break;
+      }
+      // 每10秒报一次心跳（没有进度条时）
+      if (i > 0 && i % 10 === 0 && uploadPercent === null) {
+        progress(`等待上传处理… (${i}s)`);
       }
     }
 
@@ -246,9 +274,11 @@ export class TiktokPublisher {
         ).catch(() => true);
         if (!disabled) {
           canPost = true;
+          progress('发布按钮已就绪');
           break;
         }
       }
+      if (i > 0 && i % 15 === 0) progress(`等待发布按钮解锁… (${i * 1.5}s)`);
       await page.waitForTimeout(1500);
     }
 
@@ -279,6 +309,7 @@ export class TiktokPublisher {
       await page.waitForTimeout(2000);
       const bodyText = await page.innerText('body').catch(() => '');
       const url = page.url();
+      progress(`等待发布确认… (${i * 2}s)`);
 
       const isDone =
         bodyText.includes('Your video is being uploaded to TikTok') ||

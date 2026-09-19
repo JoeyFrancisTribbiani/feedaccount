@@ -62,43 +62,82 @@ export class TiktokPublishManager extends EventTarget {
     this._log(jobId, "info", `发布任务开始: profile=${job.profileId}, title=${job.materialTitle?.substring(0, 50) || "—"}`);
     this.dispatchEvent(new CustomEvent("change"));
 
+    // 心跳机制：每步操作更新 lastActivityAt，超时检测线程检查是否长时间无活动
+    this._jobActivity = this._jobActivity || new Map();
+    this._jobActivity.set(jobId, Date.now());
+    // 心跳超时：5分钟无任何新日志/活动 → 判定卡死
+    const HEARTBEAT_TIMEOUT_MS = 5 * 60 * 1000;
+    // 连接阶段超时：2分钟（打开浏览器+连CDP）
+    const CONNECT_TIMEOUT_MS = 2 * 60 * 1000;
+
+    // 启动心跳监控
+    const heartbeatTimer = setInterval(() => {
+      const lastActivity = this._jobActivity.get(jobId);
+      if (lastActivity && Date.now() - lastActivity > HEARTBEAT_TIMEOUT_MS) {
+        this._log(jobId, "error", `心跳超时: ${Math.round((Date.now() - lastActivity) / 1000)}秒无活动，判定卡死`);
+        // 强制标记失败
+        this.persistence?.updateTkPublishJobStatus(jobId, {
+          status: "failed",
+          errorMessage: `发布任务卡死（${Math.round((Date.now() - lastActivity) / 1000)}秒无活动）`,
+        });
+        this.runningJobIds.delete(jobId);
+        this._jobActivity.delete(jobId);
+        this.dispatchEvent(new CustomEvent("change"));
+      }
+    }, 30000); // 每30秒检查一次
+
+    // 更新心跳的辅助函数
+    const touch = (msg) => {
+      this._jobActivity.set(jobId, Date.now());
+      if (msg) this._log(jobId, "info", msg);
+    };
+
+    try {
     // ===== iOS Farm 发布模式 =====
-    // 如果 job.profileId 以 "ios_" 开头，使用 iOS Farm 发布
     if (job.profileId && job.profileId.startsWith("ios_")) {
       const udid = job.profileId.replace(/^ios_/, "");
+      clearInterval(heartbeatTimer);
+      this._jobActivity.delete(jobId);
       return await this._executeViaIosFarm(jobId, udid, job);
     }
 
     let publisher = null;
     try {
-      // 1. 打开对应的比特浏览器 Profile
-      this._log(jobId, "info", `正在打开比特浏览器实例 [${job.profileId}]…`);
-      const conn = await this.bitBrowserApi.openProfile(job.profileId);
+      // 1. 打开对应的比特浏览器 Profile（连接阶段，2分钟超时）
+      touch(`正在打开比特浏览器实例 [${job.profileId}]…`);
+      const conn = await this._withTimeout(
+        () => this.bitBrowserApi.openProfile(job.profileId),
+        CONNECT_TIMEOUT_MS,
+        "打开比特浏览器实例超时"
+      );
       if (!conn || !conn.wsUrl) throw new Error(`比特浏览器窗口 [${job.profileId}] 打开失败或缺失 WebSocket 地址`);
-      this._log(jobId, "info", `比特浏览器已连接: ${conn.wsUrl.substring(0, 60)}…`);
+      touch(`比特浏览器已连接: ${conn.wsUrl.substring(0, 60)}…`);
 
-      // 2. 连接 CDP 发布驱动引擎
+      // 2. 连接 CDP 发布驱动引擎（连接阶段，2分钟超时）
       publisher = new TiktokPublisher();
-      await publisher.connect(conn.wsUrl);
-      this._log(jobId, "info", `CDP 发布引擎已连接`);
+      await this._withTimeout(
+        async () => { await publisher.connect(conn.wsUrl); },
+        CONNECT_TIMEOUT_MS,
+        "CDP 连接超时"
+      );
+      touch(`CDP 发布引擎已连接`);
 
-      // 3. 执行全自动发布
-      // 标题处理：去掉 "AI混剪 · " 前缀和 " → N个矩阵" 后缀，再从 "创作的 " 后面取内容
+      // 3. 执行全自动发布（上传阶段，不设全局超时，靠心跳检测）
       let publishTitle = job.materialTitle || '';
       publishTitle = publishTitle.replace(/^AI混剪\s*·\s*/, '').replace(/\s*→\s*\d+个矩阵$/, '');
       const creativeMatch = publishTitle.match(/创作的\s*(.+)$/);
       if (creativeMatch) publishTitle = creativeMatch[1].trim();
-      
-      this._log(jobId, "info", `开始上传视频: ${job.materialFilePath?.substring(0, 80) || "—"} | 标题: ${publishTitle.substring(0, 60)}`);
+
+      touch(`开始上传视频: ${job.materialFilePath?.substring(0, 80) || "—"} | 标题: ${publishTitle.substring(0, 60)}`);
+
+      // 给 publisher 传入心跳回调，上传过程中持续更新心跳
       const result = await publisher.uploadVideo({
         filePath: job.materialFilePath,
         title: publishTitle,
         hashtags: job.materialHashtags,
-        privacyLevel: job.materialPrivacy
+        privacyLevel: job.materialPrivacy,
+        onProgress: (msg) => touch(msg),
       });
-
-      // 获取用户名（用于发布后记录播放量）— 死代码已删除
-      // （recordAnalytics 内部自行获取当前登录账号用户名）
 
       if (result.ok) {
         this.persistence?.updateTkPublishJobStatus(jobId, {
@@ -147,12 +186,40 @@ export class TiktokPublishManager extends EventTarget {
       this._log(jobId, "error", `发布失败: ${error.message}`);
       throw error;
     } finally {
+      clearInterval(heartbeatTimer);
+      this._jobActivity.delete(jobId);
       this.runningJobIds.delete(jobId);
       if (publisher) {
         await publisher.close().catch(() => {});
       }
       this.dispatchEvent(new CustomEvent("change"));
     }
+    } catch (outerError) {
+      // 外层 catch（iOS Farm 分支的 return 不会到这里，只有 Playwright 分志异常才到）
+      clearInterval(heartbeatTimer);
+      this._jobActivity.delete(jobId);
+      this.runningJobIds.delete(jobId);
+      this._log(jobId, "error", `发布失败(外层): ${outerError.message}`);
+      this.persistence?.updateTkPublishJobStatus(jobId, {
+        status: "failed",
+        errorMessage: outerError.message,
+      });
+      this.dispatchEvent(new CustomEvent("change"));
+      throw outerError;
+    }
+  }
+
+  /**
+   * 带超时执行 async 函数
+   * @private
+   */
+  async _withTimeout(fn, timeoutMs, errMsg) {
+    return Promise.race([
+      Promise.resolve(fn()),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error(errMsg)), timeoutMs)
+      ),
+    ]);
   }
 
   /**
