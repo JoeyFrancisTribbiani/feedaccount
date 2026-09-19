@@ -533,6 +533,43 @@ export class AutoPublishScheduler extends EventTarget {
       return;
     }
 
+    // ─── 自动检查并启动 CDP daemon ───
+    try {
+      const daemonHealthRes = await fetch(`http://127.0.0.1:9223/health`, {
+        signal: AbortSignal.timeout(5000),
+      });
+      if (!daemonHealthRes.ok) throw new Error(`health check HTTP ${daemonHealthRes.status}`);
+      const health = await daemonHealthRes.json();
+      if (!health.ok || !health.cdpConnected) {
+        throw new Error("CDP daemon 未连接 Chrome");
+      }
+    } catch (daemonErr) {
+      // daemon 没在线，自动启动
+      this.store.logCdpEvent(null, "info", `自动发布-CDP daemon 未在线(${daemonErr.message}), 自动启动中…`);
+      try {
+        const startRes = await fetch(`${this.serverUrl}/api/cdp/instances/${encodeURIComponent(cdpInstanceId)}/daemon-start`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: "{}",
+          signal: AbortSignal.timeout(30000),
+        });
+        if (!startRes.ok) throw new Error(`daemon-start HTTP ${startRes.status}`);
+        // 等待 daemon 就绪
+        await new Promise(r => setTimeout(r, 3000));
+        // 再次检查
+        const recheck = await fetch(`http://127.0.0.1:9223/health`, { signal: AbortSignal.timeout(5000) });
+        const recheckData = await recheck.json();
+        if (!recheckData.ok || !recheckData.cdpConnected) {
+          throw new Error("daemon 启动后仍无法连接 Chrome");
+        }
+        this.store.logCdpEvent(null, "info", `自动发布-CDP daemon 已自动启动`);
+      } catch (startErr) {
+        this.store.logCdpEvent(null, "error", `自动发布-CDP daemon 自动启动失败: ${startErr.message}`);
+        // daemon 启动失败，跳过本次混剪
+        return;
+      }
+    }
+
     try {
       const remixRes = await fetch(`${this.serverUrl}/api/remix/ai-remix-task`, {
         method: "POST",
