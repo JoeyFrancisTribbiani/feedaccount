@@ -503,9 +503,35 @@ export class AutoPublishScheduler extends EventTarget {
       return;
     }
     if (!video.downloaded) {
-      // 视频未下载，跳过本次混剪（不标记failed，下次窗口再检查）
-      this.store.logCdpEvent(null, "warning", `自动发布-跳过未下载视频: ${pipeline.source_video_id}, source=${video.sourceUrl || "—"}`);
-      return;
+      // 视频未下载，自动下载后再混剪
+      if (!video.sourceUrl) {
+        this._updatePipeline(pipeline.id, {
+          status: "failed",
+          failReason: `视频 ${pipeline.source_video_id} 未下载且无 source_url`,
+        });
+        this._emitChange();
+        return;
+      }
+      this.store.logCdpEvent(null, "info", `自动发布-自动下载视频: ${video.sourceUrl}`);
+      try {
+        const dlRes = await fetch(`${this.serverUrl}/api/tiktok/download`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url: video.sourceUrl }),
+          signal: AbortSignal.timeout(180000),
+        });
+        if (!dlRes.ok) throw new Error(`下载API HTTP ${dlRes.status}`);
+        this.store.logCdpEvent(null, "info", `自动发布-视频下载完成: ${video.sourceUrl}`);
+        // 重新查视频记录，确认已下载
+        const updatedVideo = this.store.getRemixVideo(pipeline.source_video_id);
+        if (!updatedVideo?.downloaded) {
+          this.store.logCdpEvent(null, "warning", `自动发布-下载后仍标记为未下载: ${pipeline.source_video_id}`);
+          return; // 跳过本次，下次再试
+        }
+      } catch (dlErr) {
+        this.store.logCdpEvent(null, "error", `自动发布-自动下载失败: ${video.sourceUrl} - ${dlErr.message}`);
+        return; // 下载失败不标记pipeline失败，下次窗口再试
+      }
     }
 
     // 先补全 matrix_id（旧数据可能为 null），再查 cdpInstanceId
