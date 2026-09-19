@@ -6262,20 +6262,48 @@ mxEl.bindProfileBtn?.addEventListener("click", async () => {
   }
   mxEl.bindProfileForm.classList.toggle("hidden");
   if (!mxEl.bindProfileForm.classList.contains("hidden")) {
-    // 加载可用实例列表
+    // 加载可用实例列表（BitBrowser + iOS Farm 设备）
+    const options = [];
+    // 1. BitBrowser 实例
     try {
       const res = await request("/api/profiles");
       const allProfiles = res.profiles || [];
       const boundIds = new Set(mxState.profiles.map((p) => p.profileId));
       const available = allProfiles.filter((p) => !boundIds.has(p.id));
-      if (!available.length) {
-        mxEl.profileSelect.innerHTML = '<option value="">无可用实例</option>';
-      } else {
-        mxEl.profileSelect.innerHTML = available
-          .map((p) => `<option value="${escapeHtml(p.id)}">#${escapeHtml(String(p.seq))} ${escapeHtml(p.name)}</option>`)
-          .join("");
+      for (const p of available) {
+        options.push({ value: p.id, label: `# ${escapeHtml(String(p.seq))} ${escapeHtml(p.name)}`, group: "BitBrowser" });
       }
-    } catch { mxEl.profileSelect.innerHTML = '<option value="">加载失败</option>'; }
+    } catch {}
+    // 2. iOS Farm 设备
+    try {
+      const devices = await request("/api/ios-farm/devices");
+      if (Array.isArray(devices) && devices.length) {
+        for (const d of devices) {
+          if (d.disabled) continue;
+          const status = d.connected ? "在线" : "离线";
+          options.push({ value: `ios_${escapeHtml(d.udid)}`, label: `iPhone ${escapeHtml(d.name)} (${status})`, group: "iOS Farm" });
+        }
+      }
+    } catch {}
+    if (!options.length) {
+      mxEl.profileSelect.innerHTML = '<option value="">无可用实例</option>';
+    } else {
+      // 按 group 分组
+      const groups = {};
+      for (const o of options) {
+        if (!groups[o.group]) groups[o.group] = [];
+        groups[o.group].push(o);
+      }
+      let html = '';
+      for (const [groupName, opts] of Object.entries(groups)) {
+        html += `<optgroup label="${groupName}">`;
+        for (const o of opts) {
+          html += `<option value="${o.value}">${o.label}</option>`;
+        }
+        html += '</optgroup>';
+      }
+      mxEl.profileSelect.innerHTML = html;
+    }
   }
 });
 mxEl.cancelBind?.addEventListener("click", () => mxEl.bindProfileForm.classList.add("hidden"));
