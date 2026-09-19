@@ -19,10 +19,11 @@
  */
 
 const DEFAULT_CHECK_INTERVAL_MS = 60_000; // 1 分钟（主循环）
-const REMIX_INTERVAL_MS = 5 * 60 * 1000; // 混剪触发间隔 5 分钟
+const REMIX_INTERVAL_MS = 5 * 60 * 1000; // 混剪最小间隔 5 分钟（下限保护）
 const PUBLISH_INTERVAL_MIN_MS = 30 * 60 * 1000; // 发布间隔至少 30 分钟
 const MAX_RETRY_COUNT = 3;
 const DEFAULT_MONITOR_INTERVAL_HOURS = 6;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 function nowIso() {
   return new Date().toISOString();
@@ -368,34 +369,77 @@ export class AutoPublishScheduler extends EventTarget {
     const remixingCount = this._listPipelinesByStatus("remixing").length;
     if (remixingCount > 0) return;
 
-    // 全局混剪间隔限制
-    const now = Date.now();
-    if (now - this.lastRemixAt < REMIX_INTERVAL_MS) return;
-
-    // 获取所有启用的矩阵配置
+    // ─── 计算今日混剪时间窗口 ───
+    // 所有启用矩阵的 dailyLimit 之和 = 今天需要混剪的总数
     const configs = this._listEnabledMatrixConfigs();
     if (!configs.length) return;
 
+    let totalDailyNeed = 0;
+    for (const cfg of configs) {
+      totalDailyNeed += (cfg.dailyLimit ?? 3) + 1; // +1 备用
+    }
+
+    // 均匀分布：24h / totalDailyNeed = 每次混剪的间隔
+    // 例如 3矩阵×(2+1)=9 → 24h/9 ≈ 2.67h 间隔
+    const targetIntervalMs = Math.max(DAY_MS / totalDailyNeed, REMIX_INTERVAL_MS);
+
+    const now = Date.now();
+    // 今天零点的时间戳
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const todayStartMs = todayStart.getTime();
+
+    // 当前是今天的第几个时间窗口
+    const elapsedMs = now - todayStartMs;
+    const currentWindowIndex = Math.floor(elapsedMs / targetIntervalMs);
+    // 当前窗口的起始时间
+    const currentWindowStart = todayStartMs + currentWindowIndex * targetIntervalMs;
+
+    // 如果上次混剪时间 >= 当前窗口起始时间，说明这个窗口已经混剪过了，跳过
+    if (this.lastRemixAt >= currentWindowStart) return;
+
+    // 如果还没到当前窗口（理论不会，但防御）
+    if (now < currentWindowStart) return;
+
+    // ─── 当前窗口需要混剪，按矩阵轮换选择 ───
     const todayStr = new Date().toISOString().slice(0, 10);
     const allPending = this._listPipelinesByStatus("pending");
 
-    for (const cfg of configs) {
+    // 今天已经混剪过的次数（remixing + remixed + scheduled + published今天）
+    let todayRemixCount = 0;
+    // 计算今天已完成的混剪数 = 今天触发的混剪次数
+    // 用 lastRemixAt 判断：如果 lastRemixAt 在今天范围内，说明今天至少混过1次
+    if (this.lastRemixAt >= todayStartMs) {
+      // 统计今天进入过 remixing 的 pipeline 数（已变 remixed/scheduled/published/remixing）
+      const todayRemixed = this.store.db.prepare(
+        `SELECT COUNT(*) as cnt FROM auto_remix_publish_pipeline
+         WHERE updated_at LIKE ? AND status IN ('remixed', 'scheduled', 'published', 'remixing')`
+      ).get(`${todayStr}%`).cnt;
+      todayRemixCount = todayRemixed;
+    }
+
+    // 如果今天已经混剪了足够的数量（>= totalDailyNeed），不再混剪
+    if (todayRemixCount >= totalDailyNeed) return;
+
+    // 按矩阵轮换：根据当前窗口索引选择矩阵
+    const matrixIndex = currentWindowIndex % configs.length;
+    // 尝试从 matrixIndex 开始，依次找有 pending 的矩阵
+    for (let i = 0; i < configs.length; i++) {
+      const cfg = configs[(matrixIndex + i) % configs.length];
       const dailyLimit = cfg.dailyLimit ?? 3;
-      const targetStock = dailyLimit + 1; // 多混1条备用
+      const targetStock = dailyLimit + 1;
 
       // 查矩阵绑定的 profile_id
       const mp = this.store.db.prepare("SELECT profile_id FROM matrix_profiles WHERE matrix_id = ?").get(cfg.matrixId);
       const profileId = mp?.profile_id || null;
 
-      // 库存 = 今天已发布的 + 已排期 + 已混剪完成 + 正在混剪
-      // 不含 pending（pending 是待混剪原料，不是成品库存）
+      // 库存 = 今天已发布 + 已排期 + 已混剪完成 + 正在混剪
       const stockCount = this.store.db.prepare(
         `SELECT COUNT(*) as cnt FROM auto_remix_publish_pipeline p
          WHERE (p.matrix_id = ? ${profileId ? "OR (p.matrix_id IS NULL AND p.profile_id = ?)" : ""})
          AND p.status IN ('scheduled', 'remixed', 'remixing')`
       ).get(...(profileId ? [cfg.matrixId, profileId] : [cfg.matrixId])).cnt;
 
-      // 今天的 published 数量（单条 SQL，不用 N+1）
       const todayPublishedCount = profileId
         ? this.store.db.prepare(
           `SELECT COUNT(*) as cnt FROM auto_remix_publish_pipeline p
@@ -408,16 +452,16 @@ export class AutoPublishScheduler extends EventTarget {
       const totalStock = stockCount + todayPublishedCount;
 
       if (totalStock >= targetStock) {
-        continue; // 库存够，跳过
+        continue; // 该矩阵库存够，试下一个
       }
 
-      // 库存不足，找 pending 的 pipeline 来混剪
+      // 找 pending 的 pipeline
       const candidates = allPending.filter(p =>
         p.matrix_id === cfg.matrixId || (p.matrix_id === null && profileId && p.profile_id === profileId)
       );
 
       if (!candidates.length) {
-        continue; // 没有 pending（达人没有新视频），跳过
+        continue; // 没有 pending，试下一个矩阵
       }
 
       // 轮换达人：优先选不同于上次混剪的达人
@@ -430,8 +474,10 @@ export class AutoPublishScheduler extends EventTarget {
       }
 
       await this._doRemix(pipeline, cfg);
-      return; // 每次只触发一个混剪任务
+      return; // 每个时间窗口只触发一个混剪
     }
+
+    // 所有矩阵都没有 pending，本次窗口跳过
   }
 
   async _doRemix(pipeline, effectiveCfg) {
