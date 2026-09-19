@@ -2243,7 +2243,8 @@ export function createMonitorServer({
           !pathname.startsWith("/api/tiktok/download") &&
           !pathname.startsWith("/api/tiktok/parse-profile") &&
           !pathname.startsWith("/api/tiktok/parse-status") &&
-          !pathname.startsWith("/api/tiktok/batch-download")) {
+          !pathname.startsWith("/api/tiktok/batch-download") &&
+          !pathname.startsWith("/api/tiktok/resume-download")) {
         sendJson(response, 404, { error: "TikTok 接口不存在" });
         return;
       }
@@ -3559,6 +3560,41 @@ export function createMonitorServer({
           const taskId = decodeURIComponent(parseStatusMatch[1]);
           const logs = store.db.prepare("SELECT message, created_at FROM cdp_logs WHERE task_id = ? ORDER BY created_at DESC LIMIT 50").all(taskId);
           sendJson(response, 200, { taskId, logs });
+          return;
+        }
+
+        // POST /api/tiktok/resume-download — 继续下载某达人的未完成视频
+        if (request.method === "POST" && pathname === "/api/tiktok/resume-download") {
+          const body = await readJson(request);
+          const creatorId = body.creatorId;
+          if (!creatorId) { sendJson(response, 400, { error: "缺少 creatorId 参数" }); return; }
+
+          // 查该达人下所有 downloaded=0 且有 source_url 的视频
+          const pending = store.db.prepare(
+            "SELECT id, source_url, title, thumb_url FROM remix_videos WHERE creator_id = ? AND downloaded = 0 AND source_url IS NOT NULL AND source_url != '' ORDER BY created_at ASC"
+          ).all(creatorId);
+
+          if (!pending.length) {
+            sendJson(response, 200, { ok: true, total: 0, results: [], message: "该达人所有视频已下载完成" });
+            return;
+          }
+
+          // 异步下载，立即返回
+          sendJson(response, 202, { ok: true, total: pending.length, message: `开始继续下载 ${pending.length} 个视频` });
+
+          // 后台串行下载
+          (async () => {
+            for (const v of pending) {
+              try {
+                await processSingleTiktokDownload(v.source_url);
+                store.logCdpEvent(null, "info", `继续下载完成: ${v.source_url}`);
+              } catch (e) {
+                store.logCdpEvent(null, "error", `继续下载失败: ${v.source_url} - ${e.message}`);
+              }
+              await new Promise((r) => setTimeout(r, 2000));
+            }
+            store.logCdpEvent(null, "info", `达人 ${creatorId} 的 ${pending.length} 个视频继续下载完毕`);
+          })().catch(() => {});
           return;
         }
 

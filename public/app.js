@@ -3420,7 +3420,10 @@ function renderRemixCreators() {
         <strong>${escapeHtml(c.name)}</strong>
         <span>${escapeHtml(c.platform || "")} ${c._count?.videos || 0}视频 · ${c._count?.resources || 0}资源</span>
       </div>
-      <button class="remix-del-btn" data-del-creator="${escapeHtml(c.id)}" title="删除">×</button>
+      <div style="display:flex;align-items:center;gap:4px;">
+        <button class="button button-secondary remix-resume-dl-btn" data-resume-dl="${escapeHtml(c.id)}" data-creator-name="${escapeHtml(c.name)}" title="继续下载未完成的视频" style="font-size:10px;padding:2px 6px;">继续下载</button>
+        <button class="remix-del-btn" data-del-creator="${escapeHtml(c.id)}" title="删除">×</button>
+      </div>
     </div>
   `).join("");
   remixEl.creatorsList.querySelectorAll("[data-id]").forEach((el) => {
@@ -3459,6 +3462,35 @@ function renderRemixCreators() {
         renderRemixResources();
       }
       await fetchRemixCreators();
+    });
+  });
+  // 绑定继续下载按钮
+  remixEl.creatorsList.querySelectorAll("[data-resume-dl]").forEach((btn) => {
+    btn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      const creatorId = btn.dataset.resumeDl;
+      const creatorName = btn.dataset.creatorName;
+      if (!confirm(`确认继续下载 ${creatorName} 的未完成视频？`)) return;
+      btn.disabled = true;
+      btn.textContent = "下载中…";
+      try {
+        const result = await request("/api/tiktok/resume-download", {
+          method: "POST",
+          body: JSON.stringify({ creatorId }),
+        });
+        if (result.total === 0) {
+          showToast(`${creatorName} 的视频已全部下载完成`);
+          btn.disabled = false;
+          btn.textContent = "继续下载";
+        } else {
+          showToast(`开始下载 ${result.total} 个视频，后台进行中`);
+          btn.textContent = `${result.total}个下载中`;
+        }
+      } catch (err) {
+        showToast(`继续下载失败: ${err.message}`, true);
+        btn.disabled = false;
+        btn.textContent = "继续下载";
+      }
     });
   });
 }
