@@ -629,16 +629,55 @@ export class AutoPublishScheduler extends EventTarget {
     if (changed) this._emitChange();
   }
 
-  // ─── 4. 自动排期发布 ───
+  // ─── 4. 自动排期发布（每天只排当天的量，多余的留到明天） ───
 
   async schedulePublishJobs() {
     const remixedPipelines = this._listPipelinesByStatus("remixed");
     if (!remixedPipelines.length) return;
 
     let changed = false;
+    // 按 profile_id 分组，统计今天已排期+已发布的数量，不超过 dailyLimit
+    const todayStr = new Date().toISOString().slice(0, 10);
+
+    // 缓存每个 profile 的今日排期计数
+    const todayCountCache = new Map();
+
     for (const pipeline of remixedPipelines) {
       try {
-        if (await this._scheduleOnePipeline(pipeline)) changed = true;
+        const profileId = pipeline.profile_id;
+        if (!profileId) continue;
+
+        // 查矩阵配置获取 dailyLimit
+        let matrixId = pipeline.matrix_id;
+        if (!matrixId && profileId) {
+          const mp = this.store.db.prepare("SELECT matrix_id FROM matrix_profiles WHERE profile_id = ?").get(profileId);
+          matrixId = mp?.matrix_id;
+        }
+        const cfg = matrixId ? this._getMatrixConfig(matrixId) : null;
+        const dailyLimit = cfg?.dailyLimit ?? 3;
+
+        // 获取或初始化今日计数
+        if (!todayCountCache.has(profileId)) {
+          // 统计今天已排期(scheduled) + 已发布(published) 的数量
+          const scheduled = this.store.db.prepare(
+            `SELECT COUNT(*) as cnt FROM auto_remix_publish_pipeline p
+             JOIN tk_publish_jobs j ON j.id = p.publish_job_id
+             WHERE p.profile_id = ? AND p.status IN ('scheduled', 'published')
+             AND (j.scheduled_at LIKE ? OR j.executed_at LIKE ?)`
+          ).get(profileId, `${todayStr}%`, `${todayStr}%`).cnt;
+          todayCountCache.set(profileId, scheduled);
+        }
+
+        const todayCount = todayCountCache.get(profileId);
+        if (todayCount >= dailyLimit) {
+          continue; // 今天排满了，跳过（留到明天）
+        }
+
+        // 排期这个 pipeline
+        if (await this._scheduleOnePipeline(pipeline)) {
+          todayCountCache.set(profileId, todayCount + 1);
+          changed = true;
+        }
       } catch (err) {
         console.error(`[AutoPublishScheduler] 排期失败 pipeline=${pipeline.id}:`, err.message);
         this.store.logCdpEvent(null, "error", `自动发布-排期失败: ${err.message}`);
