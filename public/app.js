@@ -206,6 +206,7 @@ function formatFileSize(bytes) {
 function formatDateTime(value) {
   if (!value) return "—";
   return new Date(value).toLocaleString("zh-CN", {
+    timeZone: "Asia/Shanghai",
     hour12: false,
     month: "2-digit",
     day: "2-digit",
@@ -6162,7 +6163,7 @@ async function openAnalyticsModal(matrixId, accountName) {
         <div style="border:1px solid #e2e8f0;border-radius:8px;padding:12px;margin-bottom:8px;">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
             <span style="font-size:11px;font-weight:600;">${escapeHtml(job.jobId.substring(0, 25))}</span>
-            <span style="font-size:10px;color:#64748b;">${escapeHtml(job.executedAt?.substring(0, 16) || '—')} · ${escapeHtml(String(job.recordCount))}条记录</span>
+            <span style="font-size:10px;color:#64748b;">${escapeHtml(job.executedAt ? formatDateTime(job.executedAt) : '—')} · ${escapeHtml(String(job.recordCount))}条记录</span>
           </div>
           <div style="display:flex;gap:12px;align-items:center;">
             <svg width="${chartW}" height="${chartH}" style="flex-shrink:0;">
