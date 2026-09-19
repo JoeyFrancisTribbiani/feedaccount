@@ -3977,6 +3977,14 @@ async function loadPathConfig() {
     if (uploadEl) uploadEl.value = cfg.videoUploadPath || "";
     if (outputEl) outputEl.value = cfg.outputPath || "";
   } catch {}
+  // 加载 iOS Farm 配置
+  try {
+    const iosCfg = await request("/api/ios-farm/config");
+    const urlEl = document.querySelector("#ios-farm-url");
+    const keyEl = document.querySelector("#ios-farm-key");
+    if (urlEl) urlEl.value = iosCfg.baseUrl || "";
+    if (keyEl) keyEl.value = ""; // 安全起见不回显密码
+  } catch {}
 }
 loadPathConfig();
 
@@ -4016,12 +4024,18 @@ document.querySelector("#comfyui-config-save")?.addEventListener("click", async 
 document.querySelector("#path-config-save")?.addEventListener("click", async () => {
   const uploadEl = document.querySelector("#path-config-upload");
   const outputEl = document.querySelector("#path-config-output");
+  const iosUrlEl = document.querySelector("#ios-farm-url");
+  const iosKeyEl = document.querySelector("#ios-farm-key");
   try {
     await request("/api/path-config", {
       method: "POST",
       body: JSON.stringify({ videoUploadPath: uploadEl?.value.trim() || "", outputPath: outputEl?.value.trim() || "" }),
     });
-    showToast("路径配置已保存");
+    // 保存 iOS Farm 配置
+    const iosPayload = { iosFarmBaseUrl: iosUrlEl?.value.trim() || "" };
+    if (iosKeyEl?.value.trim()) iosPayload.iosFarmApiKey = iosKeyEl.value.trim();
+    await request("/api/ios-farm/config", { method: "PUT", body: JSON.stringify(iosPayload) });
+    showToast("配置已保存");
   } catch (e) { showToast(e.message, true); }
 });
 
