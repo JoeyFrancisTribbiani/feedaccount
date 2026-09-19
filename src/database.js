@@ -2068,6 +2068,7 @@ export class LocalDatabase {
       accountName: row.account_name || null,
       sourceVideoId: row.source_video_id,
       sourceUrl: row.source_url || null,
+      sourceThumbUrl: row.source_thumb_url || null,
       remixTaskId: row.remix_task_id,
       profileId: row.profile_id,
       publishJobId: row.publish_job_id,
@@ -2111,15 +2112,17 @@ export class LocalDatabase {
              j.material_id AS material_id,
              vm.title AS material_title,
              vm.file_path AS material_file_path,
+             rv.thumb_url AS source_thumb_url,
              j.executed_at AS job_executed_at,
              j.status AS job_status,
              j.published_video_id AS published_video_id,
              j.published_video_url AS published_video_url
       FROM auto_remix_publish_pipeline p
       LEFT JOIN remix_creators c ON p.creator_id = c.id
-      LEFT JOIN media_matrices m ON m.id = p.matrix_id
+      LEFT JOIN media_matrices m ON m.id = COALESCE(p.matrix_id, (SELECT mp.matrix_id FROM matrix_profiles mp WHERE mp.profile_id = p.profile_id))
       LEFT JOIN tk_publish_jobs j ON j.id = p.publish_job_id
       LEFT JOIN tk_video_materials vm ON vm.id = j.material_id
+      LEFT JOIN remix_videos rv ON rv.id = p.source_video_id
       ${clause}
       ORDER BY p.created_at DESC
       LIMIT ?
@@ -2134,6 +2137,7 @@ export class LocalDatabase {
       accountName: row.account_name || null,
       sourceVideoId: row.source_video_id,
       sourceUrl: row.source_url || null,
+      sourceThumbUrl: row.source_thumb_url || null,
       remixTaskId: row.remix_task_id,
       profileId: row.profile_id,
       publishJobId: row.publish_job_id,

@@ -8184,7 +8184,7 @@ const autoPublish = {
     const tbody = this.el.pipelineTbody();
     if (!tbody) return;
     if (!this.pipelineTasks.length) {
-      tbody.innerHTML = '<tr><td colspan="9" class="empty-state compact" style="padding:16px;">暂无流水线任务</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="10" class="empty-state compact" style="padding:16px;">暂无流水线任务</td></tr>';
       return;
     }
     tbody.innerHTML = this.pipelineTasks.map((t) => {
@@ -8201,17 +8201,27 @@ const autoPublish = {
       const canRetry = status === 'failed' || status === 'retry';
       const canPublish = (status === 'scheduled' || status === 'retry') && t.publishJobId;
       const materialTitle = t.materialTitle || '';
-      // 清洗标题：去掉多余空白/换行
-      const cleanTitle = materialTitle ? materialTitle.replace(/\s+/g, ' ').trim().substring(0, 40) : '—';
-      // 播放量：需要从历史接口获取，这里先显示占位（pipeline 接口暂不含 analytics）
+      // 清洗发布标题：去掉 "AI混剪 · " 前缀和 " → N个矩阵" 后缀，从 "创作的 " 后取内容
+      let publishTitle = materialTitle;
+      publishTitle = publishTitle.replace(/^AI混剪\s*·\s*/, '').replace(/\s*→\s*\d+个矩阵$/, '');
+      const creativeMatch = publishTitle.match(/创作的\s*(.+)$/);
+      if (creativeMatch) publishTitle = creativeMatch[1].trim();
+      const cleanPublishTitle = publishTitle ? publishTitle.replace(/\s+/g, ' ').trim() : '';
+      // 缩略图
+      const thumbUrl = t.sourceThumbUrl || '';
+      const thumbHtml = thumbUrl
+        ? `<img src="${escapeHtml(thumbUrl)}" style="width:40px;height:40px;object-fit:cover;border-radius:4px;" onerror="this.style.display='none'" />`
+        : '<span style="color:#94a3b8;font-size:11px;">—</span>';
+      // 播放量
       const views = t.viewsCount != null ? t.viewsCount : '—';
 
       return `
         <tr class="${isFailed ? 'failed-row' : ''}">
           <td class="col-creator">${escapeHtml(matrixName)}</td>
           <td class="col-account" title="${escapeHtml(platform)}">${escapeHtml(platform ? platform + ' / ' : '')}${escapeHtml(accountName)}</td>
+          <td style="text-align:center;">${thumbHtml}</td>
           <td class="col-source" title="${escapeHtml(t.sourceVideoId || '')}">${escapeHtml(t.sourceVideoId ? t.sourceVideoId.substring(0, 12) : '—')}</td>
-          <td class="col-title" title="${escapeHtml(materialTitle)}">${escapeHtml(cleanTitle)}</td>
+          <td class="col-title" style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escapeHtml(cleanPublishTitle)}">${escapeHtml(cleanPublishTitle || '—')}</td>
           <td>
             <span class="ap-status-badge ${this.statusClass(status)}">${escapeHtml(status)}</span>
             ${failReason && isFailed ? `<span class="ap-fail-reason">${escapeHtml(failReason.substring(0, 50))}</span>` : ''}
@@ -8226,7 +8236,7 @@ const autoPublish = {
           </td>
         </tr>
         <tr class="pipeline-log-row hidden" data-log-row="${escapeHtml(t.id)}">
-          <td colspan="9" style="padding:8px 12px;background:#f8fafc;">
+          <td colspan="10" style="padding:8px 12px;background:#f8fafc;">
             <div data-log-content="${escapeHtml(t.id)}" style="max-height:200px;overflow-y:auto;font-size:12px;">
               <span class="muted-activity" style="font-size:11px;">点击日志按钮加载…</span>
             </div>
@@ -8384,7 +8394,7 @@ const autoPublish = {
     }
   },
 
-  // ---- 渲染：账号发布历史列表 ----
+  // ---- 渲染：账号发布历史列表（表格形式，精简版） ----
   renderPublishHistory() {
     const container = this.el.accountHistoryList();
     if (!container) return;
@@ -8392,10 +8402,25 @@ const autoPublish = {
       container.innerHTML = '<div class="empty-state compact" style="padding:16px;">该账号暂无发布历史</div>';
       return;
     }
-    container.innerHTML = this.publishHistory.map((h) => {
-      const title = h.materialTitle ? h.materialTitle.replace(/\s+/g, ' ').trim() : '(未命名视频)';
+    let html = `<table class="ap-table" style="width:100%;border-collapse:collapse;">
+      <thead><tr>
+        <th style="width:40px;">缩略图</th>
+        <th>发布标题</th>
+        <th>状态</th>
+        <th>播放量</th>
+        <th>互动</th>
+        <th>发布时间</th>
+        <th>操作</th>
+      </tr></thead><tbody>`;
+    for (const h of this.publishHistory) {
+      const materialTitle = h.materialTitle || '';
+      // 同样的标题清洗
+      let publishTitle = materialTitle;
+      publishTitle = publishTitle.replace(/^AI混剪\s*·\s*/, '').replace(/\s*→\s*\d+个矩阵$/, '');
+      const m = publishTitle.match(/创作的\s*(.+)$/);
+      if (m) publishTitle = m[1].trim();
+      const cleanTitle = publishTitle ? publishTitle.replace(/\s+/g, ' ').trim() : '(未命名)';
       const status = h.status || 'pending';
-      const statusBadge = `<span class="ap-status-badge ${this.statusClass(status)}">${escapeHtml(status)}</span>`;
       const views = h.viewsCount || 0;
       const likes = h.likesCount || 0;
       const comments = h.commentsCount || 0;
@@ -8404,28 +8429,30 @@ const autoPublish = {
       const failReason = h.failReason || '';
       const canRetry = status === 'failed' || status === 'retry';
       const publishedVideoUrl = h.publishedVideoUrl || '';
-      return `
-        <div class="ap-history-item">
-          <div class="ap-history-item-row">
-            <span class="ap-history-item-title" title="${escapeHtml(title)}">${escapeHtml(title)}</span>
-            ${statusBadge}
-          </div>
-          <div class="ap-history-item-meta">
-            <span>👁 ${views}</span>
-            <span>❤️ ${likes}</span>
-            <span>💬 ${comments}</span>
-            <span>🔗 ${shares}</span>
-            <span>📅 ${escapeHtml(publishedAt)}</span>
-            ${publishedVideoUrl ? `<a href="${escapeHtml(publishedVideoUrl)}" target="_blank" style="color:#3b82f6;font-size:11px;">查看视频</a>` : ''}
-          </div>
-          ${failReason ? `<div class="ap-history-item-fail">失败原因: ${escapeHtml(failReason.substring(0, 100))}</div>` : ''}
-          <div class="ap-history-item-row" style="margin-top:6px;">
-            ${h.taskId ? `<button class="button button-secondary" type="button" data-hist-logs="${escapeHtml(h.taskId)}" style="font-size:10px;padding:1px 8px;">查看日志</button>` : ''}
-            ${canRetry && h.taskId ? `<button class="button button-primary" type="button" data-hist-retry="${escapeHtml(h.taskId)}" style="font-size:10px;padding:1px 8px;margin-left:4px;">重新发布</button>` : ''}
-          </div>
-        </div>
-      `;
-    }).join('');
+      const thumbUrl = h.sourceThumbUrl || '';
+      const thumbHtml = thumbUrl
+        ? `<img src="${escapeHtml(thumbUrl)}" style="width:32px;height:32px;object-fit:cover;border-radius:4px;" onerror="this.style.display='none'" />`
+        : '<span style="color:#94a3b8;font-size:11px;">—</span>';
+      html += `<tr>
+        <td style="text-align:center;">${thumbHtml}</td>
+        <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escapeHtml(cleanTitle)}">
+          ${escapeHtml(cleanTitle)}
+          ${publishedVideoUrl ? `<a href="${escapeHtml(publishedVideoUrl)}" target="_blank" style="color:#3b82f6;font-size:10px;margin-left:4px;">↗</a>` : ''}
+        </td>
+        <td><span class="ap-status-badge ${this.statusClass(status)}">${escapeHtml(status)}</span>
+        ${failReason ? `<div style="font-size:10px;color:#dc2626;margin-top:2px;" title="${escapeHtml(failReason)}">${escapeHtml(failReason.substring(0, 40))}</div>` : ''}
+        </td>
+        <td>👁 ${views}</td>
+        <td style="font-size:11px;">❤️${likes} 💬${comments} 🔗${shares}</td>
+        <td style="font-size:11px;">${escapeHtml(publishedAt)}</td>
+        <td>
+          ${h.taskId ? `<button class="button button-secondary" type="button" data-hist-logs="${escapeHtml(h.taskId)}" style="font-size:10px;padding:1px 8px;">日志</button>` : ''}
+          ${canRetry && h.taskId ? `<button class="button button-primary" type="button" data-hist-retry="${escapeHtml(h.taskId)}" style="font-size:10px;padding:1px 8px;margin-left:4px;">重发</button>` : ''}
+        </td>
+      </tr>`;
+    }
+    html += '</tbody></table>';
+    container.innerHTML = html;
     // 绑定日志/重试按钮
     container.querySelectorAll('[data-hist-logs]').forEach((btn) => {
       btn.addEventListener('click', () => this._showHistoryLog(btn.dataset.histLogs));

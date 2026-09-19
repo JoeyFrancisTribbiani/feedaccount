@@ -4395,6 +4395,7 @@ export function createMonitorServer({
               j.error_message,
               m.title AS material_title,
               m.file_path AS material_file_path,
+              rv.thumb_url AS source_thumb_url,
               ma.id AS matrix_account_id,
               ma.platform,
               ma.account_name,
@@ -4413,6 +4414,7 @@ export function createMonitorServer({
             FROM auto_remix_publish_pipeline p
             LEFT JOIN tk_publish_jobs j ON j.id = p.publish_job_id
             LEFT JOIN tk_video_materials m ON m.id = j.material_id
+            LEFT JOIN remix_videos rv ON rv.id = p.source_video_id
             -- pipeline.matrix_id 可能为 null（旧数据），通过 profile_id 反查 matrix_profiles 获取 matrix_id
             LEFT JOIN media_matrices mm ON mm.id = COALESCE(p.matrix_id, (SELECT mp.matrix_id FROM matrix_profiles mp WHERE mp.profile_id = p.profile_id))
             LEFT JOIN matrix_accounts ma ON ma.matrix_id = COALESCE(p.matrix_id, (SELECT mp.matrix_id FROM matrix_profiles mp WHERE mp.profile_id = p.profile_id))
@@ -4437,6 +4439,7 @@ export function createMonitorServer({
               platform: r.platform,
               creatorId: r.creator_id,
               sourceVideoId: r.source_video_id,
+              sourceThumbUrl: r.source_thumb_url || null,
               materialTitle: r.material_title,
               materialFilePath: r.material_file_path,
               status: r.job_status || r.status,
