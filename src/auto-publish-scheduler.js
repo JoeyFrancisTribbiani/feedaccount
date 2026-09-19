@@ -352,33 +352,115 @@ export class AutoPublishScheduler extends EventTarget {
     if (changed) this._emitChange();
   }
 
-  // ─── 2. 自动触发混剪 ───
+  // ─── 2. 自动触发混剪（配额驱动，避免 AI 频率超限） ───
 
+  /**
+   * 配额算法：
+   * - 遍历所有启用的矩阵配置
+   * - 每个矩阵的 dailyLimit = 每天要发的视频数
+   * - 需要的库存 = dailyLimit + 1（多混剪1条应对意外）
+   * - 当前库存 = 今天已发布 + 已排期(scheduled) + 已混剪完成(remixed) + 正在混剪(remixing)
+   * - 如果库存 < 需要的库存，才触发混剪
+   * - 同时控制全局混剪频率：两次混剪间隔至少 REMIX_INTERVAL_MS
+   */
   async triggerRemixTasks() {
-    const pendingPipelines = this._listPipelinesByStatus("pending");
-    if (!pendingPipelines.length) return;
-
     // 混剪并发1：有正在混剪的任务就等
     const remixingCount = this._listPipelinesByStatus("remixing").length;
     if (remixingCount > 0) return;
 
-    // 5分钟间隔限制
+    // 全局混剪间隔限制
     const now = Date.now();
     if (now - this.lastRemixAt < REMIX_INTERVAL_MS) return;
 
-    // 轮换达人：优先选不同于上次混剪的达人的任务
-    let pipeline = null;
-    if (this.lastRemixCreatorId) {
-      // 找一个不同达人的 pending 任务
-      pipeline = pendingPipelines.find((p) => p.creator_id !== this.lastRemixCreatorId);
-    }
-    if (!pipeline) {
-      // 没有不同的达人，取第一个
-      pipeline = pendingPipelines[0];
-    }
+    // 获取所有启用的矩阵配置
+    const configs = this._listEnabledMatrixConfigs();
+    if (!configs.length) return;
 
-    // 配置从矩阵查（pipeline.matrix_id）
-    const cfg = pipeline.matrix_id ? this._getMatrixConfig(pipeline.matrix_id) : null;
+    // 按矩阵计算库存缺口
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const allPending = this._listPipelinesByStatus("pending");
+
+    for (const cfg of configs) {
+      const dailyLimit = cfg.dailyLimit ?? 3;
+      const targetStock = dailyLimit + 1; // 多混1条备用
+
+      // 统计该矩阵今天的库存（已发布+已排期+已混剪+正在混剪）
+      const matrixPipelines = this.store.db.prepare(
+        `SELECT status, profile_id FROM auto_remix_publish_pipeline
+         WHERE matrix_id = COALESCE(?, (SELECT mp.matrix_id FROM matrix_profiles mp WHERE mp.profile_id = profile_id))`
+      ).all(cfg.matrixId);
+
+      // 也算上 matrix_id 为 null 但 profile_id 匹配的旧数据
+      const mp = this.store.db.prepare("SELECT profile_id FROM matrix_profiles WHERE matrix_id = ?").get(cfg.matrixId);
+      const profileId = mp?.profile_id;
+      const matrixPipelinesAll = profileId
+        ? this.store.db.prepare(
+          `SELECT status FROM auto_remix_publish_pipeline
+           WHERE matrix_id = ? OR (matrix_id IS NULL AND profile_id = ?)`
+        ).all(cfg.matrixId, profileId)
+        : matrixPipelines;
+
+      let stockCount = 0;
+      for (const p of matrixPipelinesAll) {
+        if (["published", "scheduled", "remixed", "remixing"].includes(p.status)) {
+          // published 只算今天的
+          if (p.status === "published") {
+            // 检查是否今天发布的
+            const jobRow = this.store.db.prepare(
+              `SELECT j.executed_at FROM tk_publish_jobs j
+               JOIN auto_remix_publish_pipeline p ON p.publish_job_id = j.id
+               WHERE p.status = 'published' AND (p.matrix_id = ? OR (p.matrix_id IS NULL AND p.profile_id = ?))
+               AND j.executed_at LIKE ?`
+            ).get(cfg.matrixId, profileId, `${todayStr}%`);
+            if (jobRow) stockCount++;
+          } else {
+            stockCount++;
+          }
+        }
+      }
+
+      // 也统计今天已发布的（通过 tk_publish_jobs）
+      const todayPublished = profileId ? this._countTodayPublishedByProfile(profileId) : 0;
+      // 库存 = 今天已发布 + 未发布的(scheduled+remixed+remixing+pending)
+      // 其实 stockCount 已经包含了 published(今天的) + scheduled + remixed + remixing
+      // 但 pending 也要算进去（已下载但还没混剪的也是库存的一部分）
+      const pendingForMatrix = allPending.filter(p =>
+        p.matrix_id === cfg.matrixId || (p.matrix_id === null && profileId && p.profile_id === profileId)
+      );
+      stockCount += pendingForMatrix.length;
+
+      if (stockCount >= targetStock) {
+        // 库存够，跳过
+        continue;
+      }
+
+      // 库存不足，需要混剪。找 pending 的 pipeline 来混剪
+      const candidates = pendingForMatrix.length ? pendingForMatrix : allPending.filter(p =>
+        p.matrix_id === cfg.matrixId || (p.matrix_id === null && profileId && p.profile_id === profileId)
+      );
+
+      if (!candidates.length) {
+        // 没有 pending 的 pipeline（达人没有新视频），跳过
+        continue;
+      }
+
+      // 轮换达人：优先选不同于上次混剪的达人
+      let pipeline = null;
+      if (this.lastRemixCreatorId) {
+        pipeline = candidates.find((p) => p.creator_id !== this.lastRemixCreatorId);
+      }
+      if (!pipeline) {
+        pipeline = candidates[0];
+      }
+
+      // 触发混剪
+      await this._doRemix(pipeline, cfg);
+      return; // 每次只触发一个混剪任务
+    }
+  }
+
+  async _doRemix(pipeline, effectiveCfg) {
+    const now = Date.now();
 
     if (!pipeline.source_video_id) {
       this._updatePipeline(pipeline.id, {
@@ -389,45 +471,7 @@ export class AutoPublishScheduler extends EventTarget {
       return;
     }
 
-    if (!cfg) {
-      // 尝试从旧表补全 matrix_id（7.3 风险处理）
-      if (!pipeline.matrix_id) {
-        const mac = this.store.db
-          .prepare(`SELECT ma.matrix_id FROM matrix_account_creators mac
-                    JOIN matrix_accounts ma ON ma.id = mac.matrix_account_id
-                    WHERE mac.creator_id = ? LIMIT 1`)
-          .get(pipeline.creator_id);
-        if (mac?.matrix_id) {
-          this.store.db.prepare("UPDATE auto_remix_publish_pipeline SET matrix_id = ? WHERE id = ?")
-            .run(mac.matrix_id, pipeline.id);
-          pipeline.matrix_id = mac.matrix_id;
-        }
-      }
-      const cfg2 = pipeline.matrix_id ? this._getMatrixConfig(pipeline.matrix_id) : null;
-      if (!cfg2) {
-        this._updatePipeline(pipeline.id, {
-          status: "failed",
-          failReason: "缺少 matrix_auto_publish_config 配置",
-        });
-        this._emitChange();
-        return;
-      }
-    }
-
-    const effectiveCfg = cfg || this._getMatrixConfig(pipeline.matrix_id);
-    const video = this.store.getRemixVideo(pipeline.source_video_id);
-    if (!video) {
-      this._updatePipeline(pipeline.id, {
-        status: "failed",
-        failReason: `视频 ${pipeline.source_video_id} 不存在`,
-      });
-      this._emitChange();
-      return;
-    }
-
-    // matrix_id 直接从 pipeline 获取（已在创建时设置）
     const effectiveMatrixId = pipeline.matrix_id;
-    // cdp_instance_id 从 matrix_profiles 查 profile_id（混剪需要的 CDP 实例就是浏览器实例）
     let cdpInstanceId = effectiveCfg?.cdpInstanceId || null;
     if (!cdpInstanceId && effectiveMatrixId) {
       const mp = this.store.db
@@ -438,7 +482,6 @@ export class AutoPublishScheduler extends EventTarget {
     const presetId = effectiveCfg?.presetId || null;
     const ratio = effectiveCfg?.ratio || "9:16";
 
-    // cdp_instance_id 仍需校验（混剪需要 CDP 实例运行 ChatGPT）
     if (!cdpInstanceId) {
       this._updatePipeline(pipeline.id, {
         status: "failed",
@@ -448,12 +491,26 @@ export class AutoPublishScheduler extends EventTarget {
       return;
     }
 
+    // 尝试从旧表补全 matrix_id
+    if (!pipeline.matrix_id) {
+      const mac = this.store.db
+        .prepare(`SELECT ma.matrix_id FROM matrix_account_creators mac
+                  JOIN matrix_accounts ma ON ma.id = mac.matrix_account_id
+                  WHERE mac.creator_id = ? LIMIT 1`)
+        .get(pipeline.creator_id);
+      if (mac?.matrix_id) {
+        this.store.db.prepare("UPDATE auto_remix_publish_pipeline SET matrix_id = ? WHERE id = ?")
+          .run(mac.matrix_id, pipeline.id);
+        pipeline.matrix_id = mac.matrix_id;
+      }
+    }
+
     try {
       const remixRes = await fetch(`${this.serverUrl}/api/remix/ai-remix-task`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          matrixIds: [effectiveMatrixId],
+          matrixIds: [pipeline.matrix_id],
           creatorId: pipeline.creator_id,
           videoIds: [pipeline.source_video_id],
           cdpInstanceId,
@@ -483,7 +540,7 @@ export class AutoPublishScheduler extends EventTarget {
       this.store.logCdpEvent(
         null,
         "info",
-        `自动发布-触发混剪: pipeline=${pipeline.id}, remixTask=${remixTaskId}, matrix=${effectiveMatrixId}`,
+        `自动发布-触发混剪(配额): pipeline=${pipeline.id}, remixTask=${remixTaskId}, matrix=${pipeline.matrix_id}`,
       );
       this._emitChange();
     } catch (err) {
