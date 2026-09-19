@@ -288,7 +288,8 @@ export class AutoPublishScheduler extends EventTarget {
     );
   }
 
-  // ─── 1.5 为已有已下载视频补建 pipeline（手动下载的视频不在 monitor 表里） ───
+  // ─── 1.5 为矩阵绑定的达人的所有视频补建 pipeline ───
+  // 不管视频是否已下载，都创建 pipeline（未下载的在混剪时自动下载）
 
   async _createPipelineForExistingVideos() {
     const configs = this._listEnabledMatrixConfigs();
@@ -296,7 +297,6 @@ export class AutoPublishScheduler extends EventTarget {
 
     let changed = false;
     for (const cfg of configs) {
-      // 查矩阵实例
       const mp = this.store.db
         .prepare("SELECT profile_id FROM matrix_profiles WHERE matrix_id = ? LIMIT 1")
         .get(cfg.matrixId);
@@ -305,18 +305,21 @@ export class AutoPublishScheduler extends EventTarget {
 
       // 查矩阵关联的所有达人
       const creators = this.store.db.prepare(`
-        SELECT DISTINCT c.id AS creator_id FROM matrix_account_creators mac
+        SELECT DISTINCT c.id AS creator_id, c.name AS creator_name FROM matrix_account_creators mac
         JOIN matrix_accounts ma ON ma.id = mac.matrix_account_id
         JOIN remix_creators c ON c.id = mac.creator_id
         WHERE ma.matrix_id = ?
+        ORDER BY c.name
       `).all(cfg.matrixId);
 
       for (const creator of creators) {
+        // 查该达人所有有 source_url 的视频（不管是否已下载）
         const videos = this.store.db
-          .prepare("SELECT id, source_url FROM remix_videos WHERE creator_id = ? AND downloaded = 1")
+          .prepare("SELECT id, source_url, created_at FROM remix_videos WHERE creator_id = ? AND source_url IS NOT NULL AND source_url != '' ORDER BY created_at ASC")
           .all(creator.creator_id);
 
         for (const video of videos) {
+          // 去重检查
           const existing = this.store.db
             .prepare("SELECT id FROM auto_remix_publish_pipeline WHERE source_video_id = ? AND profile_id = ?")
             .get(video.id, profileId);
@@ -337,15 +340,14 @@ export class AutoPublishScheduler extends EventTarget {
           // 记录到 monitor 表
           if (video.source_url) {
             this._recordMonitoredVideo({
-              creatorId: creator.creator_id, videoId: video.id, tiktokUrl: video.source_url,
-            });
-            this._updateMonitoredVideo(creator.creator_id, video.source_url, {
-              remixVideoId: video.id,
+              creatorId: creator.creator_id,
+              videoId: video.id,
+              tiktokUrl: video.source_url,
             });
           }
 
           this.store.logCdpEvent(null, "info",
-            `自动发布-补建Pipeline: ${pipelineId} (矩阵=${cfg.matrixId}, 视频=${video.id}, profile=${profileId})`);
+            `自动发布-Pipeline补建: ${pipelineId} (矩阵=${cfg.matrixId}, 达人=${creator.creator_name}, 视频=${video.id})`);
           changed = true;
         }
       }
@@ -369,71 +371,25 @@ export class AutoPublishScheduler extends EventTarget {
     const remixingCount = this._listPipelinesByStatus("remixing").length;
     if (remixingCount > 0) return;
 
-    // ─── 计算今日混剪时间窗口 ───
-    // 所有启用矩阵的 dailyLimit 之和 = 今天需要混剪的总数
+    // 混剪间隔限制（防止AI频率超限）
+    const now = Date.now();
+    if (now - this.lastRemixAt < REMIX_INTERVAL_MS) return;
+
+    // 获取所有启用的矩阵配置
     const configs = this._listEnabledMatrixConfigs();
     if (!configs.length) return;
 
-    let totalDailyNeed = 0;
-    for (const cfg of configs) {
-      totalDailyNeed += (cfg.dailyLimit ?? 3) + 1; // +1 备用
-    }
-
-    // 均匀分布：24h / totalDailyNeed = 每次混剪的间隔
-    // 例如 3矩阵×(2+1)=9 → 24h/9 ≈ 2.67h 间隔
-    const targetIntervalMs = Math.max(DAY_MS / totalDailyNeed, REMIX_INTERVAL_MS);
-
-    const now = Date.now();
-    // 今天零点的时间戳
-    const todayStart = new Date();
-    todayStart.setHours(0, 0, 0, 0);
-    const todayStartMs = todayStart.getTime();
-
-    // 当前是今天的第几个时间窗口
-    const elapsedMs = now - todayStartMs;
-    const currentWindowIndex = Math.floor(elapsedMs / targetIntervalMs);
-    // 当前窗口的起始时间
-    const currentWindowStart = todayStartMs + currentWindowIndex * targetIntervalMs;
-
-    // 如果上次混剪时间 >= 当前窗口起始时间，说明这个窗口已经混剪过了，跳过
-    if (this.lastRemixAt >= currentWindowStart) return;
-
-    // 如果还没到当前窗口（理论不会，但防御）
-    if (now < currentWindowStart) return;
-
-    // ─── 当前窗口需要混剪，按矩阵轮换选择 ───
+    // 检查每个矩阵的日配额：今天已混剪+已发布+已排期 >= dailyLimit+1 就跳过
     const todayStr = new Date().toISOString().slice(0, 10);
-    const allPending = this._listPipelinesByStatus("pending");
-
-    // 今天已经混剪过的次数（remixing + remixed + scheduled + published今天）
-    let todayRemixCount = 0;
-    // 计算今天已完成的混剪数 = 今天触发的混剪次数
-    // 用 lastRemixAt 判断：如果 lastRemixAt 在今天范围内，说明今天至少混过1次
-    if (this.lastRemixAt >= todayStartMs) {
-      // 统计今天进入过 remixing 的 pipeline 数（已变 remixed/scheduled/published/remixing）
-      const todayRemixed = this.store.db.prepare(
-        `SELECT COUNT(*) as cnt FROM auto_remix_publish_pipeline
-         WHERE updated_at LIKE ? AND status IN ('remixed', 'scheduled', 'published', 'remixing')`
-      ).get(`${todayStr}%`).cnt;
-      todayRemixCount = todayRemixed;
-    }
-
-    // 如果今天已经混剪了足够的数量（>= totalDailyNeed），不再混剪
-    if (todayRemixCount >= totalDailyNeed) return;
-
-    // 按矩阵轮换：根据当前窗口索引选择矩阵
-    const matrixIndex = currentWindowIndex % configs.length;
-    // 尝试从 matrixIndex 开始，依次找有 pending 的矩阵
-    for (let i = 0; i < configs.length; i++) {
-      const cfg = configs[(matrixIndex + i) % configs.length];
+    const eligibleMatrixIds = new Set();
+    for (const cfg of configs) {
       const dailyLimit = cfg.dailyLimit ?? 3;
       const targetStock = dailyLimit + 1;
 
-      // 查矩阵绑定的 profile_id
       const mp = this.store.db.prepare("SELECT profile_id FROM matrix_profiles WHERE matrix_id = ?").get(cfg.matrixId);
       const profileId = mp?.profile_id || null;
 
-      // 库存 = 今天已发布 + 已排期 + 已混剪完成 + 正在混剪
+      // 库存 = 已排期 + 已混剪 + 正在混剪 + 今天已发布
       const stockCount = this.store.db.prepare(
         `SELECT COUNT(*) as cnt FROM auto_remix_publish_pipeline p
          WHERE (p.matrix_id = ? ${profileId ? "OR (p.matrix_id IS NULL AND p.profile_id = ?)" : ""})
@@ -449,35 +405,44 @@ export class AutoPublishScheduler extends EventTarget {
         ).get(cfg.matrixId, profileId, `${todayStr}%`).cnt
         : 0;
 
-      const totalStock = stockCount + todayPublishedCount;
-
-      if (totalStock >= targetStock) {
-        continue; // 该矩阵库存够，试下一个
+      if (stockCount + todayPublishedCount < targetStock) {
+        eligibleMatrixIds.add(cfg.matrixId);
       }
-
-      // 找 pending 的 pipeline
-      const candidates = allPending.filter(p =>
-        p.matrix_id === cfg.matrixId || (p.matrix_id === null && profileId && p.profile_id === profileId)
-      );
-
-      if (!candidates.length) {
-        continue; // 没有 pending，试下一个矩阵
-      }
-
-      // 轮换达人：优先选不同于上次混剪的达人
-      let pipeline = null;
-      if (this.lastRemixCreatorId) {
-        pipeline = candidates.find((p) => p.creator_id !== this.lastRemixCreatorId);
-      }
-      if (!pipeline) {
-        pipeline = candidates[0];
-      }
-
-      await this._doRemix(pipeline, cfg);
-      return; // 每个时间窗口只触发一个混剪
     }
 
-    // 所有矩阵都没有 pending，本次窗口跳过
+    if (!eligibleMatrixIds.size) return;
+
+    // 按创建时间顺序取所有 pending pipeline（从旧到新）
+    const allPending = this._listPipelinesByStatus("pending");
+    if (!allPending.length) return;
+
+    // 过滤出属于有配额的矩阵的 pipeline
+    const candidates = allPending.filter(p => {
+      if (p.matrix_id && eligibleMatrixIds.has(p.matrix_id)) return true;
+      // 旧数据 matrix_id 为 null，通过 profile_id 反查
+      if (!p.matrix_id && p.profile_id) {
+        const mp = this.store.db.prepare("SELECT matrix_id FROM matrix_profiles WHERE profile_id = ?").get(p.profile_id);
+        return mp && eligibleMatrixIds.has(mp.matrix_id);
+      }
+      return false;
+    });
+
+    if (!candidates.length) return;
+
+    // 按创建时间排序（从旧到新）
+    candidates.sort((a, b) => (a.created_at || "").localeCompare(b.created_at || ""));
+
+    // 取最旧的一个
+    const pipeline = candidates[0];
+    // 查其矩阵配置
+    let pipelineMatrixId = pipeline.matrix_id;
+    if (!pipelineMatrixId && pipeline.profile_id) {
+      const mp = this.store.db.prepare("SELECT matrix_id FROM matrix_profiles WHERE profile_id = ?").get(pipeline.profile_id);
+      pipelineMatrixId = mp?.matrix_id;
+    }
+    const cfg = pipelineMatrixId ? this._getMatrixConfig(pipelineMatrixId) : null;
+
+    await this._doRemix(pipeline, cfg);
   }
 
   async _doRemix(pipeline, effectiveCfg) {
