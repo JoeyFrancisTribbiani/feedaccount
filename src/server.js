@@ -25,6 +25,7 @@ import { JobManager } from "./job-manager.js";
 import { LocalDatabase } from "./database.js";
 import { TiktokJobManager, TIKTOK_DEFAULT_OPTIONS } from "./tiktok/tiktok-job-manager.js";
 import { TiktokPublishManager } from "./tiktok/tiktok-publish-manager.js";
+import { createIosFarmClient } from "./ios-farm-client.js";
 import { RotationScheduler, SCHEDULER_DEFAULTS } from "./scheduler.js";
 import { checkIpGeoViaSocks5 } from "./socks5-check.js";
 import { DEDUP_PRESETS, dedupVideo, stitchVideos, probeVideo, remixVideoWithResources, composeAiRemixVideo, antiAiProcessImage, setOutputDir, setUploadDir, getOutputDir, getUploadDir, OUTPUT_DIR as REMIX_OUTPUT_DIR } from "./video-remix.js";
@@ -400,7 +401,9 @@ export function createMonitorServer({
   globalThis.__ngrokDb = store.db;
   const jobs = jobManager || new JobManager({ bitBrowserApi: api, persistence: store });
   const tiktokJobs = new TiktokJobManager({ bitBrowserApi: api, persistence: store });
-  const tiktokPublisherManager = new TiktokPublishManager({ bitBrowserApi: api, persistence: store });
+  // 创建 iOS Farm 客户端（如果配置了 baseUrl）
+  const iosFarmClient = createIosFarmClient(store);
+  const tiktokPublisherManager = new TiktokPublishManager({ bitBrowserApi: api, persistence: store, iosFarm: iosFarmClient });
   tiktokPublisherManager.startScheduler();
 
   // 自动混剪发布调度器
@@ -4178,6 +4181,77 @@ export function createMonitorServer({
         // ---- 自动混剪发布流水线 API ----
 
         // 获取达人自动发布配置
+        // ---- iOS Farm API ----
+
+        // GET /api/ios-farm/health — 健康检查
+        if (request.method === "GET" && pathname === "/api/ios-farm/health") {
+          if (!iosFarmClient) { sendJson(response, 503, { ok: false, error: "iOS Farm 未配置" }); return; }
+          try {
+            const result = await iosFarmClient.health();
+            sendJson(response, 200, result);
+          } catch (e) {
+            sendJson(response, 503, { ok: false, error: e.message });
+          }
+          return;
+        }
+
+        // GET /api/ios-farm/devices — 列出 iOS 设备
+        if (request.method === "GET" && pathname === "/api/ios-farm/devices") {
+          if (!iosFarmClient) { sendJson(response, 503, { error: "iOS Farm 未配置" }); return; }
+          try {
+            const devices = await iosFarmClient.listDevices();
+            sendJson(response, 200, devices);
+          } catch (e) {
+            sendJson(response, 503, { error: e.message });
+          }
+          return;
+        }
+
+        // GET /api/ios-farm/config — 获取 iOS Farm 配置
+        if (request.method === "GET" && pathname === "/api/ios-farm/config") {
+          const pathCfg = store.getPathConfig?.() || {};
+          sendJson(response, 200, {
+            baseUrl: pathCfg.iosFarmBaseUrl || "",
+            apiKey: pathCfg.iosFarmApiKey ? "***" : "",
+            configured: Boolean(pathCfg.iosFarmBaseUrl),
+          });
+          return;
+        }
+
+        // PUT /api/ios-farm/config — 设置 iOS Farm 配置
+        if (request.method === "PUT" && pathname === "/api/ios-farm/config") {
+          try {
+            const body = await readJson(request);
+            const pathCfg = store.getPathConfig?.() || {};
+            if (body.iosFarmBaseUrl !== undefined) pathCfg.iosFarmBaseUrl = body.iosFarmBaseUrl;
+            if (body.iosFarmApiKey !== undefined) pathCfg.iosFarmApiKey = body.iosFarmApiKey;
+            store.savePathConfig?.(pathCfg);
+            // 重新创建客户端
+            const newClient = createIosFarmClient(store);
+            tiktokPublisherManager.iosFarm = newClient;
+            sendJson(response, 200, { ok: true });
+          } catch (e) {
+            sendJson(response, 400, { error: e.message });
+          }
+          return;
+        }
+
+        // GET /api/ios-farm/executions — 列出执行历史
+        const iosFarmExecMatch = pathname.match(/^\/api\/ios-farm\/executions\/?$/);
+        if (request.method === "GET" && iosFarmExecMatch) {
+          if (!iosFarmClient) { sendJson(response, 503, { error: "iOS Farm 未配置" }); return; }
+          const url = new URL(request.url, "http://localhost");
+          const udid = url.searchParams.get("udid") || null;
+          const limit = parseInt(url.searchParams.get("limit") || "50", 10);
+          try {
+            const executions = await iosFarmClient.listExecutions(udid, limit);
+            sendJson(response, 200, executions);
+          } catch (e) {
+            sendJson(response, 503, { error: e.message });
+          }
+          return;
+        }
+
         // ---- 自动发布 API（/api/auto-publish/* 别名，兼容前端调用） ----
 
         // GET /api/auto-publish/matrices — 列出所有矩阵+配置+账号+实例+达人数

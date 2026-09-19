@@ -1,12 +1,16 @@
 import { TiktokPublisher } from "./tiktok-publisher.js";
+import { createIosFarmClient } from "../ios-farm-client.js";
 
 export class TiktokPublishManager extends EventTarget {
-  constructor({ bitBrowserApi, persistence = null } = {}) {
+  constructor({ bitBrowserApi, persistence = null, iosFarm = null } = {}) {
     super();
     this.bitBrowserApi = bitBrowserApi;
     this.persistence = persistence;
+    this.iosFarm = iosFarm; // IosFarmClient 实例，如不为空则优先用 iOS Farm 发布
     this.timer = null;
     this.runningJobIds = new Set();
+    // iOS Farm 执行轮询：executionId → { jobId, intervalId }
+    this.iosFarmPollers = new Map();
   }
 
   startScheduler(intervalMs = 30000) {
@@ -57,6 +61,13 @@ export class TiktokPublishManager extends EventTarget {
     this.persistence?.updateTkPublishJobStatus(jobId, { status: "running", executedAt: new Date().toISOString() });
     this._log(jobId, "info", `发布任务开始: profile=${job.profileId}, title=${job.materialTitle?.substring(0, 50) || "—"}`);
     this.dispatchEvent(new CustomEvent("change"));
+
+    // ===== iOS Farm 发布模式 =====
+    // 如果 job.profileId 以 "ios_" 开头，使用 iOS Farm 发布
+    if (job.profileId && job.profileId.startsWith("ios_")) {
+      const udid = job.profileId.replace(/^ios_/, "");
+      return await this._executeViaIosFarm(jobId, udid, job);
+    }
 
     let publisher = null;
     try {
@@ -140,6 +151,120 @@ export class TiktokPublishManager extends EventTarget {
       if (publisher) {
         await publisher.close().catch(() => {});
       }
+      this.dispatchEvent(new CustomEvent("change"));
+    }
+  }
+
+  /**
+   * 通过 iOS Farm 发布视频
+   * 流程：上传视频 → 创建 post 任务 → 轮询执行状态 → 更新 job 状态
+   * @private
+   */
+  async _executeViaIosFarm(jobId, udid, job) {
+    if (!this.iosFarm) {
+      throw new Error("iOS Farm 客户端未配置，无法执行 iOS 发布任务");
+    }
+    try {
+      // 1. 上传视频到 Mac
+      this._log(jobId, "info", `iOS Farm: 正在上传视频到 Mac (${udid})…`);
+      const fileName = job.materialFilePath?.split("/").pop() || `video_${jobId}.mp4`;
+      const asset = await this.iosFarm.uploadAsset(job.materialFilePath, fileName);
+      this._log(jobId, "info", `iOS Farm: 视频上传成功, assetId=${asset.id || asset.assetId}, size=${asset.size || "—"}`);
+
+      // 2. 标题处理（和 Playwright 模式一致）
+      let publishTitle = job.materialTitle || '';
+      publishTitle = publishTitle.replace(/^AI混剪\s*·\s*/, '').replace(/\s*→\s*\d+个矩阵$/, '');
+      const creativeMatch = publishTitle.match(/创作的\s*(.+)$/);
+      if (creativeMatch) publishTitle = creativeMatch[1].trim();
+
+      // 3. 创建 TikTok post 任务
+      this._log(jobId, "info", `iOS Farm: 创建发布任务, udid=${udid}, account=${job.accountId || "—"}, 标题=${publishTitle.substring(0, 50)}`);
+      const schedule = await this.iosFarm.createPostSchedule({
+        deviceUdid: udid,
+        media: [{
+          assetId: asset.id || asset.assetId,
+          name: asset.originalName || fileName,
+          mimeType: asset.mimeType || "video/mp4",
+        }],
+        account: job.accountId || "",
+        caption: publishTitle,
+        destination: "publish",
+        timing: { kind: "now" },
+      });
+
+      const scheduleId = schedule?.id || schedule?.scheduleId;
+      this._log(jobId, "info", `iOS Farm: 任务已创建, scheduleId=${scheduleId}`);
+
+      // 4. 轮询执行状态
+      // prod-FARM-IOS-Core 的 schedule 创建后会立即 materialize 成 execution
+      // 等待 execution 出现，然后轮询其状态
+      let executionId = null;
+      let attempts = 0;
+      const maxWaitAttempts = 30; // 等待最多 60 秒
+      while (attempts < maxWaitAttempts && !executionId) {
+        await new Promise(r => setTimeout(r, 2000));
+        attempts++;
+        const executions = await this.iosFarm.listExecutions(udid, 5);
+        const found = executions.find(e =>
+          e.status === "queued" || e.status === "running" ||
+          (scheduleId && e.scheduleId === scheduleId)
+        );
+        if (found) executionId = found.id;
+      }
+
+      if (!executionId) {
+        throw new Error("iOS Farm: 任务创建后未找到执行记录，可能设备离线或 worker 未运行");
+      }
+
+      this._log(jobId, "info", `iOS Farm: 执行开始, executionId=${executionId}`);
+
+      // 轮询执行状态（最多等 10 分钟）
+      const maxPollAttempts = 300; // 300 * 2s = 600s = 10min
+      let pollAttempts = 0;
+      let finalStatus = null;
+
+      while (pollAttempts < maxPollAttempts) {
+        await new Promise(r => setTimeout(r, 2000));
+        pollAttempts++;
+        const execution = await this.iosFarm.getExecution(executionId);
+        finalStatus = execution;
+
+        if (execution.status === "completed" || execution.status === "success") {
+          // 发布成功
+          this.persistence?.updateTkPublishJobStatus(jobId, {
+            status: "success",
+            publishedVideoId: execution.publishedVideoId || null,
+            publishedVideoUrl: execution.publishedVideoUrl || null,
+          });
+          this._log(jobId, "info", `iOS Farm: 发布成功! executionId=${executionId}`);
+          break;
+        } else if (execution.status === "failed" || execution.status === "stopped") {
+          throw new Error(`iOS Farm 任务${execution.status === "stopped" ? "被停止" : "失败"}: ${execution.error || "未知错误"}`);
+        } else if (execution.status === "window-expired") {
+          throw new Error("iOS Farm: 任务执行超时（窗口过期）");
+        }
+        // queued 或 running 继续等
+        if (pollAttempts % 15 === 0) {
+          this._log(jobId, "info", `iOS Farm: 等待中… (${pollAttempts * 2}s) 状态=${execution.status}`);
+        }
+      }
+
+      if (!finalStatus || (finalStatus.status !== "completed" && finalStatus.status !== "success")) {
+        throw new Error("iOS Farm: 任务执行超时（等待超过 10 分钟）");
+      }
+
+      // iOS Farm 模式不抓播放量（iPhone 上的 TikTok App 无法像网页那样抓 DOM）
+      this._log(jobId, "info", `iOS Farm: 发布完成（播放量需手动在 TikTok App 查看）`);
+
+    } catch (error) {
+      this.persistence?.updateTkPublishJobStatus(jobId, {
+        status: "failed",
+        errorMessage: error.message,
+      });
+      this._log(jobId, "error", `iOS Farm 发布失败: ${error.message}`);
+      throw error;
+    } finally {
+      this.runningJobIds.delete(jobId);
       this.dispatchEvent(new CustomEvent("change"));
     }
   }
