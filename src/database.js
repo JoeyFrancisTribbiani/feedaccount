@@ -2089,6 +2089,8 @@ export class LocalDatabase {
     if (matrixId) { where.push("p.matrix_id = ?"); params.push(matrixId); }
     if (creatorId) { where.push("p.creator_id = ?"); params.push(creatorId); }
     if (status) { where.push("p.status = ?"); params.push(status); }
+    // 默认排除 pending（发布历史看板不显示未进入发布流程的）
+    if (!status) { where.push("p.status != 'pending'"); }
     if (profileId) { where.push("p.profile_id = ?"); params.push(profileId); }
     if (accountId) {
       // 按 matrix_account.id 筛选：先查出 account，再用 account_name 匹配 publish_jobs 链路
@@ -2117,6 +2119,7 @@ export class LocalDatabase {
              vm.file_path AS material_file_path,
              rv.thumb_url AS source_thumb_url,
              j.executed_at AS job_executed_at,
+             j.scheduled_at AS job_scheduled_at,
              j.status AS job_status,
              j.published_video_id AS published_video_id,
              j.published_video_url AS published_video_url
@@ -2152,6 +2155,7 @@ export class LocalDatabase {
       materialTitle: row.material_title || null,
       materialFilePath: row.material_file_path || null,
       jobExecutedAt: row.job_executed_at || null,
+      jobScheduledAt: row.job_scheduled_at || null,
       jobStatus: row.job_status || null,
       publishedVideoId: row.published_video_id || null,
       publishedVideoUrl: row.published_video_url || null,

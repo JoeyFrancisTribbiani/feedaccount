@@ -8558,7 +8558,7 @@ const autoPublish = {
       const attempts = t.attemptCount ?? 0;
       const maxAttempts = 3;
       const createdAt = t.createdAt ? formatDateTime(t.createdAt) : '—';
-      const executedAt = t.jobExecutedAt ? formatDateTime(t.jobExecutedAt) : '—';
+      const executedAt = t.jobExecutedAt ? formatDateTime(t.jobExecutedAt) : (t.jobScheduledAt ? formatDateTime(t.jobScheduledAt) : '—');
       const isFailed = status === 'failed';
       const failReason = t.failReason || '';
       const canRetry = status === 'failed' || status === 'retry';
@@ -8586,7 +8586,7 @@ const autoPublish = {
             ${failReason && isFailed ? `<span class="ap-fail-reason">${escapeHtml(failReason.substring(0, 50))}</span>` : ''}
           </td>
           <td class="col-views">${escapeHtml(String(views))}</td>
-          <td class="col-time">${escapeHtml(executedAt !== '—' ? executedAt : createdAt)}</td>
+          <td class="col-time">${escapeHtml(executedAt)}</td>
           <td class="col-attempts">${attempts}/${maxAttempts}</td>
           <td class="col-action">
             ${canRetry ? `<button class="button button-secondary" type="button" data-retry="${escapeHtml(t.id)}" style="font-size:11px;padding:2px 10px;">重试</button>` : ''}
