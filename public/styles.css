@@ -1152,6 +1152,18 @@ textarea:focus-visible {
   border-color: #94a3b8;
 }
 
+.button-danger {
+  border: 1px solid #ef4444;
+  background: #ef4444;
+  color: #fff;
+  box-shadow: var(--shadow-xs);
+}
+
+.button-danger:hover:not(:disabled) {
+  background: #dc2626;
+  border-color: #dc2626;
+}
+
 .button:disabled {
   opacity: 0.45;
   cursor: not-allowed;

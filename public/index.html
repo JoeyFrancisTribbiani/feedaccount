@@ -1194,6 +1194,8 @@
                       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="3.5" cy="6" r="1"/><circle cx="3.5" cy="12" r="1"/><circle cx="3.5" cy="18" r="1"/></svg>
                     </button>
                   </div>
+                  <div style="flex:1;"></div>
+                  <button id="remix-batch-delete-btn" class="button button-danger" type="button" style="font-size:12px;padding:4px 10px;display:none;">批量删除选中</button>
                   <div id="remix-pagination" class="remix-pagination"></div>
                 </div>
                 <div id="remix-video-grid" class="remix-video-grid">
@@ -1293,7 +1295,10 @@
               </div>
               <!-- 下载结果列表 -->
               <div id="tiktok-results" style="display:none;margin-top:12px;">
-                <h4 style="font-size:13px;margin-bottom:8px;">下载结果</h4>
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+                  <h4 style="font-size:13px;">下载结果</h4>
+                  <button id="tiktok-batch-delete-btn" class="button button-danger" type="button" style="font-size:12px;padding:4px 10px;">批量删除已下载</button>
+                </div>
                 <div id="tiktok-results-list" style="max-height:200px;overflow-y:auto;"></div>
               </div>
             </div>

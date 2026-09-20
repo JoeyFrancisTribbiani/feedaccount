@@ -2616,7 +2616,24 @@ export class LocalDatabase {
   }
 
   deleteRemixVideo(id) {
-    return this.db.prepare(`DELETE FROM remix_videos WHERE id = ?`).run(id).changes;
+    // 先查出视频文件路径再删记录
+    const video = this.db.prepare("SELECT url FROM remix_videos WHERE id = ?").get(id);
+    const changes = this.db.prepare(`DELETE FROM remix_videos WHERE id = ?`).run(id).changes;
+    return { changes, filePath: video?.url || null };
+  }
+
+  batchDeleteRemixVideos(ids) {
+    let deleted = 0;
+    const filePaths = [];
+    const stmt = this.db.prepare("SELECT url FROM remix_videos WHERE id = ?");
+    const delStmt = this.db.prepare("DELETE FROM remix_videos WHERE id = ?");
+    for (const id of ids) {
+      const video = stmt.get(id);
+      if (video?.url) filePaths.push(video.url);
+      delStmt.run(id);
+      deleted++;
+    }
+    return { deleted, filePaths };
   }
 
   updateRemixVideoDuration(id, duration) {

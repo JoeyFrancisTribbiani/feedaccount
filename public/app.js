@@ -3825,6 +3825,40 @@ function renderRemixSelected() {
     : '<span class="muted-activity" style="font-size: 12px;">勾选视频加入去重或混剪</span>';
   remixEl.dedupBtn.disabled = remix.selectedVideos.length < 1;
   remixEl.stitchBtn.disabled = false;
+  // 批量删除按钮：有选中时显示
+  const batchDelBtn = document.querySelector("#remix-batch-delete-btn");
+  if (batchDelBtn) {
+    batchDelBtn.style.display = remix.selectedVideos.length > 0 ? "" : "none";
+    // 绑定点击事件（先解绑防重复）
+    batchDelBtn.onclick = null;
+    batchDelBtn.onclick = async () => {
+      if (remix.selectedVideos.length === 0) return;
+      if (!confirm(`确认删除选中的 ${remix.selectedVideos.length} 个视频？\n将同时删除数据库记录和已下载的视频文件。`)) return;
+      // 从 selectedVideos 的 key 匹配 remix.videos 获取 video.id
+      const selectedKeys = new Set(remix.selectedVideos.map(sv => sv.key));
+      const videoIds = remix.videos
+        .filter(v => selectedKeys.has(v.sourceUrl || v.url || v.id))
+        .map(v => v.id);
+      if (!videoIds.length) { showToast("未找到对应视频ID", true); return; }
+      try {
+        batchDelBtn.disabled = true;
+        batchDelBtn.textContent = "删除中…";
+        const res = await request("/api/remix/videos/batch-delete", {
+          method: "POST",
+          body: JSON.stringify({ videoIds }),
+        });
+        showToast(`已删除 ${res.deleted || videoIds.length} 个视频`);
+        remix.selectedVideos = [];
+        await fetchRemixVideos(remix.selectedCreatorId);
+        await fetchRemixCreators();
+      } catch (err) {
+        showToast(`批量删除失败: ${err.message}`, true);
+      } finally {
+        batchDelBtn.disabled = false;
+        batchDelBtn.textContent = "批量删除选中";
+      }
+    };
+  }
   remixEl.selectedList.querySelectorAll(".remix-chip").forEach((chip) => {
     chip.addEventListener("click", () => {
       const chipKey = chip.dataset.key;
@@ -4404,6 +4438,7 @@ async function tiktokBatchDownload(urls) {
     }
     // 更新结果列表
     renderTiktokResults(results);
+    tiktokDl._lastResults = results;
   }
 
   hideTiktokProgress();
@@ -4441,6 +4476,36 @@ function renderTiktokResults(results) {
     </div>`;
   }).join("");
 }
+
+// TikTok下载弹窗的批量删除按钮
+document.querySelector("#tiktok-batch-delete-btn")?.addEventListener("click", async () => {
+  // 从结果列表收集有 videoId 的成功下载结果
+  const videoIds = (tiktokDl._lastResults || [])
+    .filter(r => r.ok && r.videoId)
+    .map(r => r.videoId);
+  if (!videoIds.length) {
+    showToast("没有可删除的已下载视频", true);
+    return;
+  }
+  if (!confirm(`确认删除 ${videoIds.length} 个已下载视频？\n将同时删除数据库记录和视频文件。`)) return;
+  try {
+    const res = await request("/api/remix/videos/batch-delete", {
+      method: "POST",
+      body: JSON.stringify({ videoIds }),
+    });
+    showToast(`已删除 ${res.deleted || videoIds.length} 个视频`);
+    // 刷新达人视频列表
+    await fetchRemixCreators();
+    if (remix.selectedCreatorId) {
+      await fetchRemixVideos(remix.selectedCreatorId);
+    }
+    // 清空结果
+    tiktokDl.results.style.display = "none";
+    tiktokDl._lastResults = [];
+  } catch (err) {
+    showToast(`批量删除失败: ${err.message}`, true);
+  }
+});
 
 // 关闭视频预览弹框
 document.querySelector("#video-preview-close")?.addEventListener("click", () => {

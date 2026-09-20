@@ -2415,8 +2415,36 @@ export function createMonitorServer({
         }
         const remixVideoDeleteMatch = pathname.match(/^\/api\/remix\/creators\/([^/]+)\/videos\/([^/]+)$/);
         if (request.method === "DELETE" && remixVideoDeleteMatch) {
-          store.deleteRemixVideo(decodeURIComponent(remixVideoDeleteMatch[2]));
+          const result = store.deleteRemixVideo(decodeURIComponent(remixVideoDeleteMatch[2]));
+          // 删除视频文件
+          if (result.filePath) {
+            try {
+              const fp = result.filePath.startsWith("/data/remix-videos/")
+                ? path.join(getOutputDir(), "remix-videos", result.filePath.replace("/data/remix-videos/", ""))
+                : result.filePath;
+              if (existsSync(fp)) unlink(fp);
+            } catch {}
+          }
           sendJson(response, 200, { ok: true });
+          return;
+        }
+
+        // ---- Remix: 批量删除视频（数据库记录+文件） ----
+        if (request.method === "POST" && pathname === "/api/remix/videos/batch-delete") {
+          const body = await readJson(request);
+          const videoIds = body.videoIds || [];
+          if (!videoIds.length) { sendJson(response, 400, { error: "缺少 videoIds" }); return; }
+          const result = store.batchDeleteRemixVideos(videoIds);
+          // 删除视频文件
+          for (const fp of result.filePaths) {
+            try {
+              const filePath = fp.startsWith("/data/remix-videos/")
+                ? path.join(getOutputDir(), "remix-videos", fp.replace("/data/remix-videos/", ""))
+                : fp;
+              if (existsSync(filePath)) unlink(filePath);
+            } catch {}
+          }
+          sendJson(response, 200, { ok: true, deleted: result.deleted });
           return;
         }
 
