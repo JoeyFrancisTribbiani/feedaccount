@@ -536,12 +536,15 @@ export class AutoPublishScheduler extends EventTarget {
     }
 
     const effectiveMatrixId = pipeline.matrix_id;
+    // AI 混剪使用 Chrome CDP 实例（不是绑定的指纹浏览器实例）
+    // 从配置取 cdpInstanceId，没有则用默认 Chrome 实例（端口9222对应的实例）
     let cdpInstanceId = effectiveCfg?.cdpInstanceId || null;
-    if (!cdpInstanceId && effectiveMatrixId) {
-      const mp = this.store.db
-        .prepare("SELECT profile_id FROM matrix_profiles WHERE matrix_id = ? LIMIT 1")
-        .get(effectiveMatrixId);
-      cdpInstanceId = mp?.profile_id || null;
+    if (!cdpInstanceId) {
+      // 查找默认的 Chrome CDP 实例（name 包含 "Chrome调试" 或 cdpPort 为 9222）
+      const chromeInst = this.store.db
+        .prepare("SELECT id FROM chrome_instances WHERE cdp_port = 9222 OR name LIKE '%Chrome调试%' ORDER BY id LIMIT 1")
+        .get();
+      cdpInstanceId = chromeInst?.id || null;
     }
     const presetId = effectiveCfg?.presetId || null;
     const ratio = effectiveCfg?.ratio || "9:16";
@@ -549,7 +552,7 @@ export class AutoPublishScheduler extends EventTarget {
     if (!cdpInstanceId) {
       this._updatePipeline(pipeline.id, {
         status: "failed",
-        failReason: "缺少 CDP 实例（请绑定 matrix_profiles 或在矩阵自动发布配置中设置 cdp_instance_id）",
+        failReason: "未找到 Chrome CDP 实例，请先在'一键启动 Chrome 调试实例'中启动",
       });
       this._emitChange();
       return;
@@ -1123,13 +1126,13 @@ export class AutoPublishScheduler extends EventTarget {
 
     // matrix_id 直接从 pipeline 获取
     const effectiveMatrixId = pipeline.matrix_id;
-    // cdp_instance_id 从 matrix_profiles 查 profile_id（混剪需要的 CDP 实例就是浏览器实例）
+    // AI 混剪使用 Chrome CDP 实例（不是绑定的指纹浏览器实例）
     let cdpInstanceId = effectiveCfg?.cdpInstanceId || null;
-    if (!cdpInstanceId && effectiveMatrixId) {
-      const mp = this.store.db
-        .prepare("SELECT profile_id FROM matrix_profiles WHERE matrix_id = ? LIMIT 1")
-        .get(effectiveMatrixId);
-      cdpInstanceId = mp?.profile_id || null;
+    if (!cdpInstanceId) {
+      const chromeInst = this.store.db
+        .prepare("SELECT id FROM chrome_instances WHERE cdp_port = 9222 OR name LIKE '%Chrome调试%' ORDER BY id LIMIT 1")
+        .get();
+      cdpInstanceId = chromeInst?.id || null;
     }
     const ratio = effectiveCfg?.ratio || "9:16";
     const presetId = effectiveCfg?.presetId || null;
