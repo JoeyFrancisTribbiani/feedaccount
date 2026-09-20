@@ -1794,8 +1794,9 @@ export function createMonitorServer({
         child.unref();
 
         // 启动成功后自动注册 CDP 实例到数据库
+        const instanceName = body.name || `Chrome调试 (${cdpPort})`;
         const instance = store.upsertChromeInstance({
-          name: `Chrome调试 (${cdpPort})`,
+          name: instanceName,
           cdpHost: "127.0.0.1",
           cdpPort: cdpPort,
           daemonPort: cdpPort + 1,

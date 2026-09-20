@@ -5452,9 +5452,9 @@ function renderSavedChromeInstances() {
       btn.disabled = true;
       btn.textContent = "启动中…";
       try {
-        const res = await request("/api/cdp/launch-chrome", { method: "POST", body: JSON.stringify({ profilePath: inst.profilePath, port: inst.port, proxy: inst.proxy || null, profileDirectory: inst.profileDir || null }) });
+        const res = await request("/api/cdp/launch-chrome", { method: "POST", body: JSON.stringify({ name: inst.name, profilePath: inst.profilePath, port: inst.port, proxy: inst.proxy || null, profileDirectory: inst.profileDir || null }) });
         showToast(`Chrome 已启动: ${inst.name || '端口' + inst.port} (PID=${res.pid})`);
-        setTimeout(() => cdpEl.scanBtn?.click(), 2000);
+        setTimeout(() => refreshCdpInstances(), 2000);
       } catch (e) {
         showToast(`启动失败: ${e.message}`, true);
       } finally {
@@ -5608,7 +5608,7 @@ cdpEl.launchBtn?.addEventListener("click", async () => {
   cdpEl.launchResult.textContent = "";
   cdpEl.launchResult.className = "cdp-launch-result";
   try {
-    const res = await request("/api/cdp/launch-chrome", { method: "POST", body: JSON.stringify({ profilePath, port, proxy, profileDirectory }) });
+    const res = await request("/api/cdp/launch-chrome", { method: "POST", body: JSON.stringify({ name, profilePath, port, proxy, profileDirectory }) });
     cdpEl.launchResult.textContent = `✓ Chrome 已启动 (PID=${res.pid}, CDP 端口 ${res.cdpPort})`;
     cdpEl.launchResult.className = "cdp-launch-result success";
     showToast(`Chrome 调试实例已启动，PID=${res.pid}`);
