@@ -4667,7 +4667,7 @@ export function createMonitorServer({
           const limit = Math.min(Number(url.searchParams.get("limit")) || 100, 500);
 
           // 构建 SQL：pipeline JOIN publish_jobs LEFT JOIN materials LEFT JOIN matrix_accounts
-          const where = [];
+          const where = ["p.status != 'pending'"];
           const params = [];
           if (matrixId) { where.push("COALESCE(p.matrix_id, (SELECT mp.matrix_id FROM matrix_profiles mp WHERE mp.profile_id = p.profile_id)) = ?"); params.push(matrixId); }
 
@@ -4722,6 +4722,7 @@ export function createMonitorServer({
               m.title AS material_title,
               m.file_path AS material_file_path,
               rv.thumb_url AS source_thumb_url,
+              rv.thumbnail AS source_thumbnail,
               ma.id AS matrix_account_id,
               ma.platform,
               ma.account_name,
@@ -4765,7 +4766,7 @@ export function createMonitorServer({
               platform: r.platform,
               creatorId: r.creator_id,
               sourceVideoId: r.source_video_id,
-              sourceThumbUrl: r.source_thumb_url || null,
+              sourceThumbUrl: r.source_thumb_url || r.source_thumbnail || null,
               materialTitle: r.material_title,
               materialFilePath: r.material_file_path,
               status: r.job_status || r.status,

@@ -8773,20 +8773,25 @@ const autoPublish = {
       </tr></thead><tbody>`;
     for (const h of this.publishHistory) {
       const materialTitle = h.materialTitle || '';
-      // 同样的标题清洗
       const cleanTitle = materialTitle ? materialTitle.replace(/\s+/g, ' ').trim() : '(未命名)';
-      const status = h.status || 'pending';
+      const status = h.pipelineStatus || h.status || 'pending';
       const views = h.viewsCount || 0;
       const likes = h.likesCount || 0;
       const comments = h.commentsCount || 0;
       const shares = h.sharesCount || 0;
-      const publishedAt = h.executedAt ? formatDateTime(h.executedAt) : (h.createdAt ? formatDateTime(h.createdAt) : '—');
+      // 时间：published 显示执行时间，scheduled 显示排期时间，其他显示—
+      let timeStr = '—';
+      if (status === 'published' && h.executedAt) {
+        timeStr = formatDateTime(h.executedAt);
+      } else if (h.scheduledAt) {
+        timeStr = formatDateTime(h.scheduledAt);
+      }
       const failReason = h.failReason || '';
       const canRetry = status === 'failed' || status === 'retry';
       const publishedVideoUrl = h.publishedVideoUrl || '';
       const thumbUrl = h.sourceThumbUrl || '';
       const thumbHtml = thumbUrl
-        ? `<img src="${escapeHtml(thumbUrl)}" style="width:32px;height:32px;object-fit:cover;border-radius:4px;" onerror="this.style.display='none'" />`
+        ? `<img src="${escapeHtml(thumbUrl)}" style="width:40px;height:40px;object-fit:cover;border-radius:4px;" onerror="this.style.display='none'" />`
         : '<span style="color:#94a3b8;font-size:11px;">—</span>';
       html += `<tr>
         <td style="text-align:center;">${thumbHtml}</td>
@@ -8799,7 +8804,7 @@ const autoPublish = {
         </td>
         <td>👁 ${views}</td>
         <td style="font-size:11px;">❤️${likes} 💬${comments} 🔗${shares}</td>
-        <td style="font-size:11px;">${escapeHtml(publishedAt)}</td>
+        <td style="font-size:11px;">${escapeHtml(timeStr)}</td>
         <td>
           ${h.taskId ? `<button class="button button-secondary" type="button" data-hist-logs="${escapeHtml(h.taskId)}" style="font-size:10px;padding:1px 8px;">日志</button>` : ''}
           ${canRetry && h.taskId ? `<button class="button button-primary" type="button" data-hist-retry="${escapeHtml(h.taskId)}" style="font-size:10px;padding:1px 8px;margin-left:4px;">重发</button>` : ''}

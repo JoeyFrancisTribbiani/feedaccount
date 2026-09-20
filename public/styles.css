@@ -4936,14 +4936,16 @@ footer span {
   padding-left: 12px;
 }
 .ap-tree-account {
-  font-size: 12px;
-  padding: 5px 8px;
+  font-size: 13px;
+  padding: 10px 10px;
   cursor: pointer;
-  border-radius: 4px;
+  border-radius: 6px;
   display: flex;
   align-items: center;
   gap: 6px;
   color: var(--text, #1e293b);
+  margin-bottom: 3px;
+  min-height: 40px;
 }
 .ap-tree-account:hover {
   background: var(--bg-subtle, #f8f9fa);
