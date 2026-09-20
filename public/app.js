@@ -6120,14 +6120,35 @@ function renderMatrixAutoPublishConfig(cfg) {
     <div class="mx-ap-row">
       <span class="mx-ap-label">CDP实例</span>
       <div class="mx-ap-value">
-        <input type="text" value="${escapeHtml(cdpInstanceName)}" readonly style="background:var(--bg-subtle,#f8f9fa);min-width:160px;" />
-        <span class="mx-ap-hint">（只读，使用绑定的浏览器实例）</span>
+        <select id="mx-ap-cdp-instance" style="min-width:200px;font-size:12px;padding:2px 4px;border:1px solid var(--line);border-radius:4px;background:var(--bg);color:var(--text);">
+          <option value="">使用绑定的浏览器实例</option>
+        </select>
+        <span class="mx-ap-hint">（不选则使用矩阵绑定的实例）</span>
       </div>
     </div>
   `;
 
   // 初始化时间选择组件
   initTimeSlotPicker(slotsVal);
+
+  // 填充 CDP 实例下拉框
+  const cdpSelect = document.querySelector('#mx-ap-cdp-instance');
+  if (cdpSelect) {
+    // 加载 CDP 实例列表
+    (async () => {
+      try {
+        const res = await request('/api/cdp/instances');
+        const instances = res.instances || res || [];
+        for (const inst of instances) {
+          const opt = document.createElement('option');
+          opt.value = inst.id;
+          opt.textContent = `${inst.name || inst.id} (${inst.cdpHost || '127.0.0.1'}:${inst.cdpPort})`;
+          if (cdpInstanceId && inst.id === cdpInstanceId) opt.selected = true;
+          cdpSelect.appendChild(opt);
+        }
+      } catch {}
+    })();
+  }
 }
 
 // 时间段选择组件
@@ -6209,9 +6230,10 @@ async function saveMatrixAutoPublishConfig() {
       payload.publishTimeSlots = null;
     }
   }
-  // 保留 cdpInstanceId（只读，不修改）
-  if (mxState.autoPublishConfig?.cdpInstanceId) {
-    payload.cdpInstanceId = mxState.autoPublishConfig.cdpInstanceId;
+  // CDP 实例（可空，空则使用绑定的浏览器实例）
+  const cdpSelectEl = document.querySelector('#mx-ap-cdp-instance');
+  if (cdpSelectEl) {
+    payload.cdpInstanceId = cdpSelectEl.value || null;
   }
   try {
     await request(`/api/auto-publish/matrix-config/${encodeURIComponent(matrixId)}`, {
