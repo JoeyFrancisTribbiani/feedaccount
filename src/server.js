@@ -2653,11 +2653,37 @@ export function createMonitorServer({
             const allVideoPaths = selectedVideos.map(v => resolveLocal(v.url)).filter(p => p);
             const creatorName = store.getRemixCreator(creatorId)?.name || "";
             const title = `多条混剪 · ${selectedVideos.length}个视频 · ${creatorName} → ${matrixIds.length}个矩阵`;
+
+            // 读取所有视频的字幕，合并拼到 prompt
+            let allSubtitles = [];
+            for (const video of selectedVideos) {
+              if (video.subtitleUrl) {
+                try {
+                  const subPath = video.subtitleUrl.startsWith("/data/remix-videos/")
+                        ? path.join(getUploadDir(), video.subtitleUrl.replace("/data/remix-videos/", ""))
+                        : video.subtitleUrl;
+                  if (existsSync(subPath)) {
+                    const subText = await import('fs').then(fs => fs.readFileSync(subPath, 'utf8'));
+                    const cleanText = subText
+                      .replace(/^WEBVTT.*$/m, '')
+                      .replace(/^\d{2}:\d{2}:\d{2}\.\d{3}\s*-->\s*\d{2}:\d{2}:\d{2}\.\d{3}$/gm, '')
+                      .replace(/^\d+$/gm, '')
+                      .replace(/\n{3,}/g, '\n\n')
+                      .trim();
+                    if (cleanText) allSubtitles.push(cleanText);
+                  }
+                } catch (e) { console.warn('[AI混剪] 字幕读取失败:', e.message); }
+              }
+            }
+            const subtitleEnhancedPrompt = allSubtitles.length
+              ? `${prompt}\n\n以下是各视频的原始字幕（来自TikTok自动语音识别），供分析参考：\n---\n${allSubtitles.join('\n\n---\n')}\n---`
+              : prompt;
+
             const task = store.createRemixTask({
               title, mode: "ai-remix", videoUrls: allVideoUrls,
               sourceVideos: selectedVideos.map(v => ({ url: v.url, title: v.title, creatorName })),
               ratio: ratio || "9:16",
-              creatorId, matrixIds, presetId, prompt,
+              creatorId, matrixIds, presetId, prompt: subtitleEnhancedPrompt,
               cdpInstanceId,
               multiVideoMode: true,
             });
@@ -2668,7 +2694,7 @@ export function createMonitorServer({
               }
             }
             aiRemixQueue.push({
-              taskId: task.id, daemonUrl, filesToUpload: allVideoPaths, prompt: prompt || "",
+              taskId: task.id, daemonUrl, filesToUpload: allVideoPaths, prompt: subtitleEnhancedPrompt || "",
               matrixIds, creatorId, sourceVideoId: null, videoTitle: title,
               presetId: presetId || null,
               mainVideoLocalPath: allVideoPaths[0],
@@ -2682,11 +2708,35 @@ export function createMonitorServer({
             let rawTitle = video.title || "未命名";
             const creativeMatches = [...rawTitle.matchAll(/创作的\s*(.+)$/g)];
             const publishTitle = creativeMatches.length > 0 ? creativeMatches[creativeMatches.length - 1][1].trim() : rawTitle;
+
+            // 读取视频字幕，拼到 prompt 里让 AI 同时分析视频和字幕
+            let videoSubtitle = "";
+            if (video.subtitleUrl) {
+              try {
+                const subPath = video.subtitleUrl.startsWith("/data/remix-videos/")
+                      ? path.join(getUploadDir(), video.subtitleUrl.replace("/data/remix-videos/", ""))
+                      : video.subtitleUrl;
+                if (existsSync(subPath)) {
+                  const subText = await import('fs').then(fs => fs.readFileSync(subPath, 'utf8'));
+                  // 去掉 WebVTT 头和时间轴，只保留文字
+                  videoSubtitle = subText
+                    .replace(/^WEBVTT.*$/m, '')
+                    .replace(/^\d{2}:\d{2}:\d{2}\.\d{3}\s*-->\s*\d{2}:\d{2}:\d{2}\.\d{3}$/gm, '')
+                    .replace(/^\d+$/gm, '')
+                    .replace(/\n{3,}/g, '\n\n')
+                    .trim();
+                }
+              } catch (e) { console.warn('[AI混剪] 字幕读取失败:', e.message); }
+            }
+            const subtitleEnhancedPrompt = videoSubtitle
+              ? `${prompt}\n\n以下是视频的原始字幕（来自TikTok自动语音识别），供分析参考：\n---\n${videoSubtitle}\n---`
+              : prompt;
+
             const task = store.createRemixTask({
               title: publishTitle, mode: "ai-remix", videoUrls: [video.url],
               sourceVideos: [{ url: video.url, title: video.title, creatorName: store.getRemixCreator(creatorId)?.name || "" }],
               ratio: ratio || "9:16",
-              creatorId, matrixIds, presetId, prompt,
+              creatorId, matrixIds, presetId, prompt: subtitleEnhancedPrompt,
               cdpInstanceId,
             });
             // 记录资源类型到任务
@@ -2701,7 +2751,7 @@ export function createMonitorServer({
 
             // 提交到 AI 混剪队列（异步处理，预压缩和穿搭取图在队列中做）
             aiRemixQueue.push({
-              taskId: task.id, daemonUrl, filesToUpload: [mainVideoLocalPath], prompt: prompt || "",
+              taskId: task.id, daemonUrl, filesToUpload: [mainVideoLocalPath], prompt: subtitleEnhancedPrompt || "",
               matrixIds, creatorId, sourceVideoId: video.id, videoTitle: video.title,
               presetId: presetId || null,
               mainVideoLocalPath,
