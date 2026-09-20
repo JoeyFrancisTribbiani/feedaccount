@@ -379,33 +379,26 @@ export class AutoPublishScheduler extends EventTarget {
     const configs = this._listEnabledMatrixConfigs();
     if (!configs.length) return;
 
-    // 检查每个矩阵的日配额：今天已混剪+已发布+已排期 >= dailyLimit+1 就跳过
-    const todayStr = new Date().toISOString().slice(0, 10);
+    // 检查每个矩阵的库存（不限当天，随时保持库存 >= dailyLimit+1）
     const eligibleMatrixIds = new Set();
     for (const cfg of configs) {
       const dailyLimit = cfg.dailyLimit ?? 3;
-      const targetStock = dailyLimit + 1;
+      const targetStock = dailyLimit + 1; // 多1条备用
 
       const mp = this.store.db.prepare("SELECT profile_id FROM matrix_profiles WHERE matrix_id = ?").get(cfg.matrixId);
       const profileId = mp?.profile_id || null;
 
-      // 库存 = 已排期 + 已混剪 + 正在混剪 + 今天已发布
+      // 库存 = 已排期 + 已混剪完成 + 正在混剪 + 已发布（全部，不限日期）
+      // 已发布的也算库存是因为它们是"已完成的成品"，只是发布出去了
+      // 但已发布的不应该无限算库存，只算"未发布的成品"作为待发布库存
+      // 修正：库存 = scheduled + remixed + remixing（未发布的成品）
       const stockCount = this.store.db.prepare(
         `SELECT COUNT(*) as cnt FROM auto_remix_publish_pipeline p
          WHERE (p.matrix_id = ? ${profileId ? "OR (p.matrix_id IS NULL AND p.profile_id = ?)" : ""})
          AND p.status IN ('scheduled', 'remixed', 'remixing')`
       ).get(...(profileId ? [cfg.matrixId, profileId] : [cfg.matrixId])).cnt;
 
-      const todayPublishedCount = profileId
-        ? this.store.db.prepare(
-          `SELECT COUNT(*) as cnt FROM auto_remix_publish_pipeline p
-           JOIN tk_publish_jobs j ON j.id = p.publish_job_id
-           WHERE (p.matrix_id = ? OR (p.matrix_id IS NULL AND p.profile_id = ?))
-           AND p.status = 'published' AND j.executed_at LIKE ?`
-        ).get(cfg.matrixId, profileId, `${todayStr}%`).cnt
-        : 0;
-
-      if (stockCount + todayPublishedCount < targetStock) {
+      if (stockCount < targetStock) {
         eligibleMatrixIds.add(cfg.matrixId);
       }
     }
@@ -419,7 +412,6 @@ export class AutoPublishScheduler extends EventTarget {
     // 过滤出属于有配额的矩阵的 pipeline
     const candidates = allPending.filter(p => {
       if (p.matrix_id && eligibleMatrixIds.has(p.matrix_id)) return true;
-      // 旧数据 matrix_id 为 null，通过 profile_id 反查
       if (!p.matrix_id && p.profile_id) {
         const mp = this.store.db.prepare("SELECT matrix_id FROM matrix_profiles WHERE profile_id = ?").get(p.profile_id);
         return mp && eligibleMatrixIds.has(mp.matrix_id);
@@ -434,7 +426,6 @@ export class AutoPublishScheduler extends EventTarget {
 
     // 取最旧的一个
     const pipeline = candidates[0];
-    // 查其矩阵配置
     let pipelineMatrixId = pipeline.matrix_id;
     if (!pipelineMatrixId && pipeline.profile_id) {
       const mp = this.store.db.prepare("SELECT matrix_id FROM matrix_profiles WHERE profile_id = ?").get(pipeline.profile_id);
@@ -926,8 +917,12 @@ export class AutoPublishScheduler extends EventTarget {
         let candidateMs = Math.max(nowMs, lastScheduledMs + PUBLISH_INTERVAL_MIN_MS);
 
         if (slot.type === 'exact') {
-          // 精确时间点：直接用 slotStartMs，如果已过则跳到明天
+          // 精确时间点：如果已过或与上次排期间隔不足30分钟，跳到明天
           if (dayOffset === 0 && slotStartMs < candidateMs) continue;
+          // 检查同一时间段是否已被排期（防止多个pipeline排到同一时间点）
+          const sameSlotScheduled = this.store.listTkPublishJobs({ profileId, limit: 500 })
+            .some(j => Math.abs(new Date(j.scheduledAt).getTime() - slotStartMs) < 60 * 1000);
+          if (sameSlotScheduled) continue;
           return new Date(slotStartMs).toISOString();
         }
 
