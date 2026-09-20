@@ -290,19 +290,42 @@ export class TiktokPublisher {
       throw new Error('视频预处理超时，发布按钮未解锁');
     }
 
-    // 6. 点击发布按钮
+    // 6. 点击发布按钮（用 CDP Input.dispatchMouseEvent 模拟真实鼠标点击）
     const postBtn = await this._findPostButton();
     if (!postBtn) throw new Error('无法找到发布按钮');
 
-    await postBtn.click({ force: true }).catch(async () => {
-      // force click 失败，尝试 JS dispatch
-      await postBtn.evaluate(el => {
-        el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
-        el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
-        el.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    // 获取按钮中心坐标
+    const btnBox = await postBtn.evaluate(el => {
+      const content = el.querySelector('.Button__content') || el;
+      const r = content.getBoundingClientRect();
+      return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+    }).catch(() => null);
+
+    if (btnBox && this.cdpSession) {
+      // 用 CDP 模拟真实鼠标点击（最可靠）
+      progress('点击发布按钮(CDP Input)...');
+      await this.cdpSession.send('Input.dispatchMouseEvent', {
+        type: 'mouseMoved', x: btnBox.x, y: btnBox.y, button: 'none'
       });
-    });
-    const btnText = await postBtn.innerText().catch(() => 'clicked');
+      await page.waitForTimeout(100);
+      await this.cdpSession.send('Input.dispatchMouseEvent', {
+        type: 'mousePressed', x: btnBox.x, y: btnBox.y, button: 'left', clickCount: 1
+      });
+      await page.waitForTimeout(50);
+      await this.cdpSession.send('Input.dispatchMouseEvent', {
+        type: 'mouseReleased', x: btnBox.x, y: btnBox.y, button: 'left', clickCount: 1
+      });
+    } else {
+      // fallback: Playwright click + JS dispatch
+      progress('点击发布按钮(Playwright fallback)...');
+      await postBtn.click({ force: true }).catch(async () => {
+        await postBtn.evaluate(el => {
+          el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+          el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+          el.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        });
+      });
+    }
 
     // 7. 等待发布成功
     let success = false;
@@ -316,6 +339,7 @@ export class TiktokPublisher {
       progress(`等待发布确认… (${i * 2}s)`);
 
       const isDone =
+        bodyText.includes('Video published') ||
         bodyText.includes('Your video is being uploaded to TikTok') ||
         bodyText.includes('Manage your posts') ||
         bodyText.includes('Upload another video') ||
@@ -330,6 +354,7 @@ export class TiktokPublisher {
 
       if (isDone) {
         success = true;
+        progress('检测到发布成功标志');
         const linkEl = await page.$('a[href*="/video/"]');
         if (linkEl) {
           publishedVideoUrl = await linkEl.getAttribute('href') || '';
