@@ -4562,6 +4562,7 @@ export function createMonitorServer({
               enabled: body.enabled,
               presetId: body.presetId,
               dailyLimit: body.dailyLimit,
+              dailyStock: body.dailyStock,
               monitorIntervalHours: body.monitorIntervalHours,
               publishTimeSlots: body.publishTimeSlots,
               ratio: body.ratio,

@@ -6101,6 +6101,13 @@ function renderMatrixAutoPublishConfig(cfg) {
       </div>
     </div>
     <div class="mx-ap-row">
+      <span class="mx-ap-label">每日库存数</span>
+      <div class="mx-ap-value">
+        <input type="number" id="mx-ap-stock" min="0" max="50" value="${escapeHtml(String(cfg.dailyStock ?? 3))}" style="width:60px;" /> 条
+        <span class="mx-ap-hint">（库存低于此值时触发混剪）</span>
+      </div>
+    </div>
+    <div class="mx-ap-row">
       <span class="mx-ap-label">监控间隔</span>
       <div class="mx-ap-value">
         <input type="number" id="mx-ap-interval" min="1" max="168" value="${escapeHtml(String(cfg.monitorIntervalHours ?? 6))}" style="width:70px;" /> 小时
@@ -6179,11 +6186,13 @@ async function saveMatrixAutoPublishConfig() {
   const enabledEl = document.querySelector('#mx-ap-enabled');
   const presetEl = document.querySelector('#mx-ap-preset');
   const dailyEl = document.querySelector('#mx-ap-daily');
+  const stockEl = document.querySelector('#mx-ap-stock');
   const intervalEl = document.querySelector('#mx-ap-interval');
   const payload = {
     enabled: enabledEl?.checked ? 1 : 0,
     presetId: presetEl?.value || null,
     dailyLimit: parseInt(dailyEl?.value, 10) || 0,
+    dailyStock: parseInt(stockEl?.value, 10) || 0,
     monitorIntervalHours: parseInt(intervalEl?.value, 10) || 0,
   };
   // 从时间选择组件读取时间段
@@ -6223,7 +6232,7 @@ document.addEventListener('change', (e) => {
   if (e.target?.id === 'mx-ap-enabled') {
     saveMatrixAutoPublishConfig();
   }
-  if (e.target?.id === 'mx-ap-preset' || e.target?.id === 'mx-ap-daily' || e.target?.id === 'mx-ap-interval') {
+  if (e.target?.id === 'mx-ap-preset' || e.target?.id === 'mx-ap-daily' || e.target?.id === 'mx-ap-stock' || e.target?.id === 'mx-ap-interval') {
     saveMatrixAutoPublishConfig();
   }
 });

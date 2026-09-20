@@ -377,82 +377,56 @@ export class AutoPublishScheduler extends EventTarget {
     if (changed) this._emitChange();
   }
 
-  // ─── 2. 自动触发混剪（24小时均匀分布，避免 AI 频率超限） ───
+  // ─── 2. 自动触发混剪（全局15分钟间隔 + 库存驱动） ───
 
   /**
-   * 混剪调度算法（24小时均匀分布）：
-   *
-   * 1. 统计所有启用矩阵的 dailyLimit 总和 = 每天需要的混剪总数
-   *    例如: 矩阵A(dailyLimit=2) + 矩阵B(dailyLimit=2) = 4次/天
-   *
-   * 2. 计算混剪间隔 = 24小时 / 每天混剪总数
-   *    例如: 24h / 4 = 6小时一次
-   *
-   * 3. 今天的混剪次数 = 今天(北京时间0点起)已完成的混剪(remixed+published+scheduled+remixing)
-   *    如果今天混剪次数 < 每天混剪总数 → 需要混剪
-   *
-   * 4. 判断是否到了下一次混剪时间：
-   *    - 上次混剪时间 + 混剪间隔 <= 现在 → 可以混剪
-   *    - 如果今天还没混剪过 → 立即混剪
-   *
-   * 5. 选择要混剪的矩阵：轮换选择，优先选库存最低的矩阵
-   *    库存 = 该矩阵的 scheduled + remixed + remixing
-   *
-   * 6. 在该矩阵的 pending pipeline 中取最旧的一个混剪
+   * 混剪调度算法：
+   * 1. 全局混剪间隔 15 分钟（控制 AI 频率）
+   * 2. 遍历所有启用的矩阵，检查每个矩阵的库存
+   * 3. 库存 = scheduled + remixed + remixing
+   * 4. 如果库存 < dailyStock，该矩阵需要混剪
+   * 5. 优先选库存比例最低的矩阵，取最旧的 pending pipeline 混剪
    */
   async triggerRemixTasks() {
     // 混剪并发1：有正在混剪的任务就等
     const remixingCount = this._listPipelinesByStatus("remixing").length;
     if (remixingCount > 0) return;
 
+    // 全局混剪间隔 15 分钟
+    const REMIX_INTERVAL = 15 * 60 * 1000;
+    const now = Date.now();
+    if (this.lastRemixAt > 0 && now - this.lastRemixAt < REMIX_INTERVAL) return;
+
     // 获取所有启用的矩阵配置
     const configs = this._listEnabledMatrixConfigs();
     if (!configs.length) return;
 
-    // 1. 计算每天需要的混剪总数（所有矩阵的 dailyLimit 之和）
-    let totalDailyRemix = 0;
-    const matrixStocks = []; // {cfg, profileId, stock}
+    // 检查每个矩阵的库存
+    const eligibleStocks = [];
     for (const cfg of configs) {
-      const dailyLimit = cfg.dailyLimit ?? 3;
-      totalDailyRemix += dailyLimit;
-
+      const dailyStock = cfg.dailyStock ?? 3;
       const mp = this.store.db.prepare("SELECT profile_id FROM matrix_profiles WHERE matrix_id = ?").get(cfg.matrixId);
       const profileId = mp?.profile_id || null;
 
-      // 该矩阵的库存 = scheduled + remixed + remixing
       const stockCount = this.store.db.prepare(
         `SELECT COUNT(*) as cnt FROM auto_remix_publish_pipeline p
          WHERE (p.matrix_id = ? ${profileId ? "OR (p.matrix_id IS NULL AND p.profile_id = ?)" : ""})
          AND p.status IN ('scheduled', 'remixed', 'remixing')`
       ).get(...(profileId ? [cfg.matrixId, profileId] : [cfg.matrixId])).cnt;
 
-      matrixStocks.push({ cfg, profileId, stock: stockCount, dailyLimit });
+      // 库存不足才需要混剪
+      if (stockCount < dailyStock) {
+        eligibleStocks.push({ cfg, profileId, stock: stockCount, dailyStock });
+      }
     }
 
-    if (totalDailyRemix === 0) return;
+    if (!eligibleStocks.length) return;
 
-    // 2. 计算混剪间隔（毫秒）
-    const remixIntervalMs = Math.floor(DAY_MS / totalDailyRemix);
-
-    // 3. 统计今天（北京时间）已完成/进行中的混剪总数
-    const todayRemixCount = this.store.db.prepare(
-      `SELECT COUNT(*) as cnt FROM auto_remix_publish_pipeline
-       WHERE status IN ('remixed', 'remixing', 'scheduled', 'published')
-       AND updated_at >= ?`
-    ).get(this._todayBeijingStartIso()).cnt;
-
-    // 今天混剪次数已达上限，不再混剪
-    if (todayRemixCount >= totalDailyRemix) return;
-
-    // 4. 判断是否到了下一次混剪时间
-    const now = Date.now();
-    if (this.lastRemixAt > 0 && now - this.lastRemixAt < remixIntervalMs) return;
-
-    // 5. 选择要混剪的矩阵：优先选库存最低的（库存/dailyLimit 比例最小）
-    matrixStocks.sort((a, b) => {
-      const ratioA = a.dailyLimit > 0 ? a.stock / a.dailyLimit : 999;
-      const ratioB = b.dailyLimit > 0 ? b.stock / b.dailyLimit : 999;
-      return ratioA - ratioB; // 比例小的优先
+    // 优先选库存比例最低的
+    eligibleStocks.sort((a, b) => {
+      const ratioA = a.dailyStock > 0 ? a.stock / a.dailyStock : 999;
+      const ratioB = b.dailyStock > 0 ? b.stock / b.dailyStock : 999;
+      return ratioA - ratioB;
     });
 
     // 找有 pending pipeline 的矩阵
@@ -461,7 +435,7 @@ export class AutoPublishScheduler extends EventTarget {
 
     let pipeline = null;
     let pipelineCfg = null;
-    for (const ms of matrixStocks) {
+    for (const ms of eligibleStocks) {
       const candidates = allPending.filter(p => {
         if (p.matrix_id && p.matrix_id === ms.cfg.matrixId) return true;
         if (!p.matrix_id && p.profile_id && ms.profileId === p.profile_id) return true;
