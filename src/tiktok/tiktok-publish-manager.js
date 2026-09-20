@@ -123,10 +123,8 @@ export class TiktokPublishManager extends EventTarget {
       touch(`CDP 发布引擎已连接`);
 
       // 3. 执行全自动发布（上传阶段，不设全局超时，靠心跳检测）
-      let publishTitle = job.materialTitle || '';
-      publishTitle = publishTitle.replace(/^AI混剪\s*·\s*/, '').replace(/\s*→\s*\d+个矩阵$/, '');
-      const creativeMatch = publishTitle.match(/创作的\s*(.+)$/);
-      if (creativeMatch) publishTitle = creativeMatch[1].trim();
+      // 标题已在创建混剪任务时清洗完毕，直接使用
+      const publishTitle = (job.materialTitle || '').replace(/\s+/g, ' ').trim();
 
       touch(`开始上传视频: ${job.materialFilePath?.substring(0, 80) || "—"} | 标题: ${publishTitle.substring(0, 60)}`);
 
@@ -238,11 +236,8 @@ export class TiktokPublishManager extends EventTarget {
       const asset = await this.iosFarm.uploadAsset(job.materialFilePath, fileName);
       this._log(jobId, "info", `iOS Farm: 视频上传成功, assetId=${asset.id || asset.assetId}, size=${asset.size || "—"}`);
 
-      // 2. 标题处理（和 Playwright 模式一致）
-      let publishTitle = job.materialTitle || '';
-      publishTitle = publishTitle.replace(/^AI混剪\s*·\s*/, '').replace(/\s*→\s*\d+个矩阵$/, '');
-      const creativeMatch = publishTitle.match(/创作的\s*(.+)$/);
-      if (creativeMatch) publishTitle = creativeMatch[1].trim();
+      // 2. 标题已清洗，直接使用
+      const publishTitle = (job.materialTitle || '').replace(/\s+/g, ' ').trim();
 
       // 3. 从 matrix_accounts 查真实 TikTok 账号名（job.accountId 存的是 profileId 不是账号名）
       let tiktokAccount = "";

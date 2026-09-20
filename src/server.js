@@ -2650,9 +2650,12 @@ export function createMonitorServer({
             tasks.push(task);
           } else {
           for (const video of selectedVideos) {
-            const title = `AI混剪 · ${video.title || "未命名"} → ${matrixIds.length}个矩阵`;
+            // 直接从原始标题中提取发布标题：匹配最后一个"创作的"后面的内容
+            let rawTitle = video.title || "未命名";
+            const creativeMatches = [...rawTitle.matchAll(/创作的\s*(.+)$/g)];
+            const publishTitle = creativeMatches.length > 0 ? creativeMatches[creativeMatches.length - 1][1].trim() : rawTitle;
             const task = store.createRemixTask({
-              title, mode: "ai-remix", videoUrls: [video.url],
+              title: publishTitle, mode: "ai-remix", videoUrls: [video.url],
               sourceVideos: [{ url: video.url, title: video.title, creatorName: store.getRemixCreator(creatorId)?.name || "" }],
               ratio: ratio || "9:16",
               creatorId, matrixIds, presetId, prompt,

@@ -216,16 +216,20 @@ export class TiktokPublisher {
     let lastProgressPercent = -1;
     for (let i = 0; i < 120; i++) {
       await page.waitForTimeout(1000);
-      // 检测上传进度条
+      // 检测上传进度条（TikTok Studio 用 .progress-bar + width:%）
       const uploadPercent = await page.evaluate(() => {
-        // TikTok Studio 上传进度条
-        const progressBar = document.querySelector('[class*="upload"] [class*="progress"], [class*="Progress"], [role="progressbar"], div[data-e2e*="upload"]');
+        // 方式1: .progress-bar 的 style width
+        const progressBar = document.querySelector('.progress-bar, [class*="progress-bar"]');
         if (progressBar) {
           const style = progressBar.getAttribute('style') || '';
           const match = style.match(/width:\s*([\d.]+)%/);
           if (match) return parseFloat(match[1]);
-          const ariaValuenow = progressBar.getAttribute('aria-valuenow');
-          if (ariaValuenow) return parseFloat(ariaValuenow);
+        }
+        // 方式2: role="progressbar" + aria-valuenow
+        const ariaBar = document.querySelector('[role="progressbar"]');
+        if (ariaBar) {
+          const v = ariaBar.getAttribute('aria-valuenow');
+          if (v) return parseFloat(v);
         }
         return null;
       }).catch(() => null);

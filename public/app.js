@@ -8210,11 +8210,7 @@ const autoPublish = {
       const statusBadge = `<span class="ap-status-badge ${this.statusClass(status)}">${escapeHtml(status)}</span>`;
       const time = item.scheduledAt ? formatDateTime(item.scheduledAt) : (item.executedAt ? formatDateTime(item.executedAt) : '—');
       const title = item.materialTitle || '(未命名)';
-      // 清洗标题
-      let cleanTitle = title.replace(/^AI混剪\s*·\s*/, '').replace(/\s*→\s*\d+个矩阵$/, '');
-      const m = cleanTitle.match(/创作的\s*(.+)$/);
-      if (m) cleanTitle = m[1].trim();
-      cleanTitle = cleanTitle.replace(/\s+/g, ' ').trim().substring(0, 30) || '(未命名)';
+      const cleanTitle = title.replace(/\s+/g, ' ').trim().substring(0, 30) || '(未命名)';
 
       const thumb = item.sourceThumbUrl
         ? `<img src="${escapeHtml(item.sourceThumbUrl)}" style="width:48px;height:48px;object-fit:cover;border-radius:6px;flex-shrink:0;" onerror="this.style.display='none'" />`
@@ -8339,12 +8335,8 @@ const autoPublish = {
       const canRetry = status === 'failed' || status === 'retry';
       const canPublish = (status === 'scheduled' || status === 'retry') && t.publishJobId;
       const materialTitle = t.materialTitle || '';
-      // 清洗发布标题：去掉 "AI混剪 · " 前缀和 " → N个矩阵" 后缀，从 "创作的 " 后取内容
-      let publishTitle = materialTitle;
-      publishTitle = publishTitle.replace(/^AI混剪\s*·\s*/, '').replace(/\s*→\s*\d+个矩阵$/, '');
-      const creativeMatch = publishTitle.match(/创作的\s*(.+)$/);
-      if (creativeMatch) publishTitle = creativeMatch[1].trim();
-      const cleanPublishTitle = publishTitle ? publishTitle.replace(/\s+/g, ' ').trim() : '';
+      // 标题已在创建混剪任务时清洗，直接使用
+      const cleanPublishTitle = materialTitle ? materialTitle.replace(/\s+/g, ' ').trim() : '';
       // 缩略图
       const thumbUrl = t.sourceThumbUrl || '';
       const thumbHtml = thumbUrl
@@ -8553,11 +8545,7 @@ const autoPublish = {
     for (const h of this.publishHistory) {
       const materialTitle = h.materialTitle || '';
       // 同样的标题清洗
-      let publishTitle = materialTitle;
-      publishTitle = publishTitle.replace(/^AI混剪\s*·\s*/, '').replace(/\s*→\s*\d+个矩阵$/, '');
-      const m = publishTitle.match(/创作的\s*(.+)$/);
-      if (m) publishTitle = m[1].trim();
-      const cleanTitle = publishTitle ? publishTitle.replace(/\s+/g, ' ').trim() : '(未命名)';
+      const cleanTitle = materialTitle ? materialTitle.replace(/\s+/g, ' ').trim() : '(未命名)';
       const status = h.status || 'pending';
       const views = h.viewsCount || 0;
       const likes = h.likesCount || 0;
