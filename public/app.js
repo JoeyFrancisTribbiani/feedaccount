@@ -5204,32 +5204,37 @@ function renderCdpInstances() {
   if (!cdpEl.tableBody) return;
   const list = cdpState.instances;
   if (!list.length) {
-    cdpEl.tableBody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:24px;">暂无 Chrome CDP 实例</td></tr>`;
+    cdpEl.tableBody.innerHTML = `<tr><td colspan="4" style="text-align:center;color:var(--text-muted);padding:12px;">暂无实例，启动后自动注册</td></tr>`;
     return;
   }
   cdpEl.tableBody.innerHTML = list.map(inst => {
-    const statusClass = inst.status === "connected" ? "status-success" : inst.status === "error" ? "status-error" : inst.status === "running" ? "status-loading" : "status-loading";
-    const daemonRunning = inst.status === "running" || inst.status === "connected";
-    return `<tr>
-      <td><strong>${escapeHtml(inst.name)}</strong>${inst.notes ? `<br><small style="color:var(--text-muted)">${escapeHtml(inst.notes)}</small>` : ""}</td>
-      <td><code>${escapeHtml(inst.cdpHost)}:${inst.cdpPort}</code></td>
+    return `<tr data-cdp-id="${escapeHtml(inst.id)}">
+      <td><strong>${escapeHtml(inst.name)}</strong></td>
+      <td><code>${escapeHtml(inst.cdpHost || 'localhost')}:${inst.cdpPort}</code></td>
+      <td class="cdp-online-status"><span style="color:var(--text-muted);font-size:12px;">检测中…</span></td>
       <td>
-        ${daemonRunning
-          ? `<button class="danger-button" style="padding:2px 8px;font-size:11px;" onclick="window.cdpDaemonStop('${escapeHtml(inst.id)}')">停止守护</button>`
-          : `<button class="button button-primary" style="padding:2px 8px;font-size:11px;" onclick="window.cdpDaemonStart('${escapeHtml(inst.id)}')">启动守护</button>`
-        }
-      </td>
-      <td><span class="status-pill ${statusClass}">${escapeHtml(inst.status)}</span></td>
-      <td>
-        <button class="button button-secondary" style="padding:2px 8px;font-size:11px;" onclick="window.cdpDaemonRestart('${escapeHtml(inst.id)}')">重启</button>
+        <button class="button button-secondary" style="padding:2px 8px;font-size:11px;" onclick="window.cdpDaemonRestart('${escapeHtml(inst.id)}')">重启守护</button>
         <button class="danger-button" style="padding:2px 8px;font-size:11px;" onclick="window.cdpDelete('${escapeHtml(inst.id)}')">删除</button>
       </td>
     </tr>`;
   }).join("");
-  if (cdpEl.logFilter) {
-    const cur = cdpEl.logFilter.value;
-    cdpEl.logFilter.innerHTML = `<option value="">全部实例</option>` + list.map(i => `<option value="${escapeHtml(i.id)}">${escapeHtml(i.name)}</option>`).join("");
-    cdpEl.logFilter.value = cur;
+  // 异步检测每个实例的在线状态
+  list.forEach(inst => checkCdpOnlineStatus(inst));
+}
+
+// 检测单个 CDP 实例是否在线
+async function checkCdpOnlineStatus(inst) {
+  const row = cdpEl.tableBody?.querySelector(`tr[data-cdp-id="${CSS.escape(inst.id)}"] td.cdp-online-status`);
+  if (!row) return;
+  try {
+    const res = await fetch(`http://${inst.cdpHost || 'localhost'}:${inst.cdpPort}/json/version`, { signal: AbortSignal.timeout(3000) });
+    if (res.ok) {
+      row.innerHTML = '<span style="color:#22c55e;font-size:12px;font-weight:600;">● 在线</span>';
+    } else {
+      row.innerHTML = '<span style="color:#ef4444;font-size:12px;">● 离线</span>';
+    }
+  } catch {
+    row.innerHTML = '<span style="color:#ef4444;font-size:12px;">● 离线</span>';
   }
 }
 
@@ -5491,7 +5496,7 @@ function fillEditForm(inst, idx) {
   const profileDirEl = document.querySelector("#cdp-launch-profile-dir");
   const editIdxEl = document.querySelector("#cdp-launch-edit-idx");
   const cancelBtn = document.querySelector("#cdp-launch-cancel-edit");
-  const summary = document.querySelector("#cdp-launch-summary");
+  const titleEl = document.querySelector("#cdp-launch-modal-title");
   if (nameEl) nameEl.value = inst.name || "";
   if (pathEl) pathEl.value = inst.profilePath || "";
   if (portEl) portEl.value = inst.port || "9222";
@@ -5499,19 +5504,46 @@ function fillEditForm(inst, idx) {
   if (profileDirEl) profileDirEl.value = inst.profileDir || "Default";
   if (editIdxEl) editIdxEl.value = String(idx);
   if (cancelBtn) cancelBtn.classList.remove("hidden");
-  if (summary) summary.textContent = "编辑实例配置";
-  // 展开详情
-  document.querySelector("#cdp-launch-details")?.setAttribute("open", "");
+  if (titleEl) titleEl.textContent = "编辑实例配置";
+  // 打开弹窗
+  document.querySelector("#cdp-launch-modal")?.classList.remove("hidden");
 }
+
+// 打开弹窗 - 添加新实例
+document.querySelector("#cdp-launch-add-btn")?.addEventListener("click", () => {
+  // 清空表单
+  const nameEl = document.querySelector("#cdp-launch-name");
+  const pathEl = document.querySelector("#cdp-launch-path");
+  const portEl = document.querySelector("#cdp-launch-port");
+  const proxyEl = document.querySelector("#cdp-launch-proxy");
+  const profileDirEl = document.querySelector("#cdp-launch-profile-dir");
+  const editIdxEl = document.querySelector("#cdp-launch-edit-idx");
+  const cancelBtn = document.querySelector("#cdp-launch-cancel-edit");
+  const titleEl = document.querySelector("#cdp-launch-modal-title");
+  if (nameEl) nameEl.value = "";
+  if (pathEl) pathEl.value = "";
+  if (portEl) portEl.value = "9222";
+  if (proxyEl) proxyEl.value = "";
+  if (profileDirEl) profileDirEl.value = "Default";
+  if (editIdxEl) editIdxEl.value = "";
+  if (cancelBtn) cancelBtn.classList.add("hidden");
+  if (titleEl) titleEl.textContent = "添加新实例配置";
+  document.querySelector("#cdp-launch-modal")?.classList.remove("hidden");
+});
+
+// 关闭弹窗
+document.querySelector("#cdp-launch-modal-close")?.addEventListener("click", () => {
+  document.querySelector("#cdp-launch-modal")?.classList.add("hidden");
+});
 
 // 取消编辑
 document.querySelector("#cdp-launch-cancel-edit")?.addEventListener("click", () => {
   const editIdxEl = document.querySelector("#cdp-launch-edit-idx");
   const cancelBtn = document.querySelector("#cdp-launch-cancel-edit");
-  const summary = document.querySelector("#cdp-launch-summary");
+  const titleEl = document.querySelector("#cdp-launch-modal-title");
   if (editIdxEl) editIdxEl.value = "";
   if (cancelBtn) cancelBtn.classList.add("hidden");
-  if (summary) summary.textContent = "+ 添加新实例配置";
+  if (titleEl) titleEl.textContent = "添加新实例配置";
   // 清空表单
   const nameEl2 = document.querySelector("#cdp-launch-name");
   const pathEl2 = document.querySelector("#cdp-launch-path");
@@ -5552,8 +5584,10 @@ document.querySelector("#cdp-launch-save")?.addEventListener("click", () => {
   if (editIdxEl) editIdxEl.value = "";
   const cancelBtn = document.querySelector("#cdp-launch-cancel-edit");
   if (cancelBtn) cancelBtn.classList.add("hidden");
-  const summary = document.querySelector("#cdp-launch-summary");
-  if (summary) summary.textContent = "+ 添加新实例配置";
+  const titleEl = document.querySelector("#cdp-launch-modal-title");
+  if (titleEl) titleEl.textContent = "添加新实例配置";
+  // 关闭弹窗
+  document.querySelector("#cdp-launch-modal")?.classList.add("hidden");
   showToast(editIdx >= 0 ? "配置已更新" : "配置已保存");
 });
 
@@ -5600,53 +5634,10 @@ cdpEl.launchBtn?.addEventListener("click", async () => {
   }
 });
 
-cdpEl.scanBtn?.addEventListener("click", async () => {
-  cdpEl.scanResults.classList.remove("hidden");
-  cdpEl.scanHint.textContent = "正在扫描 localhost:9222-9232…";
-  cdpEl.scanList.innerHTML = `<div class="muted-activity" style="padding:8px;">扫描中…</div>`;
-  try {
-    const res = await request("/api/cdp/scan", { method: "POST", body: JSON.stringify({ host: "localhost", portStart: 9222, portEnd: 9232 }) });
-    const found = res.instances || [];
-    if (found.length === 0) {
-      cdpEl.scanHint.textContent = "未发现 Chrome 调试实例";
-      cdpEl.scanList.innerHTML = `<div style="padding:8px;color:var(--text-muted);font-size:13px;">
-        未扫描到 Chrome 远程调试实例。请确认已用以下命令启动 Chrome：<br/>
-        <code style="font-size:11px;">chrome.exe --remote-debugging-port=9222 --user-data-dir="C:\chrome-cdp"</code>
-      </div>`;
-      return;
-    }
-    cdpEl.scanHint.textContent = `发现 ${found.length} 个 Chrome 实例`;
-    cdpEl.scanList.innerHTML = found.map(item => {
-      const info = item.chromeInfo || {};
-      const browser = info.Browser || "未知";
-      const alreadyAdded = cdpState.instances.some(i => i.cdpHost === item.host && i.cdpPort === item.port);
-      return `<div class="cdp-scan-item">
-        <div class="cdp-scan-info">
-          <strong>${escapeHtml(item.host)}:${item.port}</strong>
-          <span>${escapeHtml(browser)}</span>
-          ${info["User-Agent"] ? `<small>${escapeHtml(info["User-Agent"].substring(0, 60))}</small>` : ""}
-        </div>
-        <button class="button ${alreadyAdded ? "button-secondary" : "button-primary"}" style="padding:4px 12px;font-size:12px;"
-          ${alreadyAdded ? "disabled" : `onclick="window.cdpAddScanned('${escapeHtml(item.host)}', ${item.port}, '${escapeHtml(browser)}')"`}>
-          ${alreadyAdded ? "已添加" : "添加"}
-        </button>
-      </div>`;
-    }).join("");
-  } catch (e) {
-    cdpEl.scanHint.textContent = "扫描失败：" + e.message;
-    cdpEl.scanList.innerHTML = "";
-  }
+// 检测状态按钮 = 重新加载实例列表
+cdpEl.refreshBtn?.addEventListener("click", async () => {
+  await refreshCdpInstances();
 });
-
-window.cdpAddScanned = async function(host, port, browser) {
-  const name = `Chrome ${port}`;
-  try {
-    await request("/api/cdp/instances", { method: "POST", body: JSON.stringify({ name, cdpHost: host, cdpPort: port }) });
-    showToast(`已添加 ${name}`);
-    await refreshCdpInstances();
-    cdpEl.scanBtn.click();
-  } catch (e) { showToast(e.message, true); }
-};
 
 async function cdpProxy(action, method = "POST", body = null) {
   if (!cdpState.selectedId) { showToast("请先选择实例", true); return null; }

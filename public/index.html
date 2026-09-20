@@ -1330,60 +1330,63 @@
               <!-- 已保存的 Chrome 实例列表 -->
               <div id="cdp-launch-instances" style="margin-bottom:12px;"></div>
               
-              <details id="cdp-launch-details" style="margin-bottom:8px;">
-                <summary id="cdp-launch-summary" style="cursor:pointer;font-size:12px;font-weight:600;color:var(--text-secondary);padding:6px 0;">+ 添加新实例配置</summary>
-                <div style="margin-top:8px;padding:12px;border:1px solid var(--line);border-radius:8px;background:var(--bg-subtle,#f8f9fa);">
-                  <input type="hidden" id="cdp-launch-edit-idx" value="" />
-                  <label class="wide-input" style="margin-bottom:8px;">
-                    <span>实例名称</span>
-                    <input id="cdp-launch-name" type="text" placeholder="如：ChatGPT账号1" style="width:100%;" />
-                  </label>
-                  <label class="wide-input" style="margin-bottom:8px;">
-                    <span>Chrome User Data 路径</span>
-                    <input id="cdp-launch-path" type="text" placeholder="C:\chrome-cdp 或 C:\Users\...\Chrome\User Data" />
-                  </label>
-                  <div class="cdp-launch-form-row">
-                    <label class="wide-input" style="flex: 0 0 140px;">
-                      <span>Profile 目录名</span>
-                      <input id="cdp-launch-profile-dir" type="text" placeholder="Default" value="Default" />
-                    </label>
-                    <label class="wide-input" style="flex: 0 0 120px;">
-                      <span>CDP 端口</span>
-                      <input id="cdp-launch-port" type="number" min="1" max="65535" value="9222" />
-                    </label>
-                    <label class="wide-input" style="flex: 1;">
-                      <span>代理服务器（可选）</span>
-                      <input id="cdp-launch-proxy" type="text" placeholder="socks5://127.0.0.1:1080" />
-                    </label>
+              <div style="margin-bottom:12px;">
+                <button id="cdp-launch-add-btn" class="button button-secondary" type="button" style="font-size:12px;padding:4px 12px;">+ 添加新实例配置</button>
+              </div>
+              
+              <!-- 添加/编辑实例弹窗 -->
+              <div id="cdp-launch-modal" class="modal-overlay hidden" style="z-index:10001;">
+                <div class="modal-content" style="max-width:500px;">
+                  <div class="modal-header">
+                    <h3 id="cdp-launch-modal-title">添加新实例配置</h3>
+                    <button id="cdp-launch-modal-close" class="modal-close" type="button">×</button>
                   </div>
-                  <div style="display:flex;gap:8px;margin-top:8px;">
-                    <button id="cdp-launch-btn" class="button button-primary" type="button">
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="margin-right:6px;vertical-align:-2px;">
-                        <polygon points="5 3 19 12 5 21 5 3"/>
-                      </svg>
-                      启动调试 Chrome
-                    </button>
-                    <button id="cdp-launch-save" class="button button-secondary" type="button" style="font-size:13px;padding:6px 12px;">保存配置</button>
-                    <button id="cdp-launch-cancel-edit" class="button button-secondary hidden" type="button" style="font-size:13px;padding:6px 12px;">取消编辑</button>
+                  <div class="modal-body">
+                    <input type="hidden" id="cdp-launch-edit-idx" value="" />
+                    <label class="wide-input" style="margin-bottom:8px;display:block;">
+                      <span style="font-size:12px;font-weight:600;">实例名称</span>
+                      <input id="cdp-launch-name" type="text" placeholder="如：ChatGPT账号1" style="width:100%;" />
+                    </label>
+                    <label class="wide-input" style="margin-bottom:8px;display:block;">
+                      <span style="font-size:12px;font-weight:600;">Chrome User Data 路径</span>
+                      <input id="cdp-launch-path" type="text" placeholder="C:\chrome-cdp 或 C:\Users\...\Chrome\User Data" style="width:100%;" />
+                    </label>
+                    <div style="display:flex;gap:8px;margin-bottom:8px;">
+                      <label style="flex:0 0 140px;">
+                        <span style="font-size:12px;font-weight:600;">Profile 目录名</span>
+                        <input id="cdp-launch-profile-dir" type="text" placeholder="Default" value="Default" style="width:100%;" />
+                      </label>
+                      <label style="flex:0 0 120px;">
+                        <span style="font-size:12px;font-weight:600;">CDP 端口</span>
+                        <input id="cdp-launch-port" type="number" min="1" max="65535" value="9222" style="width:100%;" />
+                      </label>
+                      <label style="flex:1;">
+                        <span style="font-size:12px;font-weight:600;">代理（可选）</span>
+                        <input id="cdp-launch-proxy" type="text" placeholder="socks5://127.0.0.1:1080" style="width:100%;" />
+                      </label>
+                    </div>
+                    <div style="display:flex;gap:8px;margin-top:12px;">
+                      <button id="cdp-launch-btn" class="button button-primary" type="button">启动调试 Chrome</button>
+                      <button id="cdp-launch-save" class="button button-secondary" type="button" style="font-size:13px;padding:6px 12px;">保存配置</button>
+                      <button id="cdp-launch-cancel-edit" class="button button-secondary hidden" type="button" style="font-size:13px;padding:6px 12px;">取消编辑</button>
+                    </div>
+                    <span id="cdp-launch-result" class="cdp-launch-result"></span>
                   </div>
-                  <span id="cdp-launch-result" class="cdp-launch-result"></span>
                 </div>
-              </details>
+              </div>
               
               <!-- 扫描 + 实例管理 -->
               <div style="display:flex;align-items:center;gap:8px;margin:12px 0 8px;">
                 <h3 style="font-size:14px;font-weight:700;margin:0;">CDP 实例管理</h3>
-                <button id="cdp-scan" class="button button-secondary" type="button" style="font-size:12px;padding:3px 10px;">扫描 Chrome</button>
-                <button id="cdp-refresh" class="button button-secondary" type="button" style="font-size:12px;padding:3px 10px;">刷新</button>
+                <button id="cdp-refresh" class="button button-secondary" type="button" style="font-size:12px;padding:3px 10px;">检测状态</button>
               </div>
-              <div id="cdp-scan-results" class="cdp-scan-results hidden" style="margin-bottom:8px;"></div>
               <div class="table-scroll">
                 <table class="history-table" style="width: 100%;">
                   <thead>
                     <tr>
                       <th>名称</th>
                       <th>CDP 端口</th>
-                      <th>状态</th>
+                      <th>在线状态</th>
                       <th>操作</th>
                     </tr>
                   </thead>
