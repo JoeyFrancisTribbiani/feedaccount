@@ -1016,16 +1016,15 @@ export class AutoPublishScheduler extends EventTarget {
     }).length;
   }
 
-  // ─── 5. 检测发布结果 ───
+  // ─── 5. 检测发布结果 + 超时重新排期 ───
 
   async checkPublishResults() {
-    const scheduledPipelines = this._listPipelinesByStatus("scheduled");
-    if (!scheduledPipelines.length) return;
-
-    let changed = false;
     const now = Date.now();
     const STALE_THRESHOLD_MS = 2 * 60 * 60 * 1000; // 2小时
+    let changed = false;
 
+    // 5a. 检查 scheduled 状态的 pipeline
+    const scheduledPipelines = this._listPipelinesByStatus("scheduled");
     for (const pipeline of scheduledPipelines) {
       if (!pipeline.publish_job_id) continue;
 
@@ -1045,74 +1044,54 @@ export class AutoPublishScheduler extends EventTarget {
           failReason: null,
         });
         this.store.logCdpEvent(
-          null,
-          "info",
+          null, "info",
           `自动发布-发布成功: pipeline=${pipeline.id}, job=${job.id}`,
         );
         changed = true;
-      } else if (job.status === "failed") {
-        // 发布失败：检查是否超过2小时
+      } else {
+        // job 是 pending 或 failed：检查排期时间是否超过2小时
         const scheduledMs = job.scheduledAt ? new Date(job.scheduledAt).getTime() : now;
         const elapsed = now - scheduledMs;
         if (elapsed >= STALE_THRESHOLD_MS) {
-          // 超过2小时，回退到 remixed 重新排期（不立即发布，避免冲突）
+          // 超过2小时还没成功，回退到 remixed 重新排期
           this._updatePipeline(pipeline.id, {
             status: "remixed",
             publishJobId: null,
-            failReason: `发布失败超过2小时，重新排期: ${job.errorMessage || "未知错误"}`,
+            failReason: `排期超过2小时未成功(${job.status})，重新排期: ${job.errorMessage || ""}`,
           });
-          // 删除失败的 job
           this.store.db.prepare("DELETE FROM tk_publish_jobs WHERE id = ?").run(job.id);
           this.store.logCdpEvent(
-            null,
-            "warning",
-            `自动发布-发布失败超2h, 重新排期: pipeline=${pipeline.id}, job=${job.id}, ${job.errorMessage}`,
-          );
-        } else {
-          // 未超2小时，走重试逻辑
-          const newAttempt = (pipeline.attempt_count || 0) + 1;
-          if (newAttempt >= MAX_RETRY_COUNT) {
-            this._updatePipeline(pipeline.id, {
-              status: "failed",
-              attemptCount: newAttempt,
-              failReason: `发布失败已达 ${MAX_RETRY_COUNT} 次: ${job.errorMessage || "未知错误"}`,
-            });
-          } else {
-            this._updatePipeline(pipeline.id, {
-              status: "retry",
-              attemptCount: newAttempt,
-              failReason: `发布失败(第${newAttempt}次): ${job.errorMessage || "未知错误"}`,
-            });
-          }
-          this.store.logCdpEvent(
-            null,
-            "warning",
-            `自动发布-发布失败: pipeline=${pipeline.id}, attempt=${newAttempt}, ${job.errorMessage}`,
-          );
-        }
-        changed = true;
-      } else if (job.status === "pending") {
-        // job 还在 pending（排期时间已过但还没执行或正在执行中）
-        // 检查排期时间是否超过2小时
-        const scheduledMs = job.scheduledAt ? new Date(job.scheduledAt).getTime() : now;
-        const elapsed = now - scheduledMs;
-        if (elapsed >= STALE_THRESHOLD_MS) {
-          // 排期超过2小时还没执行，可能是系统重启或其他原因卡住
-          // 回退到 remixed 重新排期
-          this._updatePipeline(pipeline.id, {
-            status: "remixed",
-            publishJobId: null,
-            failReason: `排期超过2小时未发布，重新排期`,
-          });
-          // 删除卡住的 job
-          this.store.db.prepare("DELETE FROM tk_publish_jobs WHERE id = ?").run(job.id);
-          this.store.logCdpEvent(
-            null,
-            "warning",
-            `自动发布-排期超2h未执行, 重新排期: pipeline=${pipeline.id}, job=${job.id}`,
+            null, "warning",
+            `自动发布-超2h重新排期: pipeline=${pipeline.id}, job=${job.id}, jobStatus=${job.status}`,
           );
           changed = true;
         }
+      }
+    }
+
+    // 5b. 检查 failed 状态的 pipeline（超2小时重新排期）
+    const failedPipelines = this._listPipelinesByStatus("failed");
+    for (const pipeline of failedPipelines) {
+      // 用 pipeline 的 updated_at 判断失败时间
+      const failedMs = pipeline.updated_at ? new Date(pipeline.updated_at).getTime() : now;
+      const elapsed = now - failedMs;
+      if (elapsed >= STALE_THRESHOLD_MS) {
+        // 超过2小时，回退到 remixed 重新排期
+        this._updatePipeline(pipeline.id, {
+          status: "remixed",
+          publishJobId: null,
+          attemptCount: 0,
+          failReason: `失败超过2小时，重新排期`,
+        });
+        // 删除关联的 job（如果有）
+        if (pipeline.publish_job_id) {
+          this.store.db.prepare("DELETE FROM tk_publish_jobs WHERE id = ?").run(pipeline.publish_job_id);
+        }
+        this.store.logCdpEvent(
+          null, "warning",
+          `自动发布-failed超2h重新排期: pipeline=${pipeline.id}`,
+        );
+        changed = true;
       }
     }
 

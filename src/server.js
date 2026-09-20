@@ -4553,6 +4553,11 @@ export function createMonitorServer({
           }
           if (request.method === "PUT") {
             const body = await readJson(request);
+            // 读取旧配置，判断时间段是否变了
+            const oldCfg = store.getMatrixAutoPublishConfig(matrixId);
+            const oldSlots = oldCfg?.publishTimeSlots || null;
+            const newSlots = body.publishTimeSlots || null;
+
             const updated = store.upsertMatrixAutoPublishConfig(matrixId, {
               enabled: body.enabled,
               presetId: body.presetId,
@@ -4564,6 +4569,24 @@ export function createMonitorServer({
               privacyLevel: body.privacyLevel,
               cdpInstanceId: body.cdpInstanceId,
             });
+
+            // 如果发布时间段变了，把该矩阵所有 scheduled 的 pipeline 回退到 remixed 重新排期
+            if (newSlots !== oldSlots) {
+              const scheduledPipelines = store.db.prepare(
+                `SELECT p.id, p.publish_job_id FROM auto_remix_publish_pipeline p
+                 WHERE p.matrix_id = ? AND p.status = 'scheduled'`
+              ).all(matrixId);
+              for (const p of scheduledPipelines) {
+                store.db.prepare("UPDATE auto_remix_publish_pipeline SET status = 'remixed', publish_job_id = NULL, fail_reason = '时间段修改，重新排期' WHERE id = ?").run(p.id);
+                if (p.publish_job_id) {
+                  store.db.prepare("DELETE FROM tk_publish_jobs WHERE id = ?").run(p.publish_job_id);
+                }
+              }
+              if (scheduledPipelines.length) {
+                store.logCdpEvent(null, "info", `自动发布-时间段修改, ${scheduledPipelines.length} 个 scheduled pipeline 重新排期`);
+              }
+            }
+
             sendJson(response, 200, updated);
             return;
           }
