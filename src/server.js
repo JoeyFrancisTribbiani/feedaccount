@@ -2664,19 +2664,15 @@ export function createMonitorServer({
                         : video.subtitleUrl;
                   if (existsSync(subPath)) {
                     const subText = await import('fs').then(fs => fs.readFileSync(subPath, 'utf8'));
-                    const cleanText = subText
-                      .replace(/^WEBVTT.*$/m, '')
-                      .replace(/^\d{2}:\d{2}:\d{2}\.\d{3}\s*-->\s*\d{2}:\d{2}:\d{2}\.\d{3}$/gm, '')
-                      .replace(/^\d+$/gm, '')
-                      .replace(/\n{3,}/g, '\n\n')
-                      .trim();
+                    // 保留完整 WebVTT 格式（含时间轴）
+                    const cleanText = subText.trim();
                     if (cleanText) allSubtitles.push(cleanText);
                   }
                 } catch (e) { console.warn('[AI混剪] 字幕读取失败:', e.message); }
               }
             }
             const subtitleEnhancedPrompt = allSubtitles.length
-              ? `${prompt}\n\n以下是各视频的原始字幕（来自TikTok自动语音识别），供分析参考：\n---\n${allSubtitles.join('\n\n---\n')}\n---`
+              ? `${prompt}\n\n以下是各视频的原始字幕（带时间轴，来自TikTok自动语音识别），供分析参考：\n---\n${allSubtitles.join('\n\n---\n')}\n---`
               : prompt;
 
             const task = store.createRemixTask({
@@ -2718,18 +2714,13 @@ export function createMonitorServer({
                       : video.subtitleUrl;
                 if (existsSync(subPath)) {
                   const subText = await import('fs').then(fs => fs.readFileSync(subPath, 'utf8'));
-                  // 去掉 WebVTT 头和时间轴，只保留文字
-                  videoSubtitle = subText
-                    .replace(/^WEBVTT.*$/m, '')
-                    .replace(/^\d{2}:\d{2}:\d{2}\.\d{3}\s*-->\s*\d{2}:\d{2}:\d{2}\.\d{3}$/gm, '')
-                    .replace(/^\d+$/gm, '')
-                    .replace(/\n{3,}/g, '\n\n')
-                    .trim();
+                  // 保留完整 WebVTT 格式（含时间轴）
+                  videoSubtitle = subText.trim();
                 }
               } catch (e) { console.warn('[AI混剪] 字幕读取失败:', e.message); }
             }
             const subtitleEnhancedPrompt = videoSubtitle
-              ? `${prompt}\n\n以下是视频的原始字幕（来自TikTok自动语音识别），供分析参考：\n---\n${videoSubtitle}\n---`
+              ? `${prompt}\n\n以下是视频的原始字幕（带时间轴，来自TikTok自动语音识别），供分析参考：\n---\n${videoSubtitle}\n---`
               : prompt;
 
             const task = store.createRemixTask({
