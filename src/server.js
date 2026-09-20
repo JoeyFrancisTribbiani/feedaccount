@@ -4360,8 +4360,12 @@ export function createMonitorServer({
 
         // GET /api/auto-publish/daily-schedule — 今日排期资源池
         if (request.method === "GET" && pathname === "/api/auto-publish/daily-schedule") {
-          const todayStr = new Date().toISOString().slice(0, 10);
-          // 查今天排期的所有 pipeline + 发布任务
+          // 用北京时间（东八区）判断"今天"
+          const now = new Date();
+          const beijingNow = new Date(now.getTime() + 8 * 60 * 60 * 1000);
+          const todayStr = beijingNow.toISOString().slice(0, 10);
+
+          // 查所有 scheduled/published/remixed 的 pipeline（在JS层按北京时间过滤）
           const rows = store.db.prepare(`
             SELECT
               p.id AS task_id, p.status, p.fail_reason, p.attempt_count, p.matrix_id,
@@ -4381,11 +4385,23 @@ export function createMonitorServer({
             LEFT JOIN tk_video_materials vm ON vm.id = j.material_id
             LEFT JOIN remix_videos rv ON rv.id = p.source_video_id
             WHERE p.status IN ('scheduled', 'published', 'remixed')
-              AND (j.scheduled_at LIKE ? OR j.executed_at LIKE ? OR p.updated_at LIKE ?)
             ORDER BY COALESCE(j.scheduled_at, p.updated_at) ASC
-          `).all(`${todayStr}%`, `${todayStr}%`, `${todayStr}%`);
+          `).all();
 
-          const result = rows.map(r => ({
+          // 按北京时间过滤：scheduled_at 或 executed_at 属于今天
+          const isBeijingToday = (isoStr) => {
+            if (!isoStr) return false;
+            const d = new Date(isoStr);
+            const beijing = new Date(d.getTime() + 8 * 60 * 60 * 1000);
+            return beijing.toISOString().slice(0, 10) === todayStr;
+          };
+
+          const filtered = rows.filter(r =>
+            isBeijingToday(r.scheduled_at) || isBeijingToday(r.executed_at) ||
+            (r.status === 'remixed' && isBeijingToday(r.updated_at))
+          );
+
+          const result = filtered.map(r => ({
             taskId: r.task_id,
             status: r.job_status || r.status,
             pipelineStatus: r.status,

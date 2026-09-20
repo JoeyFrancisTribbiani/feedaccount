@@ -29,6 +29,21 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+/** 返回东八区（北京时间）今天的 YYYY-MM-DD */
+function todayBeijingStr() {
+  const now = new Date();
+  const beijing = new Date(now.getTime() + 8 * 60 * 60 * 1000);
+  return beijing.toISOString().slice(0, 10);
+}
+
+/** 判断 ISO 时间字符串是否属于北京时间今天 */
+function isBeijingToday(isoStr) {
+  if (!isoStr) return false;
+  const d = new Date(isoStr);
+  const beijing = new Date(d.getTime() + 8 * 60 * 60 * 1000);
+  return beijing.toISOString().slice(0, 10) === todayBeijingStr();
+}
+
 function genId(prefix) {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
 }
@@ -388,10 +403,7 @@ export class AutoPublishScheduler extends EventTarget {
       const mp = this.store.db.prepare("SELECT profile_id FROM matrix_profiles WHERE matrix_id = ?").get(cfg.matrixId);
       const profileId = mp?.profile_id || null;
 
-      // 库存 = 已排期 + 已混剪完成 + 正在混剪 + 已发布（全部，不限日期）
-      // 已发布的也算库存是因为它们是"已完成的成品"，只是发布出去了
-      // 但已发布的不应该无限算库存，只算"未发布的成品"作为待发布库存
-      // 修正：库存 = scheduled + remixed + remixing（未发布的成品）
+      // 库存 = 已排期 + 已混剪完成 + 正在混剪（随时保持 >= dailyLimit+1，不限当天）
       const stockCount = this.store.db.prepare(
         `SELECT COUNT(*) as cnt FROM auto_remix_publish_pipeline p
          WHERE (p.matrix_id = ? ${profileId ? "OR (p.matrix_id IS NULL AND p.profile_id = ?)" : ""})
@@ -657,15 +669,15 @@ export class AutoPublishScheduler extends EventTarget {
     if (changed) this._emitChange();
   }
 
-  // ─── 4. 自动排期发布（每天只排当天的量，多余的留到明天） ───
+  // ─── 4. 自动排期发布（按北京时间判断"今天"，每天排 dailyLimit 个，多余的留到明天） ───
 
   async schedulePublishJobs() {
     const remixedPipelines = this._listPipelinesByStatus("remixed");
     if (!remixedPipelines.length) return;
 
     let changed = false;
-    // 按 profile_id 分组，统计今天已排期+已发布的数量，不超过 dailyLimit
-    const todayStr = new Date().toISOString().slice(0, 10);
+    // 用北京时间（东八区）判断"今天"
+    const todayStr = todayBeijingStr();
 
     // 缓存每个 profile 的今日排期计数
     const todayCountCache = new Map();
@@ -684,16 +696,18 @@ export class AutoPublishScheduler extends EventTarget {
         const cfg = matrixId ? this._getMatrixConfig(matrixId) : null;
         const dailyLimit = cfg?.dailyLimit ?? 3;
 
-        // 获取或初始化今日计数
+        // 获取或初始化今日计数（按北京时间）
         if (!todayCountCache.has(profileId)) {
-          // 统计今天已排期(scheduled) + 已发布(published) 的数量
-          const scheduled = this.store.db.prepare(
-            `SELECT COUNT(*) as cnt FROM auto_remix_publish_pipeline p
+          const pipelines = this.store.db.prepare(
+            `SELECT p.status, j.scheduled_at, j.executed_at
+             FROM auto_remix_publish_pipeline p
              JOIN tk_publish_jobs j ON j.id = p.publish_job_id
-             WHERE p.profile_id = ? AND p.status IN ('scheduled', 'published')
-             AND (j.scheduled_at LIKE ? OR j.executed_at LIKE ?)`
-          ).get(profileId, `${todayStr}%`, `${todayStr}%`).cnt;
-          todayCountCache.set(profileId, scheduled);
+             WHERE p.profile_id = ? AND p.status IN ('scheduled', 'published')`
+          ).all(profileId);
+          const count = pipelines.filter(p =>
+            isBeijingToday(p.scheduled_at) || isBeijingToday(p.executed_at)
+          ).length;
+          todayCountCache.set(profileId, count);
         }
 
         const todayCount = todayCountCache.get(profileId);
@@ -950,11 +964,10 @@ export class AutoPublishScheduler extends EventTarget {
 
   _countTodayPublishedByProfile(profileId) {
     const jobs = this.store.listTkPublishJobs({ profileId, limit: 500 });
-    const todayStr = new Date().toISOString().slice(0, 10);
     return jobs.filter((j) => {
       if (j.status !== "success") return false;
       const executedAt = j.executedAt || j.scheduledAt;
-      return executedAt && executedAt.slice(0, 10) === todayStr;
+      return isBeijingToday(executedAt);
     }).length;
   }
 
