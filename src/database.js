@@ -578,6 +578,8 @@ export class LocalDatabase {
     this.#ensureColumn("remix_videos", "source_url", "TEXT");
     this.#ensureColumn("remix_videos", "thumb_url", "TEXT");
     this.#ensureColumn("remix_videos", "downloaded", "INTEGER DEFAULT 0");
+    this.#ensureColumn("remix_videos", "subtitle_url", "TEXT"); // 字幕文件本地路径
+    this.#ensureColumn("remix_videos", "subtitle_lang", "TEXT"); // 字幕语言 如 eng-US
     this.#ensureColumn("matrix_videos", "file_size", "INTEGER DEFAULT 0");
     this.#ensureColumn("matrix_videos", "duration", "REAL");
 
@@ -2601,6 +2603,7 @@ export class LocalDatabase {
       id: r.id, creatorId: r.creator_id, url: r.url, title: r.title,
       duration: r.duration, fileSize: r.file_size, thumbnail: r.thumbnail,
       sourceUrl: r.source_url, thumbUrl: r.thumb_url, downloaded: r.downloaded,
+      subtitleUrl: r.subtitle_url || null, subtitleLang: r.subtitle_lang || null,
       createdAt: r.created_at,
     }));
   }
@@ -2611,6 +2614,7 @@ export class LocalDatabase {
       id: row.id, creatorId: row.creator_id, url: row.url, title: row.title,
       duration: row.duration, fileSize: row.file_size, thumbnail: row.thumbnail,
       sourceUrl: row.source_url, thumbUrl: row.thumb_url, downloaded: row.downloaded,
+      subtitleUrl: row.subtitle_url || null, subtitleLang: row.subtitle_lang || null,
       createdAt: row.created_at,
     } : null;
   }
