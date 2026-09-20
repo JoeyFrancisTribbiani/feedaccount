@@ -5410,7 +5410,111 @@ cdpEl.ngrokCheck?.addEventListener("click", refreshNgrokStatus);
     if (profileDirInput && savedProfileDir) profileDirInput.value = savedProfileDir;
   }
 
+// Chrome 多实例配置管理
+function getSavedChromeInstances() {
+  try { return JSON.parse(localStorage.getItem("cdp-saved-instances") || "[]"); } catch { return []; }
+}
+function saveChromeInstances(list) {
+  localStorage.setItem("cdp-saved-instances", JSON.stringify(list));
+}
+
+function renderSavedChromeInstances() {
+  const container = document.querySelector("#cdp-launch-instances");
+  if (!container) return;
+  const instances = getSavedChromeInstances();
+  if (!instances.length) {
+    container.innerHTML = '<div style="font-size:12px;color:var(--text-muted);padding:8px;">暂无保存的实例配置，展开下方添加</div>';
+    return;
+  }
+  container.innerHTML = instances.map((inst, i) => `
+    <div style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;margin-bottom:6px;background:var(--bg);">
+      <div style="flex:1;">
+        <span style="font-weight:600;font-size:13px;">${escapeHtml(inst.name || `Chrome调试 (${inst.port})`)}</span>
+        <span style="font-size:11px;color:var(--text-muted);margin-left:6px;">端口 ${escapeHtml(String(inst.port))} · ${escapeHtml(inst.profileDir || 'Default')}${inst.proxy ? ' · 代理' : ''}</span>
+        <div style="font-size:10px;color:var(--text-muted);max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(inst.profilePath)}</div>
+      </div>
+      <button class="button button-secondary" type="button" data-launch-saved="${i}" style="font-size:12px;padding:3px 10px;">启动</button>
+      <button class="button button-secondary" type="button" data-fill-saved="${i}" style="font-size:12px;padding:3px 10px;">填充</button>
+      <button type="button" data-del-saved="${i}" style="background:none;border:none;color:#ef4444;cursor:pointer;font-size:16px;padding:0 4px;">×</button>
+    </div>
+  `).join("");
+  // 启动按钮
+  container.querySelectorAll("[data-launch-saved]").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      const idx = parseInt(btn.dataset.launchSaved, 10);
+      const inst = getSavedChromeInstances()[idx];
+      if (!inst) return;
+      btn.disabled = true;
+      btn.textContent = "启动中…";
+      try {
+        const res = await request("/api/cdp/launch-chrome", { method: "POST", body: JSON.stringify({ profilePath: inst.profilePath, port: inst.port, proxy: inst.proxy || null, profileDirectory: inst.profileDir || null }) });
+        showToast(`Chrome 已启动: ${inst.name || '端口' + inst.port} (PID=${res.pid})`);
+        setTimeout(() => cdpEl.scanBtn?.click(), 2000);
+      } catch (e) {
+        showToast(`启动失败: ${e.message}`, true);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "启动";
+      }
+    });
+  });
+  // 填充按钮
+  container.querySelectorAll("[data-fill-saved]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const idx = parseInt(btn.dataset.fillSaved, 10);
+      const inst = getSavedChromeInstances()[idx];
+      if (!inst) return;
+      const nameEl = document.querySelector("#cdp-launch-name");
+      const pathEl = document.querySelector("#cdp-launch-path");
+      const portEl = document.querySelector("#cdp-launch-port");
+      const proxyEl = document.querySelector("#cdp-launch-proxy");
+      const profileDirEl = document.querySelector("#cdp-launch-profile-dir");
+      if (nameEl) nameEl.value = inst.name || "";
+      if (pathEl) pathEl.value = inst.profilePath || "";
+      if (portEl) portEl.value = inst.port || "9222";
+      if (proxyEl) proxyEl.value = inst.proxy || "";
+      if (profileDirEl) profileDirEl.value = inst.profileDir || "Default";
+    });
+  });
+  // 删除按钮
+  container.querySelectorAll("[data-del-saved]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const idx = parseInt(btn.dataset.delSaved, 10);
+      const list = getSavedChromeInstances();
+      list.splice(idx, 1);
+      saveChromeInstances(list);
+      renderSavedChromeInstances();
+    });
+  });
+}
+
+// 初始渲染
+renderSavedChromeInstances();
+
+// 保存配置按钮
+document.querySelector("#cdp-launch-save")?.addEventListener("click", () => {
+  const name = document.querySelector("#cdp-launch-name")?.value.trim() || "";
+  const profilePath = cdpEl.launchPath?.value.trim();
+  if (!profilePath) { showToast("请填写 Chrome User Data 路径", true); return; }
+  const port = cdpEl.launchPort?.value || "9222";
+  const proxy = cdpEl.launchProxy?.value.trim() || "";
+  const profileDir = document.querySelector("#cdp-launch-profile-dir")?.value.trim() || "Default";
+  const list = getSavedChromeInstances();
+  // 去重：同端口覆盖
+  const existingIdx = list.findIndex(i => i.port === port);
+  const newInst = { name: name || `Chrome调试 (${port})`, profilePath, port, proxy, profileDir };
+  if (existingIdx >= 0) {
+    list[existingIdx] = newInst;
+  } else {
+    list.push(newInst);
+  }
+  saveChromeInstances(list);
+  renderSavedChromeInstances();
+  showToast("配置已保存");
+});
+
 cdpEl.launchBtn?.addEventListener("click", async () => {
+  const name = document.querySelector("#cdp-launch-name")?.value.trim() || "";
   const profilePath = cdpEl.launchPath.value.trim();
   if (!profilePath) { showToast("请填写 Chrome User Data 路径", true); return; }
   const port = cdpEl.launchPort.value || "9222";
@@ -5430,6 +5534,16 @@ cdpEl.launchBtn?.addEventListener("click", async () => {
     cdpEl.launchResult.textContent = `✓ Chrome 已启动 (PID=${res.pid}, CDP 端口 ${res.cdpPort})`;
     cdpEl.launchResult.className = "cdp-launch-result success";
     showToast(`Chrome 调试实例已启动，PID=${res.pid}`);
+    // 如果有名称，自动保存配置
+    if (name) {
+      const list = getSavedChromeInstances();
+      const existingIdx = list.findIndex(i => i.port === port);
+      const newInst = { name, profilePath, port, proxy: proxy || "", profileDir: profileDirectory || "Default" };
+      if (existingIdx >= 0) list[existingIdx] = newInst;
+      else list.push(newInst);
+      saveChromeInstances(list);
+      renderSavedChromeInstances();
+    }
     // 自动扫描该端口
     setTimeout(() => cdpEl.scanBtn?.click(), 2000);
   } catch (e) {

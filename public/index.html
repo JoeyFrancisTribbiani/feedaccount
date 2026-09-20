@@ -1327,31 +1327,46 @@
               <p class="cdp-launch-guide-warn">⚠️ 如果要复用已有登录态：路径填 User Data 目录（不含 <code>\Default</code> 后缀），Profile 目录名填对应的 Profile（如 <code>Default</code> 或 <code>Profile 17</code>）。复制时只需复制 3 样东西到新目录：<code>Local State</code> 文件（含解密密钥）、<code>First Run</code> 文件（如有）、以及你要用的 Profile 目录（如 <code>Profile 17</code>）。不需要复制其他 Profile 目录。缺少 <code>Local State</code> 会导致登录态丢失。</p>
             </div>
             <div class="cdp-launch-form">
-              <label class="wide-input">
-                <span>Chrome User Data 路径</span>
-                <input id="cdp-launch-path" type="text" placeholder="C:\chrome-cdp 或 C:\Users\...\Chrome\User Data" />
-              </label>
-              <div class="cdp-launch-form-row">
-                <label class="wide-input" style="flex: 0 0 140px;">
-                  <span>Profile 目录名</span>
-                  <input id="cdp-launch-profile-dir" type="text" placeholder="Default" value="Default" />
-                </label>
-                <label class="wide-input" style="flex: 0 0 120px;">
-                  <span>CDP 端口</span>
-                  <input id="cdp-launch-port" type="number" min="1" max="65535" value="9222" />
-                </label>
-                <label class="wide-input" style="flex: 1;">
-                  <span>代理服务器（可选）</span>
-                  <input id="cdp-launch-proxy" type="text" placeholder="socks5://127.0.0.1:1080" />
-                </label>
-              </div>
-              <button id="cdp-launch-btn" class="button button-primary" type="button">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="margin-right:6px;vertical-align:-2px;">
-                  <polygon points="5 3 19 12 5 21 5 3"/>
-                </svg>
-                启动调试 Chrome
-              </button>
-              <span id="cdp-launch-result" class="cdp-launch-result"></span>
+              <!-- 已保存的 Chrome 实例列表 -->
+              <div id="cdp-launch-instances" style="margin-bottom:12px;"></div>
+              
+              <details style="margin-bottom:8px;">
+                <summary style="cursor:pointer;font-size:12px;font-weight:600;color:var(--text-secondary);padding:6px 0;">+ 添加新实例配置</summary>
+                <div style="margin-top:8px;padding:12px;border:1px solid var(--line);border-radius:8px;background:var(--bg-subtle,#f8f9fa);">
+                  <label class="wide-input" style="margin-bottom:8px;">
+                    <span>实例名称（可选）</span>
+                    <input id="cdp-launch-name" type="text" placeholder="如：TK账号1" style="width:100%;" />
+                  </label>
+                  <label class="wide-input" style="margin-bottom:8px;">
+                    <span>Chrome User Data 路径</span>
+                    <input id="cdp-launch-path" type="text" placeholder="C:\chrome-cdp 或 C:\Users\...\Chrome\User Data" />
+                  </label>
+                  <div class="cdp-launch-form-row">
+                    <label class="wide-input" style="flex: 0 0 140px;">
+                      <span>Profile 目录名</span>
+                      <input id="cdp-launch-profile-dir" type="text" placeholder="Default" value="Default" />
+                    </label>
+                    <label class="wide-input" style="flex: 0 0 120px;">
+                      <span>CDP 端口</span>
+                      <input id="cdp-launch-port" type="number" min="1" max="65535" value="9222" />
+                    </label>
+                    <label class="wide-input" style="flex: 1;">
+                      <span>代理服务器（可选）</span>
+                      <input id="cdp-launch-proxy" type="text" placeholder="socks5://127.0.0.1:1080" />
+                    </label>
+                  </div>
+                  <div style="display:flex;gap:8px;margin-top:8px;">
+                    <button id="cdp-launch-btn" class="button button-primary" type="button">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="margin-right:6px;vertical-align:-2px;">
+                        <polygon points="5 3 19 12 5 21 5 3"/>
+                      </svg>
+                      启动调试 Chrome
+                    </button>
+                    <button id="cdp-launch-save" class="button button-secondary" type="button" style="font-size:13px;padding:6px 12px;">保存配置</button>
+                  </div>
+                  <span id="cdp-launch-result" class="cdp-launch-result"></span>
+                </div>
+              </details>
             </div>
           </div>
         </article>
