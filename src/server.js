@@ -3246,6 +3246,9 @@ export function createMonitorServer({
                   } catch(e) { console.warn('字幕下载失败:', e.message); }
                 }
                 
+                // 提取 itemStruct 顶层数据（createTime 等）
+                const itemStruct = data?.['__DEFAULT_SCOPE__']?.['webapp.video-detail']?.itemInfo?.itemStruct;
+                
                 return JSON.stringify({
                   ok: true,
                   size: bytes.length,
@@ -3254,10 +3257,11 @@ export function createMonitorServer({
                   codec: best.CodecType,
                   width: best.PlayAddr.Width,
                   height: best.PlayAddr.Height,
-                  title: data?.['__DEFAULT_SCOPE__']?.['webapp.video-detail']?.itemInfo?.itemStruct?.desc || '',
+                  title: itemStruct?.desc || '',
                   duration: video.duration || null,
                   cover: video.cover || video.originCover || '',
                   subtitle: subtitle,
+                  createTime: itemStruct?.createTime || null,
                 });
               } catch(e) { return JSON.stringify({error: e.message}); }
             })()`);
@@ -3296,6 +3300,7 @@ export function createMonitorServer({
               cover: data.cover,
               subtitleUrl,
               subtitleLang,
+              createTime: data.createTime || null,
             };
           } finally {
             try { ws.close(); } catch {}
@@ -3328,6 +3333,7 @@ export function createMonitorServer({
               duration: cdpResult.duration,
               subtitleUrl: cdpResult.subtitleUrl || null,
               subtitleLang: cdpResult.subtitleLang || null,
+              createTime: cdpResult.createTime || null,
               _source: "cdp",
             };
           } catch (e) { console.warn("[TikTok] CDP 失败:", e.message); }
@@ -3428,19 +3434,25 @@ export function createMonitorServer({
             return false;
           });
           if (existing) {
-            // 如果已存在但没有字幕，走CDP补充下载字幕
-            if (!existing.subtitleUrl) {
+            // 如果已存在但没有字幕或发布时间，走CDP补充
+            const needSub = !existing.subtitleUrl;
+            const needTime = !existing.createTime;
+            if (needSub || needTime) {
               try {
                 const subData = await downloadViaCDP(tiktokUrl, path.join(getUploadDir(), `_sub_${videoId}.mp4`));
-                if (subData.subtitleUrl) {
+                if (subData.subtitleUrl && needSub) {
                   try { store.db.prepare("UPDATE remix_videos SET subtitle_url = ?, subtitle_lang = ? WHERE id = ?").run(subData.subtitleUrl, subData.subtitleLang || '', existing.id); } catch {}
-                  // 删除临时视频文件（已存在不需要）
-                  try { const { unlinkSync } = await import('fs'); unlinkSync(path.join(getUploadDir(), `_sub_${videoId}.mp4`)); } catch {}
-                  return { ok: true, filename: path.basename(existing.url), filePath: existing.url, title, author: nickname, alreadyExists: true, subtitleUrl: subData.subtitleUrl, subtitleLang: subData.subtitleLang };
                 }
-              } catch (e) { console.warn('[TikTok] 补充字幕失败:', e.message); }
+                if (subData.createTime && needTime) {
+                  try { store.db.prepare("UPDATE remix_videos SET create_time = ? WHERE id = ?").run(String(subData.createTime), existing.id); } catch {}
+                }
+                // 删除临时视频文件（已存在不需要）
+                try { const { unlinkSync } = await import('fs'); unlinkSync(path.join(getUploadDir(), `_sub_${videoId}.mp4`)); } catch {}
+                const updatedVideo = store.getRemixVideo(existing.id);
+                return { ok: true, filename: path.basename(existing.url), filePath: existing.url, title, author: nickname, alreadyExists: true, subtitleUrl: updatedVideo?.subtitleUrl || null, subtitleLang: updatedVideo?.subtitleLang || null, createTime: updatedVideo?.createTime || null };
+              } catch (e) { console.warn('[TikTok] 补充字幕/时间失败:', e.message); }
             }
-            return { ok: true, filename: path.basename(existing.url), filePath: existing.url, title, author: nickname, alreadyExists: true, subtitleUrl: existing.subtitleUrl || null, subtitleLang: existing.subtitleLang || null };
+            return { ok: true, filename: path.basename(existing.url), filePath: existing.url, title, author: nickname, alreadyExists: true, subtitleUrl: existing.subtitleUrl || null, subtitleLang: existing.subtitleLang || null, createTime: existing.createTime || null };
           }
 
           let localPath;
@@ -3515,7 +3527,12 @@ export function createMonitorServer({
             video.subtitleLang = tkData.subtitleLang;
           }
 
-          return { ok: true, filename, filePath: videoUrl, title, author: nickname, videoId: video.id, duration: tkData.duration || null, fileSize: video.fileSize || null, subtitleUrl: tkData.subtitleUrl || null, subtitleLang: tkData.subtitleLang || null };
+          // 保存视频发布时间到数据库
+          if (tkData.createTime) {
+            try { store.db.prepare("UPDATE remix_videos SET create_time = ? WHERE id = ?").run(String(tkData.createTime), video.id); } catch {}
+          }
+
+          return { ok: true, filename, filePath: videoUrl, title, author: nickname, videoId: video.id, duration: tkData.duration || null, fileSize: video.fileSize || null, subtitleUrl: tkData.subtitleUrl || null, subtitleLang: tkData.subtitleLang || null, createTime: tkData.createTime || null };
         }
 
         // POST /api/tiktok/download — 单条视频下载

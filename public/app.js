@@ -3591,6 +3591,7 @@ function renderRemixVideos() {
           <div class="remix-video-row-info">
 
             <p class="remix-video-title">${escapeHtml(v.title || "未命名")}</p>
+            <p class="remix-video-meta" style="font-size:10px;color:#94a3b8;margin:1px 0;">${formatDuration(v.duration)} · ${formatFileSize(v.fileSize)}${v.createTime ? ' · ' + new Date(v.createTime * 1000).toLocaleDateString('zh-CN', {timeZone:'Asia/Shanghai', hour12:false}) : ''}</p>
 
             ${taskInfo ? remixBadgeHtml(taskInfo) : ""}
 
@@ -3629,7 +3630,7 @@ function renderRemixVideos() {
 
         <p class="remix-video-title">${escapeHtml(v.title || "未命名")}</p>
 
-        <p class="remix-video-meta" style="font-size:10px;color:#94a3b8;margin:2px 0;">${formatDuration(v.duration)} · ${formatFileSize(v.fileSize)}</p>
+        <p class="remix-video-meta" style="font-size:10px;color:#94a3b8;margin:2px 0;">${formatDuration(v.duration)} · ${formatFileSize(v.fileSize)}${v.createTime ? ' · ' + new Date(v.createTime * 1000).toLocaleDateString('zh-CN', {timeZone:'Asia/Shanghai', hour12:false}) : ''}</p>
 
         ${v.matrixLinks?.length ? `<div class="remix-video-matrix-links">${v.matrixLinks.map((ml) => `<span class="remix-matrix-tag" title="${escapeHtml(ml.matrixName)}">${escapeHtml(ml.matrixName)}</span>`).join("")}</div>` : ""}
 

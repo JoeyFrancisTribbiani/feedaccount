@@ -580,6 +580,7 @@ export class LocalDatabase {
     this.#ensureColumn("remix_videos", "downloaded", "INTEGER DEFAULT 0");
     this.#ensureColumn("remix_videos", "subtitle_url", "TEXT"); // 字幕文件本地路径
     this.#ensureColumn("remix_videos", "subtitle_lang", "TEXT"); // 字幕语言 如 eng-US
+    this.#ensureColumn("remix_videos", "create_time", "TEXT"); // TikTok 视频发布时间(Unix时间戳, 秒)
     this.#ensureColumn("matrix_videos", "file_size", "INTEGER DEFAULT 0");
     this.#ensureColumn("matrix_videos", "duration", "REAL");
 
@@ -2604,6 +2605,7 @@ export class LocalDatabase {
       duration: r.duration, fileSize: r.file_size, thumbnail: r.thumbnail,
       sourceUrl: r.source_url, thumbUrl: r.thumb_url, downloaded: r.downloaded,
       subtitleUrl: r.subtitle_url || null, subtitleLang: r.subtitle_lang || null,
+      createTime: r.create_time || null,
       createdAt: r.created_at,
     }));
   }
@@ -2615,6 +2617,7 @@ export class LocalDatabase {
       duration: row.duration, fileSize: row.file_size, thumbnail: row.thumbnail,
       sourceUrl: row.source_url, thumbUrl: row.thumb_url, downloaded: row.downloaded,
       subtitleUrl: row.subtitle_url || null, subtitleLang: row.subtitle_lang || null,
+      createTime: row.create_time || null,
       createdAt: row.created_at,
     } : null;
   }
