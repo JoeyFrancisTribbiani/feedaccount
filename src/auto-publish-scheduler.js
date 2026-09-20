@@ -195,11 +195,19 @@ export class AutoPublishScheduler extends EventTarget {
       return;
     }
 
-    // 调用 server 自带的 /api/tiktok/parse-profile 接口
+    // 获取该达人已知的最新 createTime，用于增量解析（只获取比这个时间新的视频）
+    const maxRow = this.store.db.prepare(
+      "SELECT MAX(create_time) AS max_ct FROM remix_videos WHERE creator_id = ? AND create_time IS NOT NULL AND create_time != ''"
+    ).get(creator.creator_id);
+    const maxCreateTime = maxRow?.max_ct || null;
+
+    console.log(`[AutoPublishScheduler] 监控达人 ${creatorObj.name}，最新已知 createTime=${maxCreateTime || '无'}`);
+
+    // 调用 server 自带的 /api/tiktok/parse-profile 接口（传 maxCreateTime 做增量解析）
     const parseRes = await fetch(`${this.serverUrl}/api/tiktok/parse-profile`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url: `https://www.tiktok.com/@${username}` }),
+      body: JSON.stringify({ url: `https://www.tiktok.com/@${username}`, maxCreateTime }),
       signal: AbortSignal.timeout(180000),
     });
     if (!parseRes.ok) {

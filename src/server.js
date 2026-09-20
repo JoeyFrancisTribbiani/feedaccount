@@ -3572,6 +3572,9 @@ export function createMonitorServer({
           // 查找或创建达人
           const creator = findOrCreateCreator(username, "TikTok");
 
+          // maxCreateTime 参数：只获取比这个时间新的视频（用于监控增量解析）
+          const maxCreateTime = body.maxCreateTime ? String(body.maxCreateTime) : null;
+
           // 立即返回 taskId，后台异步处理
           const taskId = `parse_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
           sendJson(response, 200, { ok: true, taskId, username, message: "解析已开始，请通过 SSE 获取进度" });
@@ -3667,6 +3670,7 @@ export function createMonitorServer({
               let prevCount = 0;
               let noChangeRounds = 0;
               let allVideoUrls = new Set();
+              let reachedOldVideo = false; // 是否已滚动到比 maxCreateTime 更旧的视频
               for (let i = 0; i < 50; i++) {
                 await evalJS(`window.scrollTo(0, document.body.scrollHeight)`);
                 await new Promise(r => setTimeout(r, 4000));
@@ -3702,11 +3706,21 @@ export function createMonitorServer({
                         createTime: apiInfo?.createTime || null,
                       });
                       newCount++;
+                      // 检查是否已滚动到比 maxCreateTime 更旧的视频
+                      if (maxCreateTime && apiInfo?.createTime && Number(apiInfo.createTime) <= Number(maxCreateTime)) {
+                        reachedOldVideo = true;
+                      }
                     }
                   }
                   if (newCount > 0) {
-                    emit("progress", { taskId, step: "scanning", message: `已发现 ${allVideoUrls.size} 个视频（本次新增 ${newCount}）` });
+                    emit("progress", { taskId, step: "scanning", message: `已发现 ${allVideoUrls.size} 个视频（本次新增 ${newCount}）${reachedOldVideo ? '，已发现旧视频，停止滚动' : ''}` });
                   }
+                }
+
+                // 如果已发现比 maxCreateTime 更旧的视频，提前停止
+                if (reachedOldVideo) {
+                  emit("progress", { taskId, step: "done", message: `已扫描到已知视频，共发现 ${allVideoUrls.size} 个视频` });
+                  break;
                 }
 
                 if (currentCount === prevCount) {

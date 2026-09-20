@@ -5994,8 +5994,13 @@ function renderMatrixAutoPublishConfig(cfg) {
     </div>
     <div class="mx-ap-row">
       <span class="mx-ap-label">发布时间段</span>
-      <div class="mx-ap-value">
-        <input type="text" id="mx-ap-slots" value="${escapeHtml(slotsVal)}" style="width:280px;" placeholder="09:00-12:00 或 09:00, 12:00" />
+      <div class="mx-ap-value" style="display:flex;flex-direction:column;gap:4px;width:280px;">
+        <div id="mx-ap-slots-list" style="display:flex;flex-wrap:wrap;gap:4px;"></div>
+        <div style="display:flex;gap:4px;">
+          <input type="time" id="mx-ap-time-input" style="width:90px;font-size:12px;padding:2px 4px;border:1px solid var(--line);border-radius:4px;background:var(--bg);color:var(--text);" />
+          <button type="button" id="mx-ap-time-add" class="button button-secondary" style="font-size:11px;padding:2px 8px;">+ 添加时间</button>
+          <span style="font-size:10px;color:var(--text-muted);align-self:center;">HH:MM 精确时间</span>
+        </div>
       </div>
     </div>
     <div class="mx-ap-row">
@@ -6006,6 +6011,58 @@ function renderMatrixAutoPublishConfig(cfg) {
       </div>
     </div>
   `;
+
+  // 初始化时间选择组件
+  initTimeSlotPicker(slotsVal);
+}
+
+// 时间段选择组件
+function initTimeSlotPicker(existingSlotsStr) {
+  const listEl = document.querySelector('#mx-ap-slots-list');
+  const inputEl = document.querySelector('#mx-ap-time-input');
+  const addBtn = document.querySelector('#mx-ap-time-add');
+  if (!listEl || !addBtn) return;
+
+  // 解析已有时间段
+  let slots = [];
+  if (existingSlotsStr) {
+    slots = existingSlotsStr.split(',').map(s => s.trim()).filter(Boolean);
+  }
+
+  function renderSlots() {
+    listEl.innerHTML = slots.map((s, i) =>
+      `<span style="display:inline-flex;align-items:center;gap:2px;background:var(--bg-subtle,#f1f5f9);border:1px solid var(--line);border-radius:4px;padding:2px 6px;font-size:12px;">
+        ${escapeHtml(s)}
+        <button type="button" data-del-slot="${i}" style="background:none;border:none;color:#ef4444;cursor:pointer;font-size:14px;padding:0 0 0 2px;">×</button>
+      </span>`
+    ).join('');
+    // 删除按钮
+    listEl.querySelectorAll('[data-del-slot]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        slots.splice(parseInt(btn.dataset.delSlot, 10), 1);
+        renderSlots();
+      });
+    });
+  }
+
+  function addSlot() {
+    const val = inputEl?.value?.trim();
+    if (!val) { showToast('请选择时间', true); return; }
+    if (slots.includes(val)) { showToast('该时间已存在', true); return; }
+    slots.push(val);
+    slots.sort((a, b) => {
+      const ma = a.match(/(\d{1,2}):(\d{2})/);
+      const mb = b.match(/(\d{1,2}):(\d{2})/);
+      const va = ma ? parseInt(ma[1]) * 60 + parseInt(ma[2]) : 0;
+      const vb = mb ? parseInt(mb[1]) * 60 + parseInt(mb[2]) : 0;
+      return va - vb;
+    });
+    if (inputEl) inputEl.value = '';
+    renderSlots();
+  }
+
+  addBtn.addEventListener('click', addSlot);
+  renderSlots();
 }
 
 // 保存矩阵自动发布配置
@@ -6016,25 +6073,27 @@ async function saveMatrixAutoPublishConfig() {
   const presetEl = document.querySelector('#mx-ap-preset');
   const dailyEl = document.querySelector('#mx-ap-daily');
   const intervalEl = document.querySelector('#mx-ap-interval');
-  const slotsEl = document.querySelector('#mx-ap-slots');
   const payload = {
     enabled: enabledEl?.checked ? 1 : 0,
     presetId: presetEl?.value || null,
     dailyLimit: parseInt(dailyEl?.value, 10) || 0,
     monitorIntervalHours: parseInt(intervalEl?.value, 10) || 0,
   };
-  // 时间段校验
-  const raw = slotsEl?.value.trim() || '';
-  if (raw) {
-    const slots = raw.split(',').map((s) => s.trim()).filter(Boolean);
-    const valid = slots.every((s) => /^\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}$/.test(s) || /^\d{1,2}:\d{2}$/.test(s));
-    if (!valid) {
-      showToast('时间段格式有误，用 HH:MM-HH:MM(时间段) 或 HH:MM(精确时间)，逗号分隔', true);
-      return;
+  // 从时间选择组件读取时间段
+  const slotsListEl = document.querySelector('#mx-ap-slots-list');
+  if (slotsListEl) {
+    const chips = slotsListEl.querySelectorAll('span');
+    const slots = [];
+    chips.forEach(chip => {
+      // 提取 chip 里的文字（去掉按钮的×）
+      const text = chip.childNodes[0]?.textContent?.trim();
+      if (text) slots.push(text);
+    });
+    if (slots.length) {
+      payload.publishTimeSlots = JSON.stringify(slots);
+    } else {
+      payload.publishTimeSlots = null;
     }
-    payload.publishTimeSlots = JSON.stringify(slots);
-  } else {
-    payload.publishTimeSlots = null;
   }
   // 保留 cdpInstanceId（只读，不修改）
   if (mxState.autoPublishConfig?.cdpInstanceId) {
