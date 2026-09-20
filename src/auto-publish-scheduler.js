@@ -19,7 +19,6 @@
  */
 
 const DEFAULT_CHECK_INTERVAL_MS = 60_000; // 1 分钟（主循环）
-const REMIX_INTERVAL_MS = 5 * 60 * 1000; // 混剪最小间隔 5 分钟（下限保护）
 const PUBLISH_INTERVAL_MIN_MS = 30 * 60 * 1000; // 发布间隔至少 30 分钟
 const MAX_RETRY_COUNT = 3;
 const DEFAULT_MONITOR_INTERVAL_HOURS = 6;
@@ -370,82 +369,120 @@ export class AutoPublishScheduler extends EventTarget {
     if (changed) this._emitChange();
   }
 
-  // ─── 2. 自动触发混剪（配额驱动，避免 AI 频率超限） ───
+  // ─── 2. 自动触发混剪（24小时均匀分布，避免 AI 频率超限） ───
 
   /**
-   * 配额算法：
-   * - 遍历所有启用的矩阵配置
-   * - 每个矩阵的 dailyLimit = 每天要发的视频数
-   * - 需要的库存 = dailyLimit + 1（多混剪1条应对意外）
-   * - 当前库存 = 今天已发布 + 已排期(scheduled) + 已混剪完成(remixed) + 正在混剪(remixing)
-   * - 如果库存 < 需要的库存，才触发混剪
-   * - 同时控制全局混剪频率：两次混剪间隔至少 REMIX_INTERVAL_MS
+   * 混剪调度算法（24小时均匀分布）：
+   *
+   * 1. 统计所有启用矩阵的 dailyLimit 总和 = 每天需要的混剪总数
+   *    例如: 矩阵A(dailyLimit=2) + 矩阵B(dailyLimit=2) = 4次/天
+   *
+   * 2. 计算混剪间隔 = 24小时 / 每天混剪总数
+   *    例如: 24h / 4 = 6小时一次
+   *
+   * 3. 今天的混剪次数 = 今天(北京时间0点起)已完成的混剪(remixed+published+scheduled+remixing)
+   *    如果今天混剪次数 < 每天混剪总数 → 需要混剪
+   *
+   * 4. 判断是否到了下一次混剪时间：
+   *    - 上次混剪时间 + 混剪间隔 <= 现在 → 可以混剪
+   *    - 如果今天还没混剪过 → 立即混剪
+   *
+   * 5. 选择要混剪的矩阵：轮换选择，优先选库存最低的矩阵
+   *    库存 = 该矩阵的 scheduled + remixed + remixing
+   *
+   * 6. 在该矩阵的 pending pipeline 中取最旧的一个混剪
    */
   async triggerRemixTasks() {
     // 混剪并发1：有正在混剪的任务就等
     const remixingCount = this._listPipelinesByStatus("remixing").length;
     if (remixingCount > 0) return;
 
-    // 混剪间隔限制（防止AI频率超限）
-    const now = Date.now();
-    if (now - this.lastRemixAt < REMIX_INTERVAL_MS) return;
-
     // 获取所有启用的矩阵配置
     const configs = this._listEnabledMatrixConfigs();
     if (!configs.length) return;
 
-    // 检查每个矩阵的库存（不限当天，随时保持库存 >= dailyLimit+1）
-    const eligibleMatrixIds = new Set();
+    // 1. 计算每天需要的混剪总数（所有矩阵的 dailyLimit 之和）
+    let totalDailyRemix = 0;
+    const matrixStocks = []; // {cfg, profileId, stock}
     for (const cfg of configs) {
       const dailyLimit = cfg.dailyLimit ?? 3;
-      const targetStock = dailyLimit + 1; // 多1条备用
+      totalDailyRemix += dailyLimit;
 
       const mp = this.store.db.prepare("SELECT profile_id FROM matrix_profiles WHERE matrix_id = ?").get(cfg.matrixId);
       const profileId = mp?.profile_id || null;
 
-      // 库存 = 已排期 + 已混剪完成 + 正在混剪（随时保持 >= dailyLimit+1，不限当天）
+      // 该矩阵的库存 = scheduled + remixed + remixing
       const stockCount = this.store.db.prepare(
         `SELECT COUNT(*) as cnt FROM auto_remix_publish_pipeline p
          WHERE (p.matrix_id = ? ${profileId ? "OR (p.matrix_id IS NULL AND p.profile_id = ?)" : ""})
          AND p.status IN ('scheduled', 'remixed', 'remixing')`
       ).get(...(profileId ? [cfg.matrixId, profileId] : [cfg.matrixId])).cnt;
 
-      if (stockCount < targetStock) {
-        eligibleMatrixIds.add(cfg.matrixId);
-      }
+      matrixStocks.push({ cfg, profileId, stock: stockCount, dailyLimit });
     }
 
-    if (!eligibleMatrixIds.size) return;
+    if (totalDailyRemix === 0) return;
 
-    // 按创建时间顺序取所有 pending pipeline（从旧到新）
+    // 2. 计算混剪间隔（毫秒）
+    const remixIntervalMs = Math.floor(DAY_MS / totalDailyRemix);
+
+    // 3. 统计今天（北京时间）已完成/进行中的混剪总数
+    const todayRemixCount = this.store.db.prepare(
+      `SELECT COUNT(*) as cnt FROM auto_remix_publish_pipeline
+       WHERE status IN ('remixed', 'remixing', 'scheduled', 'published')
+       AND updated_at >= ?`
+    ).get(this._todayBeijingStartIso()).cnt;
+
+    // 今天混剪次数已达上限，不再混剪
+    if (todayRemixCount >= totalDailyRemix) return;
+
+    // 4. 判断是否到了下一次混剪时间
+    const now = Date.now();
+    if (this.lastRemixAt > 0 && now - this.lastRemixAt < remixIntervalMs) return;
+
+    // 5. 选择要混剪的矩阵：优先选库存最低的（库存/dailyLimit 比例最小）
+    matrixStocks.sort((a, b) => {
+      const ratioA = a.dailyLimit > 0 ? a.stock / a.dailyLimit : 999;
+      const ratioB = b.dailyLimit > 0 ? b.stock / b.dailyLimit : 999;
+      return ratioA - ratioB; // 比例小的优先
+    });
+
+    // 找有 pending pipeline 的矩阵
     const allPending = this._listPipelinesByStatus("pending");
     if (!allPending.length) return;
 
-    // 过滤出属于有配额的矩阵的 pipeline
-    const candidates = allPending.filter(p => {
-      if (p.matrix_id && eligibleMatrixIds.has(p.matrix_id)) return true;
-      if (!p.matrix_id && p.profile_id) {
-        const mp = this.store.db.prepare("SELECT matrix_id FROM matrix_profiles WHERE profile_id = ?").get(p.profile_id);
-        return mp && eligibleMatrixIds.has(mp.matrix_id);
+    let pipeline = null;
+    let pipelineCfg = null;
+    for (const ms of matrixStocks) {
+      const candidates = allPending.filter(p => {
+        if (p.matrix_id && p.matrix_id === ms.cfg.matrixId) return true;
+        if (!p.matrix_id && p.profile_id && ms.profileId === p.profile_id) return true;
+        if (!p.matrix_id && p.profile_id) {
+          const mp = this.store.db.prepare("SELECT matrix_id FROM matrix_profiles WHERE profile_id = ?").get(p.profile_id);
+          return mp && mp.matrix_id === ms.cfg.matrixId;
+        }
+        return false;
+      });
+      if (candidates.length) {
+        candidates.sort((a, b) => (a.created_at || "").localeCompare(b.created_at || ""));
+        pipeline = candidates[0];
+        pipelineCfg = ms.cfg;
+        break;
       }
-      return false;
-    });
-
-    if (!candidates.length) return;
-
-    // 按创建时间排序（从旧到新）
-    candidates.sort((a, b) => (a.created_at || "").localeCompare(b.created_at || ""));
-
-    // 取最旧的一个
-    const pipeline = candidates[0];
-    let pipelineMatrixId = pipeline.matrix_id;
-    if (!pipelineMatrixId && pipeline.profile_id) {
-      const mp = this.store.db.prepare("SELECT matrix_id FROM matrix_profiles WHERE profile_id = ?").get(pipeline.profile_id);
-      pipelineMatrixId = mp?.matrix_id;
     }
-    const cfg = pipelineMatrixId ? this._getMatrixConfig(pipelineMatrixId) : null;
 
-    await this._doRemix(pipeline, cfg);
+    if (!pipeline) return;
+
+    await this._doRemix(pipeline, pipelineCfg);
+  }
+
+  /** 返回北京时间今天的0点 ISO 时间（用于统计今天混剪次数） */
+  _todayBeijingStartIso() {
+    const now = new Date();
+    const beijingNow = new Date(now.getTime() + 8 * 60 * 60 * 1000);
+    const beijingToday0 = new Date(beijingNow.toISOString().slice(0, 10) + "T00:00:00.000Z");
+    // 转回 UTC（减去8小时）
+    return new Date(beijingToday0.getTime() - 8 * 60 * 60 * 1000).toISOString();
   }
 
   async _doRemix(pipeline, effectiveCfg) {
