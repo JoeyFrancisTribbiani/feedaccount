@@ -1330,12 +1330,13 @@
               <!-- 已保存的 Chrome 实例列表 -->
               <div id="cdp-launch-instances" style="margin-bottom:12px;"></div>
               
-              <details style="margin-bottom:8px;">
-                <summary style="cursor:pointer;font-size:12px;font-weight:600;color:var(--text-secondary);padding:6px 0;">+ 添加新实例配置</summary>
+              <details id="cdp-launch-details" style="margin-bottom:8px;">
+                <summary id="cdp-launch-summary" style="cursor:pointer;font-size:12px;font-weight:600;color:var(--text-secondary);padding:6px 0;">+ 添加新实例配置</summary>
                 <div style="margin-top:8px;padding:12px;border:1px solid var(--line);border-radius:8px;background:var(--bg-subtle,#f8f9fa);">
+                  <input type="hidden" id="cdp-launch-edit-idx" value="" />
                   <label class="wide-input" style="margin-bottom:8px;">
-                    <span>实例名称（可选）</span>
-                    <input id="cdp-launch-name" type="text" placeholder="如：TK账号1" style="width:100%;" />
+                    <span>实例名称</span>
+                    <input id="cdp-launch-name" type="text" placeholder="如：ChatGPT账号1" style="width:100%;" />
                   </label>
                   <label class="wide-input" style="margin-bottom:8px;">
                     <span>Chrome User Data 路径</span>
@@ -1363,69 +1364,35 @@
                       启动调试 Chrome
                     </button>
                     <button id="cdp-launch-save" class="button button-secondary" type="button" style="font-size:13px;padding:6px 12px;">保存配置</button>
+                    <button id="cdp-launch-cancel-edit" class="button button-secondary hidden" type="button" style="font-size:13px;padding:6px 12px;">取消编辑</button>
                   </div>
                   <span id="cdp-launch-result" class="cdp-launch-result"></span>
                 </div>
               </details>
+              
+              <!-- 扫描 + 实例管理 -->
+              <div style="display:flex;align-items:center;gap:8px;margin:12px 0 8px;">
+                <h3 style="font-size:14px;font-weight:700;margin:0;">CDP 实例管理</h3>
+                <button id="cdp-scan" class="button button-secondary" type="button" style="font-size:12px;padding:3px 10px;">扫描 Chrome</button>
+                <button id="cdp-refresh" class="button button-secondary" type="button" style="font-size:12px;padding:3px 10px;">刷新</button>
+              </div>
+              <div id="cdp-scan-results" class="cdp-scan-results hidden" style="margin-bottom:8px;"></div>
+              <div class="table-scroll">
+                <table class="history-table" style="width: 100%;">
+                  <thead>
+                    <tr>
+                      <th>名称</th>
+                      <th>CDP 端口</th>
+                      <th>状态</th>
+                      <th>操作</th>
+                    </tr>
+                  </thead>
+                  <tbody id="cdp-instances-body">
+                    <tr><td colspan="4" style="text-align:center;color:var(--text-muted);padding:12px;">暂无实例，启动后自动注册</td></tr>
+                  </tbody>
+                </table>
+              </div>
             </div>
-          </div>
-        </article>
-
-        <article class="panel">
-          <div class="panel-heading">
-            <div>
-              <p class="section-kicker">Chrome CDP 远程调试</p>
-              <h2>ChatGPT CDP 实例管理</h2>
-            </div>
-            <div class="heading-actions">
-              <button id="cdp-scan" class="button button-secondary" type="button">扫描 Chrome</button>
-              <button id="cdp-refresh" class="button button-secondary" type="button">刷新</button>
-              <button id="cdp-add" class="button button-primary" type="button">添加实例</button>
-            </div>
-          </div>
-
-          <!-- 添加/编辑表单 -->
-          <div id="cdp-form" class="cdp-form hidden" style="padding: 0 24px 16px;">
-            <input type="hidden" id="cdp-edit-id" />
-            <div class="cdp-form-grid">
-              <label><span>实例名称</span><input id="cdp-name" type="text" placeholder="如：ChatGPT 主力机" /></label>
-              <label><span>CDP 主机</span><input id="cdp-host" type="text" placeholder="localhost" value="localhost" /></label>
-              <label><span>CDP 端口</span><input id="cdp-port" type="number" min="1" max="65535" value="9222" /></label>
-              <label><span>守护进程端口</span><input id="cdp-daemon-port" type="number" min="1" max="65535" value="9223" /></label>
-              <label><span>ngrok URL（指向 daemon 端口 9223，非 Chrome 9222）</span><input id="cdp-ngrok" type="text" placeholder="https://xxx.ngrok.io" /></label>
-              <label><span>备注</span><input id="cdp-notes" type="text" placeholder="可选" /></label>
-            </div>
-            <div style="display:flex;gap:8px;margin-top:12px;">
-              <button id="cdp-save" class="button button-primary" type="button">保存</button>
-              <button id="cdp-cancel" class="button button-secondary" type="button">取消</button>
-            </div>
-          </div>
-
-          <!-- 扫描结果 -->
-          <div id="cdp-scan-results" class="cdp-scan-results hidden" style="padding: 0 24px 16px;">
-            <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;">
-              <h3 style="font-size:14px;font-weight:700;">扫描结果</h3>
-              <span id="cdp-scan-hint" class="muted-activity" style="font-size:12px;"></span>
-            </div>
-            <div id="cdp-scan-list" class="cdp-scan-list"></div>
-          </div>
-
-          <!-- 实例列表 -->
-          <div class="table-scroll" style="padding: 0 24px 24px;">
-            <table class="history-table" style="width: 100%;">
-              <thead>
-                <tr>
-                  <th>名称</th>
-                  <th>CDP 地址</th>
-                  <th>守护进程</th>
-                  <th>状态</th>
-                  <th>操作</th>
-                </tr>
-              </thead>
-              <tbody id="cdp-instances-body">
-                <tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:24px;">暂无 Chrome CDP 实例</td></tr>
-              </tbody>
-            </table>
           </div>
         </article>
 

@@ -5434,7 +5434,7 @@ function renderSavedChromeInstances() {
         <div style="font-size:10px;color:var(--text-muted);max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(inst.profilePath)}</div>
       </div>
       <button class="button button-secondary" type="button" data-launch-saved="${i}" style="font-size:12px;padding:3px 10px;">启动</button>
-      <button class="button button-secondary" type="button" data-fill-saved="${i}" style="font-size:12px;padding:3px 10px;">填充</button>
+      <button class="button button-secondary" type="button" data-edit-saved="${i}" style="font-size:12px;padding:3px 10px;">编辑</button>
       <button type="button" data-del-saved="${i}" style="background:none;border:none;color:#ef4444;cursor:pointer;font-size:16px;padding:0 4px;">×</button>
     </div>
   `).join("");
@@ -5458,22 +5458,13 @@ function renderSavedChromeInstances() {
       }
     });
   });
-  // 填充按钮
-  container.querySelectorAll("[data-fill-saved]").forEach(btn => {
+  // 编辑按钮
+  container.querySelectorAll("[data-edit-saved]").forEach(btn => {
     btn.addEventListener("click", () => {
-      const idx = parseInt(btn.dataset.fillSaved, 10);
+      const idx = parseInt(btn.dataset.editSaved, 10);
       const inst = getSavedChromeInstances()[idx];
       if (!inst) return;
-      const nameEl = document.querySelector("#cdp-launch-name");
-      const pathEl = document.querySelector("#cdp-launch-path");
-      const portEl = document.querySelector("#cdp-launch-port");
-      const proxyEl = document.querySelector("#cdp-launch-proxy");
-      const profileDirEl = document.querySelector("#cdp-launch-profile-dir");
-      if (nameEl) nameEl.value = inst.name || "";
-      if (pathEl) pathEl.value = inst.profilePath || "";
-      if (portEl) portEl.value = inst.port || "9222";
-      if (proxyEl) proxyEl.value = inst.proxy || "";
-      if (profileDirEl) profileDirEl.value = inst.profileDir || "Default";
+      fillEditForm(inst, idx);
     });
   });
   // 删除按钮
@@ -5491,6 +5482,49 @@ function renderSavedChromeInstances() {
 // 初始渲染
 renderSavedChromeInstances();
 
+// 填充编辑表单
+function fillEditForm(inst, idx) {
+  const nameEl = document.querySelector("#cdp-launch-name");
+  const pathEl = document.querySelector("#cdp-launch-path");
+  const portEl = document.querySelector("#cdp-launch-port");
+  const proxyEl = document.querySelector("#cdp-launch-proxy");
+  const profileDirEl = document.querySelector("#cdp-launch-profile-dir");
+  const editIdxEl = document.querySelector("#cdp-launch-edit-idx");
+  const cancelBtn = document.querySelector("#cdp-launch-cancel-edit");
+  const summary = document.querySelector("#cdp-launch-summary");
+  if (nameEl) nameEl.value = inst.name || "";
+  if (pathEl) pathEl.value = inst.profilePath || "";
+  if (portEl) portEl.value = inst.port || "9222";
+  if (proxyEl) proxyEl.value = inst.proxy || "";
+  if (profileDirEl) profileDirEl.value = inst.profileDir || "Default";
+  if (editIdxEl) editIdxEl.value = String(idx);
+  if (cancelBtn) cancelBtn.classList.remove("hidden");
+  if (summary) summary.textContent = "编辑实例配置";
+  // 展开详情
+  document.querySelector("#cdp-launch-details")?.setAttribute("open", "");
+}
+
+// 取消编辑
+document.querySelector("#cdp-launch-cancel-edit")?.addEventListener("click", () => {
+  const editIdxEl = document.querySelector("#cdp-launch-edit-idx");
+  const cancelBtn = document.querySelector("#cdp-launch-cancel-edit");
+  const summary = document.querySelector("#cdp-launch-summary");
+  if (editIdxEl) editIdxEl.value = "";
+  if (cancelBtn) cancelBtn.classList.add("hidden");
+  if (summary) summary.textContent = "+ 添加新实例配置";
+  // 清空表单
+  const nameEl2 = document.querySelector("#cdp-launch-name");
+  const pathEl2 = document.querySelector("#cdp-launch-path");
+  const portEl2 = document.querySelector("#cdp-launch-port");
+  const proxyEl2 = document.querySelector("#cdp-launch-proxy");
+  const profileDirEl2 = document.querySelector("#cdp-launch-profile-dir");
+  if (nameEl2) nameEl2.value = "";
+  if (pathEl2) pathEl2.value = "";
+  if (portEl2) portEl2.value = "9222";
+  if (proxyEl2) proxyEl2.value = "";
+  if (profileDirEl2) profileDirEl2.value = "Default";
+});
+
 // 保存配置按钮
 document.querySelector("#cdp-launch-save")?.addEventListener("click", () => {
   const name = document.querySelector("#cdp-launch-name")?.value.trim() || "";
@@ -5499,18 +5533,28 @@ document.querySelector("#cdp-launch-save")?.addEventListener("click", () => {
   const port = cdpEl.launchPort?.value || "9222";
   const proxy = cdpEl.launchProxy?.value.trim() || "";
   const profileDir = document.querySelector("#cdp-launch-profile-dir")?.value.trim() || "Default";
+  const editIdxEl = document.querySelector("#cdp-launch-edit-idx");
+  const editIdx = editIdxEl?.value ? parseInt(editIdxEl.value, 10) : -1;
   const list = getSavedChromeInstances();
-  // 去重：同端口覆盖
-  const existingIdx = list.findIndex(i => i.port === port);
   const newInst = { name: name || `Chrome调试 (${port})`, profilePath, port, proxy, profileDir };
-  if (existingIdx >= 0) {
-    list[existingIdx] = newInst;
+  if (editIdx >= 0 && editIdx < list.length) {
+    // 编辑模式：直接替换
+    list[editIdx] = newInst;
   } else {
-    list.push(newInst);
+    // 新增模式：同端口+同路径覆盖，否则新增
+    const existingIdx = list.findIndex(i => i.port === port && i.profilePath === profilePath);
+    if (existingIdx >= 0) list[existingIdx] = newInst;
+    else list.push(newInst);
   }
   saveChromeInstances(list);
   renderSavedChromeInstances();
-  showToast("配置已保存");
+  // 清除编辑状态
+  if (editIdxEl) editIdxEl.value = "";
+  const cancelBtn = document.querySelector("#cdp-launch-cancel-edit");
+  if (cancelBtn) cancelBtn.classList.add("hidden");
+  const summary = document.querySelector("#cdp-launch-summary");
+  if (summary) summary.textContent = "+ 添加新实例配置";
+  showToast(editIdx >= 0 ? "配置已更新" : "配置已保存");
 });
 
 cdpEl.launchBtn?.addEventListener("click", async () => {
@@ -5537,7 +5581,7 @@ cdpEl.launchBtn?.addEventListener("click", async () => {
     // 如果有名称，自动保存配置
     if (name) {
       const list = getSavedChromeInstances();
-      const existingIdx = list.findIndex(i => i.port === port);
+      const existingIdx = list.findIndex(i => i.port === port && i.profilePath === profilePath);
       const newInst = { name, profilePath, port, proxy: proxy || "", profileDir: profileDirectory || "Default" };
       if (existingIdx >= 0) list[existingIdx] = newInst;
       else list.push(newInst);
