@@ -3611,6 +3611,39 @@ export function createMonitorServer({
               const evalJS = (expr) => sendCDP('Runtime.evaluate', { expression: expr, returnByValue: true, awaitPromise: true });
 
               await sendCDP('Page.enable', {});
+              // 启用 Network 拦截，捕获 /api/post/item_list/ 响应获取 createTime
+              await sendCDP('Network.enable', {});
+              // 收集 item_list API 返回的视频信息（含 createTime）
+              const apiVideoInfo = new Map(); // videoId -> { createTime, desc }
+              const networkHandler = (e) => {
+                const d = JSON.parse(e.data);
+                if (d.method === 'Network.responseReceived') {
+                  const url = d.params?.response?.url || '';
+                  if (url.includes('/api/post/item_list/')) {
+                    const reqId = d.params.requestId;
+                    // 异步获取响应体
+                    sendCDP('Network.getResponseBody', { requestId: reqId }).then(resp => {
+                      try {
+                        const body = resp?.result?.body;
+                        if (body) {
+                          const data = JSON.parse(body);
+                          const items = data.itemList || [];
+                          for (const item of items) {
+                            if (item.id && item.createTime) {
+                              apiVideoInfo.set(String(item.id), {
+                                createTime: String(item.createTime),
+                                desc: item.desc || '',
+                              });
+                            }
+                          }
+                        }
+                      } catch {}
+                    }).catch(() => {});
+                  }
+                }
+              };
+              ws.addEventListener('message', networkHandler);
+
               await sendCDP('Page.navigate', { url: `https://www.tiktok.com/@${username}` });
               emit("progress", { taskId, step: "loading", message: "页面加载中..." });
               await new Promise(r => setTimeout(r, 3000));
@@ -3648,7 +3681,7 @@ export function createMonitorServer({
                       const items = [...document.querySelectorAll('a[href*="/video/"]')].map(a => {
                         const container = a.closest('[data-e2e="user-post-item"]') || a.parentElement;
                         const img = container?.querySelector('img');
-                        return { url: a.href, title: (img?.alt || '').substring(0, 200), cover: img?.src || '' };
+                        return { url: a.href, title: (img?.alt || '').substring(0, 200), cover: img?.src || '', videoId: a.href.match(/\\/video\\/(\\d+)/)?.[1] || '' };
                       });
                       return JSON.stringify(items);
                     })()
@@ -3658,12 +3691,15 @@ export function createMonitorServer({
                   for (const v of allItems) {
                     if (!allVideoUrls.has(v.url)) {
                       allVideoUrls.add(v.url);
+                      // 从 API 响应中获取 createTime
+                      const apiInfo = v.videoId ? apiVideoInfo.get(v.videoId) : null;
                       // 存入数据库（按 source_url 去重）
                       store.upsertRemixVideoBySourceUrl({
                         creatorId: creator.id,
                         sourceUrl: v.url,
                         title: v.title || null,
                         thumbUrl: v.cover || null,
+                        createTime: apiInfo?.createTime || null,
                       });
                       newCount++;
                     }
@@ -3685,6 +3721,23 @@ export function createMonitorServer({
               // 最终提取达人信息
               const infoResult = await evalJS(`(() => { const n = document.querySelector('[data-e2e="user-info"] h1')?.textContent || document.querySelector('h1')?.textContent || ''; const f = document.querySelector('[data-e2e="followers-count"]')?.textContent || ''; const v = document.querySelector('[data-e2e="video-count"]')?.textContent || ''; return JSON.stringify({nickname:n, followerCount:f, videoCount:v}); })()`);
               const info = JSON.parse(infoResult?.result?.result?.value || '{}');
+
+              // 移除 network 监听器
+              ws.removeEventListener('message', networkHandler);
+
+              // 用 apiVideoInfo 中收集到的 createTime 更新数据库中已有的视频
+              if (apiVideoInfo.size > 0) {
+                const existingVideos = store.listRemixVideos(creator.id);
+                for (const v of existingVideos) {
+                  if (!v.createTime && v.sourceUrl) {
+                    const vid = v.sourceUrl.match(/\/video\/(\d+)/)?.[1];
+                    if (vid && apiVideoInfo.has(vid)) {
+                      const info = apiVideoInfo.get(vid);
+                      try { store.db.prepare("UPDATE remix_videos SET create_time = ? WHERE id = ?").run(info.createTime, v.id); } catch {}
+                    }
+                  }
+                }
+              }
 
               ws.close();
               await fetch(`${cdpBase}/json/close/${newTab.id}`, { signal: AbortSignal.timeout(5000) }).catch(() => {});

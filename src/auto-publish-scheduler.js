@@ -329,7 +329,7 @@ export class AutoPublishScheduler extends EventTarget {
       for (const creator of creators) {
         // 查该达人所有有 source_url 的视频（不管是否已下载）
         const videos = this.store.db
-          .prepare("SELECT id, source_url, created_at FROM remix_videos WHERE creator_id = ? AND source_url IS NOT NULL AND source_url != '' ORDER BY created_at ASC")
+          .prepare("SELECT id, source_url, create_time, created_at FROM remix_videos WHERE creator_id = ? AND source_url IS NOT NULL AND source_url != '' ORDER BY COALESCE(create_time, '9999999999') ASC, created_at ASC")
           .all(creator.creator_id);
 
         for (const video of videos) {
@@ -1248,7 +1248,13 @@ export class AutoPublishScheduler extends EventTarget {
 
   _listPipelinesByStatus(status) {
     const rows = this.store.db
-      .prepare("SELECT * FROM auto_remix_publish_pipeline WHERE status = ? ORDER BY created_at ASC")
+      .prepare(`
+        SELECT p.*, v.create_time AS video_create_time
+        FROM auto_remix_publish_pipeline p
+        LEFT JOIN remix_videos v ON v.id = p.source_video_id
+        WHERE p.status = ?
+        ORDER BY COALESCE(v.create_time, p.created_at) ASC
+      `)
       .all(status);
     return rows.map((r) => this._mapPipeline(r));
   }
