@@ -8019,6 +8019,9 @@ const autoPublish = {
     filterStatus: () => document.querySelector('#ap-filter-status'),
     refreshPipeline: () => document.querySelector('#ap-refresh-pipeline'),
     refreshMonitor: () => document.querySelector('#ap-refresh-monitor'),
+    refreshDaily: () => document.querySelector('#ap-refresh-daily'),
+    dailyList: () => document.querySelector('#ap-daily-schedule-list'),
+    dailySummary: () => document.querySelector('#ap-daily-summary'),
     refreshTree: () => document.querySelector('#ap-refresh-tree'),
     accountTree: () => document.querySelector('#ap-account-tree'),
     historyTitle: () => document.querySelector('#ap-history-title'),
@@ -8035,6 +8038,7 @@ const autoPublish = {
     this.fetchProfiles();
     this.fetchCdpInstances();
     this.fetchPipelineTasks();
+    this.fetchDailySchedule();
     this.fetchPublishLogs();
     this.fetchMatrices().then(() => {
       this.fetchMonitorData();
@@ -8066,6 +8070,7 @@ const autoPublish = {
   _bindEvents() {
     this.el.refreshPipeline()?.addEventListener('click', () => this.fetchPipelineTasks());
     this.el.refreshMonitor()?.addEventListener('click', () => this.fetchMonitorData());
+    this.el.refreshDaily()?.addEventListener('click', () => this.fetchDailySchedule());
     this.el.refreshTree()?.addEventListener('click', () => { this.fetchMatrices().then(() => this.renderAccountTree()); });
     this.el.filterMatrix()?.addEventListener('change', (e) => {
       this.filterMatrix = e.target.value;
@@ -8096,6 +8101,7 @@ const autoPublish = {
       // 仅在 auto-publish tab 可见时轮询
       if (!document.querySelector('.auto-publish-tab')?.classList.contains('hidden')) {
         this.fetchPipelineTasks({ quiet: true });
+        this.fetchDailySchedule({ quiet: true });
         this.fetchPublishLogs({ quiet: true });
         // 轮询时静默更新 matrices 数据，刷新监控区
         request('/api/auto-publish/matrices').then(data => {
@@ -8167,6 +8173,77 @@ const autoPublish = {
       this.monitorData = [];
       this.renderMonitor();
     }
+  },
+
+  // ---- 今日排期资源池 ----
+  async fetchDailySchedule({ quiet = false } = {}) {
+    try {
+      const data = await request('/api/auto-publish/daily-schedule');
+      this.dailySchedule = data.items || [];
+      this.dailySummary = data.summary || {};
+      this.renderDailySchedule();
+    } catch {
+      if (!quiet) {
+        this.dailySchedule = [];
+        this.renderDailySchedule();
+      }
+    }
+  },
+
+  renderDailySchedule() {
+    const container = this.el.dailyList?.();
+    const summaryEl = this.el.dailySummary?.();
+    if (!container) return;
+
+    if (summaryEl && this.dailySummary) {
+      const s = this.dailySummary;
+      summaryEl.textContent = `总计 ${s.total || 0} | 待发 ${s.scheduled || 0} | 已发 ${s.published || 0} | 失败 ${s.failed || 0} | 待排 ${s.remixed || 0}`;
+    }
+
+    if (!this.dailySchedule?.length) {
+      container.innerHTML = '<div class="empty-state compact" style="padding:16px;grid-column:1/-1;">今日暂无排期</div>';
+      return;
+    }
+
+    container.innerHTML = this.dailySchedule.map((item) => {
+      const status = item.status || 'pending';
+      const statusBadge = `<span class="ap-status-badge ${this.statusClass(status)}">${escapeHtml(status)}</span>`;
+      const time = item.scheduledAt ? formatDateTime(item.scheduledAt) : (item.executedAt ? formatDateTime(item.executedAt) : '—');
+      const title = item.materialTitle || '(未命名)';
+      // 清洗标题
+      let cleanTitle = title.replace(/^AI混剪\s*·\s*/, '').replace(/\s*→\s*\d+个矩阵$/, '');
+      const m = cleanTitle.match(/创作的\s*(.+)$/);
+      if (m) cleanTitle = m[1].trim();
+      cleanTitle = cleanTitle.replace(/\s+/g, ' ').trim().substring(0, 30) || '(未命名)';
+
+      const thumb = item.sourceThumbUrl
+        ? `<img src="${escapeHtml(item.sourceThumbUrl)}" style="width:48px;height:48px;object-fit:cover;border-radius:6px;flex-shrink:0;" onerror="this.style.display='none'" />`
+        : '<div style="width:48px;height:48px;background:#f1f5f9;border-radius:6px;display:flex;align-items:center;justify-content:center;flex-shrink:0;color:#94a3b8;font-size:11px;">—</div>';
+
+      const matrixName = item.matrixName || '—';
+      const accountName = item.accountName || '—';
+      const platform = item.platform || '';
+      const failInfo = item.failReason ? `<div style="font-size:10px;color:#dc2626;margin-top:2px;" title="${escapeHtml(item.failReason)}">${escapeHtml(item.failReason.substring(0, 30))}</div>` : '';
+      const videoLink = item.publishedVideoUrl ? `<a href="${escapeHtml(item.publishedVideoUrl)}" target="_blank" style="font-size:10px;color:#3b82f6;">查看↗</a>` : '';
+
+      // 状态颜色
+      const borderColor = status === 'success' ? '#22c55e' : status === 'failed' ? '#dc2626' : status === 'pending' || item.pipelineStatus === 'scheduled' ? '#3b82f6' : '#e2e8f0';
+
+      return `
+        <div style="border:1px solid ${borderColor};border-radius:8px;padding:8px;display:flex;gap:8px;align-items:flex-start;background:#fff;">
+          ${thumb}
+          <div style="flex:1;min-width:0;">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:4px;">
+              ${statusBadge}
+              <span style="font-size:10px;color:#64748b;white-space:nowrap;">${escapeHtml(time)}</span>
+            </div>
+            <div style="font-size:12px;font-weight:600;margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escapeHtml(cleanTitle)}">${escapeHtml(cleanTitle)} ${videoLink}</div>
+            <div style="font-size:10px;color:#94a3b8;margin-top:2px;">${escapeHtml(matrixName)} · ${escapeHtml(platform ? platform + '/' : '')}${escapeHtml(accountName)}</div>
+            ${failInfo}
+          </div>
+        </div>
+      `;
+    }).join('');
   },
 
   // ---- 流水线操作 ----

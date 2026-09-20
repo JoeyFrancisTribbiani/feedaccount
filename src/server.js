@@ -4355,6 +4355,66 @@ export function createMonitorServer({
           }
         }
 
+        // GET /api/auto-publish/daily-schedule — 今日排期资源池
+        if (request.method === "GET" && pathname === "/api/auto-publish/daily-schedule") {
+          const todayStr = new Date().toISOString().slice(0, 10);
+          // 查今天排期的所有 pipeline + 发布任务
+          const rows = store.db.prepare(`
+            SELECT
+              p.id AS task_id, p.status, p.fail_reason, p.attempt_count, p.matrix_id,
+              p.creator_id, p.source_video_id, p.profile_id, p.publish_job_id,
+              p.created_at, p.updated_at,
+              mm.name AS matrix_name,
+              ma.platform, ma.account_name, ma.id AS account_id,
+              j.scheduled_at, j.executed_at, j.status AS job_status,
+              j.published_video_id, j.published_video_url, j.error_message,
+              vm.title AS material_title, rv.thumb_url AS source_thumb_url,
+              c.name AS creator_name
+            FROM auto_remix_publish_pipeline p
+            LEFT JOIN media_matrices mm ON mm.id = COALESCE(p.matrix_id, (SELECT mp2.matrix_id FROM matrix_profiles mp2 WHERE mp2.profile_id = p.profile_id))
+            LEFT JOIN matrix_accounts ma ON ma.matrix_id = COALESCE(p.matrix_id, (SELECT mp2.matrix_id FROM matrix_profiles mp2 WHERE mp2.profile_id = p.profile_id))
+            LEFT JOIN remix_creators c ON c.id = p.creator_id
+            LEFT JOIN tk_publish_jobs j ON j.id = p.publish_job_id
+            LEFT JOIN tk_video_materials vm ON vm.id = j.material_id
+            LEFT JOIN remix_videos rv ON rv.id = p.source_video_id
+            WHERE p.status IN ('scheduled', 'published', 'remixed')
+              AND (j.scheduled_at LIKE ? OR j.executed_at LIKE ? OR p.updated_at LIKE ?)
+            ORDER BY COALESCE(j.scheduled_at, p.updated_at) ASC
+          `).all(`${todayStr}%`, `${todayStr}%`, `${todayStr}%`);
+
+          const result = rows.map(r => ({
+            taskId: r.task_id,
+            status: r.job_status || r.status,
+            pipelineStatus: r.status,
+            matrixId: r.matrix_id,
+            matrixName: r.matrix_name,
+            platform: r.platform,
+            accountName: r.account_name,
+            accountId: r.account_id,
+            creatorName: r.creator_name,
+            sourceThumbUrl: r.source_thumb_url,
+            materialTitle: r.material_title,
+            scheduledAt: r.scheduled_at,
+            executedAt: r.executed_at,
+            publishedVideoId: r.published_video_id,
+            publishedVideoUrl: r.published_video_url,
+            failReason: r.error_message || r.fail_reason,
+            attemptCount: Number(r.attempt_count || 0),
+          }));
+
+          // 汇总统计
+          const summary = {
+            total: result.length,
+            scheduled: result.filter(r => r.status === 'pending' || r.pipelineStatus === 'scheduled').length,
+            published: result.filter(r => r.status === 'success').length,
+            failed: result.filter(r => r.status === 'failed' || r.pipelineStatus === 'failed').length,
+            remixed: result.filter(r => r.pipelineStatus === 'remixed').length,
+          };
+
+          sendJson(response, 200, { items: result, summary });
+          return;
+        }
+
         // GET /api/auto-publish/pipeline
         if (request.method === "GET" && pathname === "/api/auto-publish/pipeline") {
           const url = new URL(request.url, "http://localhost");

@@ -1576,6 +1576,20 @@
               </div>
             </div>
 
+            <!-- ========== 每日排期资源池 ========== -->
+            <div class="ap-pipeline-section" id="ap-daily-schedule-section">
+              <div class="ap-section-head">
+                <h3>今日排期资源池</h3>
+                <div style="display:flex;gap:8px;align-items:center;">
+                  <span id="ap-daily-summary" style="font-size:11px;color:#64748b;"></span>
+                  <button id="ap-refresh-daily" class="link-btn" type="button">刷新</button>
+                </div>
+              </div>
+              <div id="ap-daily-schedule-list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:8px;">
+                <div class="empty-state compact" style="padding:16px;">加载中…</div>
+              </div>
+            </div>
+
             <!-- ========== 上半部分：全部发布历史 ========== -->
             <div class="ap-pipeline-section">
               <div class="ap-section-head">
