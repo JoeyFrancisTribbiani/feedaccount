@@ -125,9 +125,9 @@ export class TiktokPublisher {
         // 最后: 其他确认弹窗
         for (var b of btns) {
           var t = b.innerText.trim();
-          if (['Got it', 'OK', 'Continue', '确定', '继续', '我知道了'].includes(t)) {
-            var inModal = b.closest('[role="dialog"], [class*="modal"], [class*="Modal"], [class*="overlay"], [class*="TUX"]');
-            if (inModal) { b.click(); return 'modal ' + t; }
+          if (['Got it', 'OK', 'Continue', '确定', '继续', '我知道了', 'I got it', 'Agree', 'Accept', '同意'].includes(t)) {
+            b.click();
+            return t;
           }
         }
         return null;
@@ -332,8 +332,32 @@ export class TiktokPublisher {
     let publishedVideoUrl = '';
     let publishedVideoId = '';
 
+    // 点击 Post 后先清理可能弹出的弹窗（政策更新、内容检查等）
+    await page.waitForTimeout(2000);
+    await this._dismissDialogs();
+    progress('Post 后弹窗已清理');
+
+    // 如果还在发布页面（没跳转），可能是 Post 没点到或弹窗挡住了，重试一次
+    const postUrl1 = page.url();
+    if (/tiktok\.com\/(tiktokstudio\/upload|upload)/.test(postUrl1)) {
+      progress('仍在发布页面，重试点击 Post…');
+      const retryBtn = await this._findPostButton();
+      if (retryBtn) {
+        const retryDisabled = await retryBtn.evaluate(el =>
+          el.disabled || el.getAttribute('aria-disabled') === 'true'
+        ).catch(() => true);
+        if (!retryDisabled) {
+          await retryBtn.click({ force: true }).catch(() => {});
+          await page.waitForTimeout(3000);
+          await this._dismissDialogs();
+        }
+      }
+    }
+
     for (let i = 0; i < 60; i++) {
       await page.waitForTimeout(2000);
+      // 每轮也检测一下弹窗
+      if (i % 5 === 0) await this._dismissDialogs();
       const bodyText = await page.innerText('body').catch(() => '');
       const url = page.url();
       progress(`等待发布确认… (${i * 2}s)`);
