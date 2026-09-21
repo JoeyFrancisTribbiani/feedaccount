@@ -1040,6 +1040,7 @@ export class AutoPublishScheduler extends EventTarget {
           this._updatePipeline(pipeline.id, {
             status: "remixed",
             publishJobId: null,
+            remixTaskId: null,
             failReason: `排期超过2小时未成功(${job.status})，重新排期: ${job.errorMessage || ""}`,
           });
           this.store.db.prepare("DELETE FROM tk_publish_jobs WHERE id = ?").run(job.id);
@@ -1063,6 +1064,7 @@ export class AutoPublishScheduler extends EventTarget {
         this._updatePipeline(pipeline.id, {
           status: "remixed",
           publishJobId: null,
+          remixTaskId: null,
           attemptCount: 0,
           failReason: `失败超过2小时，重新排期`,
         });
