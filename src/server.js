@@ -646,14 +646,23 @@ export function createMonitorServer({
         let daemonTask = null;
         const pollStart = Date.now();
         let pollCount = 0;
+        let consecutiveFailures = 0;
         while (Date.now() - pollStart < 3600000) {
           await new Promise((r) => setTimeout(r, 5000));
           pollCount++;
           let statusRes;
           try {
             statusRes = await fetch(`${daemonUrl}/api/tasks/${daemonTaskNo}`);
+            consecutiveFailures = 0;
           } catch (pollErr) {
-            store.logCdpEvent(null, "warning", `轮询第${pollCount}次失败: ${pollErr.message}`, null, taskId);
+            consecutiveFailures++;
+            store.logCdpEvent(null, "warning", `轮询第${pollCount}次失败(${consecutiveFailures}连): ${pollErr.message}`, null, taskId);
+            // 连续6次（30秒）失败，判定 daemon 崩溃
+            if (consecutiveFailures >= 6) {
+              store.updateRemixTask(taskId, { status: "FAILED", errorMessage: `daemon 连续${consecutiveFailures}次无响应，判定崩溃: ${pollErr.message}`, completedAt: nowIso() });
+              store.logCdpEvent(null, "error", `daemon崩溃，任务失败: 连续${consecutiveFailures}次轮询失败`, null, taskId);
+              return;
+            }
             continue;
           }
           daemonTask = await statusRes.json();
