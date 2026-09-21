@@ -256,7 +256,8 @@ export class TiktokPublishManager extends EventTarget {
       }
 
       // 4. 创建 TikTok post 任务
-      this._log(jobId, "info", `iOS Farm: 创建发布任务, udid=${udid}, account=${tiktokAccount || "默认"}, 标题=${publishTitle.substring(0, 50)}`);
+      // account 不传——iPhone 上 TikTok 已登录，直接用当前账号发布，不切换
+      this._log(jobId, "info", `iOS Farm: 创建发布任务, udid=${udid}, account=当前登录账号, 标题=${publishTitle.substring(0, 50)}`);
       const schedule = await this.iosFarm.createPostSchedule({
         deviceUdid: udid,
         media: [{
@@ -264,7 +265,7 @@ export class TiktokPublishManager extends EventTarget {
           name: asset.originalName || fileName,
           mimeType: asset.mimeType || "video/mp4",
         }],
-        account: tiktokAccount,
+        account: "",
         caption: publishTitle,
         destination: "publish",
         timing: { kind: "now" },

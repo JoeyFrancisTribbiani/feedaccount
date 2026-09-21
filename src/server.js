@@ -4670,6 +4670,116 @@ export function createMonitorServer({
           return;
         }
 
+        // POST /api/auto-publish/manual-add — 手动添加视频到待发布池
+        if (request.method === "POST" && pathname === "/api/auto-publish/manual-add") {
+          const body = await readJson(request);
+          if (!body.matrixId || !body.remixTaskId) {
+            sendJson(response, 400, { error: "缺少 matrixId / remixTaskId" });
+            return;
+          }
+
+          // 查混剪成品
+          const remixTask = store.getRemixTask(body.remixTaskId);
+          if (!remixTask || !remixTask.outputUrl) {
+            sendJson(response, 400, { error: "混剪成品视频不存在" });
+            return;
+          }
+
+          // 查矩阵的 profile_id（tiktok 平台账号绑定的实例）
+          const matrixProfile = store.db
+            .prepare("SELECT profile_id FROM matrix_profiles WHERE matrix_id = ?")
+            .all(body.matrixId);
+          if (!matrixProfile.length) {
+            sendJson(response, 400, { error: "该矩阵没有绑定的发布实例" });
+            return;
+          }
+
+          // 查矩阵配置
+          const cfg = store.db
+            .prepare("SELECT * FROM matrix_auto_publish_config WHERE matrix_id = ?")
+            .get(body.matrixId);
+          const hashtags = cfg?.hashtags_json
+            ? (typeof cfg.hashtags_json === "string" ? JSON.parse(cfg.hashtags_json) : cfg.hashtags_json)
+            : [];
+
+          // 为每个绑定的 profile 创建 pipeline + publish job
+          const created = [];
+          for (const mp of matrixProfile) {
+            const profileId = mp.profile_id;
+
+            // 创建 pipeline（直接 remixed 状态，跳过混剪步骤）
+            const pipelineId = `ap_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+            const ts = new Date().toISOString();
+            store.db.prepare(`
+              INSERT INTO auto_remix_publish_pipeline (id, creator_id, source_video_id, remix_task_id, profile_id, publish_job_id, status, fail_reason, attempt_count, source_url, matrix_id, created_at, updated_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `).run(
+              pipelineId, "manual", body.remixTaskId, body.remixTaskId,
+              profileId, null, "remixed", null, 0, null, body.matrixId, ts, ts
+            );
+
+            // 创建 material
+            const material = store.createTkMaterial({
+              filePath: remixTask.outputUrl,
+              title: remixTask.title || "手动添加发布视频",
+              hashtags: Array.isArray(hashtags) ? hashtags : [],
+              privacyLevel: cfg?.privacy_level || "public",
+              category: "auto-publish",
+            });
+
+            // 计算发布时间
+            let scheduledAt;
+            if (body.publishTime) {
+              // 用户指定了发布时间（北京时间，格式 "HH:MM" 或 ISO）
+              if (/^\d{2}:\d{2}$/.test(body.publishTime)) {
+                const now = new Date();
+                const beijingNow = new Date(now.getTime() + 8 * 60 * 60 * 1000);
+                const [h, m] = body.publishTime.split(":").map(Number);
+                const today = beijingNow.getUTCFullYear() + "-" +
+                  String(beijingNow.getUTCMonth() + 1).padStart(2, "0") + "-" +
+                  String(beijingNow.getUTCDate()).padStart(2, "0");
+                scheduledAt = new Date(`${today}T${body.publishTime}:00+08:00`).toISOString();
+                // 如果时间已过，排到明天
+                if (new Date(scheduledAt) < now) {
+                  const tomorrow = new Date(beijingNow.getTime() + 24 * 60 * 60 * 1000);
+                  const tomorrowStr = tomorrow.getUTCFullYear() + "-" +
+                    String(tomorrow.getUTCMonth() + 1).padStart(2, "0") + "-" +
+                    String(tomorrow.getUTCDate()).padStart(2, "0");
+                  scheduledAt = new Date(`${tomorrowStr}T${body.publishTime}:00+08:00`).toISOString();
+                }
+              } else {
+                scheduledAt = new Date(body.publishTime).toISOString();
+              }
+            } else {
+              // 没指定时间，用当前时间（立即排期）
+              scheduledAt = new Date().toISOString();
+            }
+
+            // 创建 publish job
+            const job = store.createTkPublishJob({
+              accountId: profileId,
+              profileId,
+              materialId: material.id,
+              scheduledAt,
+              status: "pending",
+            });
+
+            // 更新 pipeline
+            store.db.prepare(`
+              UPDATE auto_remix_publish_pipeline SET publish_job_id = ?, status = 'scheduled', updated_at = ?
+              WHERE id = ?
+            `).run(job.id, new Date().toISOString(), pipelineId);
+
+            store.logCdpEvent(null, "info",
+              `手动添加发布: pipeline=${pipelineId}, job=${job.id}, matrix=${body.matrixId}, profile=${profileId}, scheduledAt=${scheduledAt}`);
+
+            created.push({ pipelineId, jobId: job.id, profileId, scheduledAt });
+          }
+
+          sendJson(response, 200, { success: true, created });
+          return;
+        }
+
         // GET /api/auto-publish/pipeline
         if (request.method === "GET" && pathname === "/api/auto-publish/pipeline") {
           const url = new URL(request.url, "http://localhost");

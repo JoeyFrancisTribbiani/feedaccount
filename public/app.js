@@ -8293,6 +8293,7 @@ const autoPublish = {
     refreshPipeline: () => document.querySelector('#ap-refresh-pipeline'),
     refreshMonitor: () => document.querySelector('#ap-refresh-monitor'),
     refreshDaily: () => document.querySelector('#ap-refresh-daily'),
+    manualAddBtn: () => document.querySelector('#ap-manual-add'),
     dailyList: () => document.querySelector('#ap-daily-schedule-list'),
     dailySummary: () => document.querySelector('#ap-daily-summary'),
     refreshTree: () => document.querySelector('#ap-refresh-tree'),
@@ -8344,6 +8345,8 @@ const autoPublish = {
     this.el.refreshPipeline()?.addEventListener('click', () => this.fetchPipelineTasks());
     this.el.refreshMonitor()?.addEventListener('click', () => this.fetchMonitorData());
     this.el.refreshDaily()?.addEventListener('click', () => this.fetchDailySchedule());
+    this.el.manualAddBtn?.()?.addEventListener('click', () => this.openManualAddModal());
+    document.getElementById('manual-add-submit')?.addEventListener('click', () => this.submitManualAdd());
     this.el.refreshTree()?.addEventListener('click', () => { this.fetchMatrices().then(() => this.renderAccountTree()); });
     this.el.filterMatrix()?.addEventListener('change', (e) => {
       this.filterMatrix = e.target.value;
@@ -8513,6 +8516,57 @@ const autoPublish = {
         </div>
       `;
     }).join('');
+  },
+
+  // ---- 手动添加到待发布池 ----
+  async openManualAddModal() {
+    const modal = document.getElementById('manual-add-modal');
+    const matrixSel = document.getElementById('manual-add-matrix');
+    const videoSel = document.getElementById('manual-add-video');
+    const timeInput = document.getElementById('manual-add-time');
+    if (!modal) return;
+
+    // 填充矩阵列表
+    matrixSel.innerHTML = '<option value="">请选择矩阵</option>' +
+      (this.matrices || []).map(m => `<option value="${escapeHtml(m.id)}">${escapeHtml(m.name)}</option>`).join('');
+
+    // 加载已完成的混剪任务
+    videoSel.innerHTML = '<option value="">加载中…</option>';
+    try {
+      const tasks = await request('/api/remix/tasks');
+      const done = (tasks || []).filter(t => t.status === 'DONE' && t.outputUrl);
+      videoSel.innerHTML = '<option value="">请选择视频</option>' +
+        done.map(t => `<option value="${escapeHtml(t.id)}">${escapeHtml((t.title || t.id).substring(0, 50))} (${formatDateTime(t.completedAt || t.createdAt)})</option>`).join('');
+    } catch (e) {
+      videoSel.innerHTML = `<option value="">加载失败: ${escapeHtml(e.message)}</option>`;
+    }
+
+    timeInput.value = '';
+    modal.style.display = 'flex';
+  },
+
+  async submitManualAdd() {
+    const matrixId = document.getElementById('manual-add-matrix')?.value;
+    const remixTaskId = document.getElementById('manual-add-video')?.value;
+    const publishTime = document.getElementById('manual-add-time')?.value || '';
+
+    if (!matrixId) { showToast('请选择矩阵', true); return; }
+    if (!remixTaskId) { showToast('请选择视频', true); return; }
+
+    if (!confirm(`确认添加到待发布池？\n矩阵: ${this.matrices.find(m => m.id === matrixId)?.name || matrixId}\n发布时间: ${publishTime || '立即排期'}`)) return;
+
+    try {
+      const res = await request('/api/auto-publish/manual-add', {
+        method: 'POST',
+        body: JSON.stringify({ matrixId, remixTaskId, publishTime }),
+      });
+      showToast(`已添加 ${res.created?.length || 0} 个发布任务到待发布池`);
+      document.getElementById('manual-add-modal').style.display = 'none';
+      await this.fetchDailySchedule();
+      await this.fetchPipelineTasks({ quiet: true });
+    } catch (e) {
+      showToast(`添加失败: ${e.message}`, true);
+    }
   },
 
   // ---- 流水线操作 ----

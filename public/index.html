@@ -1572,6 +1572,7 @@
                 <h3>今日排期资源池</h3>
                 <div style="display:flex;gap:8px;align-items:center;">
                   <span id="ap-daily-summary" style="font-size:11px;color:#64748b;"></span>
+                  <button id="ap-manual-add" class="button button-primary" type="button" style="font-size:11px;padding:2px 10px;">手动添加</button>
                   <button id="ap-refresh-daily" class="link-btn" type="button">刷新</button>
                 </div>
               </div>
@@ -1898,6 +1899,37 @@
       <div style="position:relative;width:100%;height:100%;display:flex;align-items:center;justify-content:center;">
         <img id="image-lightbox-img" src="" style="max-width:95vw;max-height:90vh;object-fit:contain;" />
         <button id="image-lightbox-close" type="button" style="position:absolute;top:16px;right:16px;font-size:24px;color:#fff;background:none;border:none;cursor:pointer;">×</button>
+      </div>
+    </div>
+
+    <!-- 手动添加到待发布池 弹窗 -->
+    <div id="manual-add-modal" class="modal-overlay" style="display:none;">
+      <div class="modal" style="max-width:500px;">
+        <div class="modal-header">
+          <h3>手动添加到待发布池</h3>
+          <button type="button" class="modal-close" onclick="document.getElementById('manual-add-modal').style.display='none'">×</button>
+        </div>
+        <div style="padding:16px;">
+          <div style="margin-bottom:12px;">
+            <label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px;">选择矩阵</label>
+            <select id="manual-add-matrix" style="width:100%;padding:8px;border:1px solid #e2e8f0;border-radius:6px;">
+              <option value="">请选择矩阵</option>
+            </select>
+          </div>
+          <div style="margin-bottom:12px;">
+            <label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px;">选择混剪成品视频</label>
+            <select id="manual-add-video" style="width:100%;padding:8px;border:1px solid #e2e8f0;border-radius:6px;max-height:200px;">
+              <option value="">请选择视频</option>
+            </select>
+            <div style="font-size:10px;color:#94a3b8;margin-top:2px;">仅显示已完成的混剪任务</div>
+          </div>
+          <div style="margin-bottom:12px;">
+            <label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px;">发布时间（北京时间，留空则立即排期）</label>
+            <input type="time" id="manual-add-time" style="width:100%;padding:8px;border:1px solid #e2e8f0;border-radius:6px;" />
+            <div style="font-size:10px;color:#94a3b8;margin-top:2px;">指定今天的时间点，已过则排到明天</div>
+          </div>
+          <button id="manual-add-submit" class="button button-primary" type="button" style="width:100%;padding:10px;">添加到待发布池</button>
+        </div>
       </div>
     </div>
 
