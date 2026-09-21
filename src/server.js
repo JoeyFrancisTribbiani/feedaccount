@@ -639,28 +639,44 @@ export function createMonitorServer({
         if (!taskRes.ok || !daemonResData.taskNo) throw new Error(`提交 AI 混剪任务失败: ${daemonResData.error}`);
         const daemonTaskNo = daemonResData.taskNo;
         activeDaemonTasks.set(taskId, { daemonUrl, daemonTaskNo });
+        store.logCdpEvent(null, "info", `AI混剪任务已提交到daemon: taskNo=${daemonTaskNo}, daemonUrl=${daemonUrl}, fileIds=${JSON.stringify(fileIds)}`, null, taskId);
 
         // Step 3: 轮询任务状态
         let completed = false;
         let daemonTask = null;
         const pollStart = Date.now();
+        let pollCount = 0;
         while (Date.now() - pollStart < 3600000) {
           await new Promise((r) => setTimeout(r, 5000));
-          const statusRes = await fetch(`${daemonUrl}/api/tasks/${daemonTaskNo}`);
+          pollCount++;
+          let statusRes;
+          try {
+            statusRes = await fetch(`${daemonUrl}/api/tasks/${daemonTaskNo}`);
+          } catch (pollErr) {
+            store.logCdpEvent(null, "warning", `轮询第${pollCount}次失败: ${pollErr.message}`, null, taskId);
+            continue;
+          }
           daemonTask = await statusRes.json();
+          // 每30秒（6轮）输出一次轮询状态
+          if (pollCount % 6 === 0) {
+            store.logCdpEvent(null, "info", `轮询中(${pollCount}次, ${Math.round((Date.now()-pollStart)/1000)}s): status=${daemonTask.status}, progress=${daemonTask.progress||'?'}, outputs=${(daemonTask.outputs||[]).length}个`, null, taskId);
+          }
           if (daemonTask.status === "completed" || daemonTask.status === "failed") {
             completed = daemonTask.status === "completed";
+            store.logCdpEvent(null, "info", `daemon任务结束: status=${daemonTask.status}, 耗时=${Math.round((Date.now()-pollStart)/1000)}s, outputs=${JSON.stringify(daemonTask.outputs||[]).substring(0,500)}`, null, taskId);
             break;
           }
         }
 
         if (!completed || !daemonTask) {
           store.updateRemixTask(taskId, { status: "FAILED", errorMessage: "AI 混剪任务超时或失败", completedAt: nowIso() });
+          store.logCdpEvent(null, "error", `daemon任务未完成: completed=${completed}, pollCount=${pollCount}, finalStatus=${daemonTask?.status}`, null, taskId);
           return;
         }
 
         // Step 4: 从 daemon 输出中找到文件（视频或图片或分段脚本）并下载到本地
         const fileOutputs = (daemonTask.outputs || []).filter((o) => o.type === "file" || o.type === "image" || o.type === "segment_script");
+        store.logCdpEvent(null, "info", `daemon返回outputs: ${(daemonTask.outputs||[]).length}个, 过滤后fileOutputs: ${fileOutputs.length}个, types=${fileOutputs.map(o=>o.type).join(',')}`, null, taskId);
         let outputUrl = null;
 
         // 资源类型校验：根据方案配置的 resourceTypes 检查 AI 是否返回了对应类型的资源
@@ -864,9 +880,11 @@ export function createMonitorServer({
         // 分段脚本输出：下载 JSON 到本地，然后走本地拼接
         if (hasSegmentScripts) {
           const scriptOutput = fileOutputs.find((o) => o.type === "segment_script");
+          store.logCdpEvent(null, "info", `准备下载分段脚本: scriptOutput=${JSON.stringify(scriptOutput).substring(0,200)}`, null, taskId);
           if (scriptOutput) {
             try {
               const scriptDownloadRes = await fetch(`${daemonUrl}${scriptOutput.url}`);
+              store.logCdpEvent(null, "info", `分段脚本下载响应: HTTP ${scriptDownloadRes.status}, ok=${scriptDownloadRes.ok}`, null, taskId);
               if (scriptDownloadRes.ok) {
                 const buffer = Buffer.from(await scriptDownloadRes.arrayBuffer());
                 const scriptFileName = `ai_segment_script_${Date.now()}.json`;
