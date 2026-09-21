@@ -5255,7 +5255,9 @@ function renderCdpInstances() {
       <td><code>${escapeHtml(inst.cdpHost || 'localhost')}:${inst.cdpPort}</code></td>
       <td class="cdp-online-status"><span style="color:var(--text-muted);font-size:12px;">检测中…</span></td>
       <td>
+        <button class="button button-secondary" style="padding:2px 8px;font-size:11px;" onclick="window.cdpDaemonStart('${escapeHtml(inst.id)}')">启动守护</button>
         <button class="button button-secondary" style="padding:2px 8px;font-size:11px;" onclick="window.cdpDaemonRestart('${escapeHtml(inst.id)}')">重启守护</button>
+        <button class="button button-secondary" style="padding:2px 8px;font-size:11px;" onclick="window.cdpDaemonStop('${escapeHtml(inst.id)}')">停止守护</button>
         <button class="danger-button" style="padding:2px 8px;font-size:11px;" onclick="window.cdpDelete('${escapeHtml(inst.id)}')">删除</button>
       </td>
     </tr>`;
