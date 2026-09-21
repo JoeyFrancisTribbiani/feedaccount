@@ -322,8 +322,9 @@ export class AutoPublishScheduler extends EventTarget {
       const mp = this.store.db
         .prepare("SELECT profile_id FROM matrix_profiles WHERE matrix_id = ? LIMIT 1")
         .get(cfg.matrixId);
-      if (!mp?.profile_id) continue;
-      const profileId = mp.profile_id;
+      // 没有绑定 profile 时：如果开启了自动库存，用一个占位 profileId 让混剪能跑
+      const profileId = mp?.profile_id || (cfg.autoStock ? `nostock_${cfg.matrixId}` : null);
+      if (!profileId) continue;
 
       // 查矩阵关联的所有达人
       const creators = this.store.db.prepare(`
@@ -406,7 +407,8 @@ export class AutoPublishScheduler extends EventTarget {
     for (const cfg of configs) {
       const dailyStock = cfg.dailyStock ?? 3;
       const mp = this.store.db.prepare("SELECT profile_id FROM matrix_profiles WHERE matrix_id = ?").get(cfg.matrixId);
-      const profileId = mp?.profile_id || null;
+      // 没有绑定 profile 时：如果开启了自动库存，用占位 profileId
+      const profileId = mp?.profile_id || (cfg.autoStock ? `nostock_${cfg.matrixId}` : null);
 
       const stockCount = this.store.db.prepare(
         `SELECT COUNT(*) as cnt FROM auto_remix_publish_pipeline p
