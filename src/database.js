@@ -460,7 +460,9 @@ export class LocalDatabase {
       CREATE INDEX IF NOT EXISTS idx_auto_remix_publish_pipeline_creator ON auto_remix_publish_pipeline(creator_id);
     `);
 
-    this.#ensureColumn("cdp_logs", "task_id", "TEXT");
+    this.#ensureColumn("remix_creators", "platform_id", "TEXT");
+    this.#ensureColumn("remix_creators", "auto_download", "INTEGER DEFAULT 0");
+    this.#ensureColumn("remix_creators", "avatar", "TEXT");
 
     this.#ensureColumn("task_runs", "task_mode", "TEXT NOT NULL DEFAULT 'pixel'");
     this.#ensureColumn("task_runs", "workflow_mode", "TEXT NOT NULL DEFAULT 'feed_only'");
@@ -2182,10 +2184,25 @@ export class LocalDatabase {
   }
 
   // --- Remix 达人管理 ---
-  createRemixCreator({ name, platform = null }) {
+  createRemixCreator({ name, platform = null, platformId = null, autoDownload = false }) {
     const id = `rc_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     const ts = nowIso();
-    this.db.prepare(`INSERT INTO remix_creators (id, name, platform, created_at) VALUES (?, ?, ?, ?)`).run(id, name, platform, ts);
+    this.db.prepare(`INSERT INTO remix_creators (id, name, platform, platform_id, auto_download, created_at) VALUES (?, ?, ?, ?, ?, ?)`)
+      .run(id, name, platform, platformId, autoDownload ? 1 : 0, ts);
+    return this.getRemixCreator(id);
+  }
+
+  updateRemixCreator(id, { name, platform, platformId, autoDownload }) {
+    const sets = [];
+    const params = [];
+    if (name !== undefined) { sets.push("name = ?"); params.push(name); }
+    if (platform !== undefined) { sets.push("platform = ?"); params.push(platform); }
+    if (platformId !== undefined) { sets.push("platform_id = ?"); params.push(platformId); }
+    if (autoDownload !== undefined) { sets.push("auto_download = ?"); params.push(autoDownload ? 1 : 0); }
+    if (!sets.length) return this.getRemixCreator(id);
+    sets.push("created_at = created_at");
+    params.push(id);
+    this.db.prepare(`UPDATE remix_creators SET ${sets.join(", ")} WHERE id = ?`).run(...params);
     return this.getRemixCreator(id);
   }
 
@@ -2197,7 +2214,7 @@ export class LocalDatabase {
       FROM remix_creators c ORDER BY c.created_at DESC
     `).all();
     return rows.map((r) => ({
-      id: r.id, name: r.name, platform: r.platform, avatar: r.avatar,
+      id: r.id, name: r.name, platform: r.platform, platformId: r.platform_id, autoDownload: Boolean(r.auto_download), avatar: r.avatar,
       createdAt: r.created_at,
       _count: { videos: Number(r.video_count || 0), resources: Number(r.resource_count || 0) },
     }));
@@ -2205,7 +2222,7 @@ export class LocalDatabase {
 
   getRemixCreator(id) {
     const row = this.db.prepare(`SELECT * FROM remix_creators WHERE id = ?`).get(id);
-    return row ? { id: row.id, name: row.name, platform: row.platform, avatar: row.avatar, createdAt: row.created_at } : null;
+    return row ? { id: row.id, name: row.name, platform: row.platform, platformId: row.platform_id, autoDownload: Boolean(row.auto_download), avatar: row.avatar, createdAt: row.created_at } : null;
   }
 
   deleteRemixCreator(id) {

@@ -1139,7 +1139,16 @@
             </div>
             <div id="remix-add-creator-form" class="remix-add-form hidden">
               <input type="text" id="remix-creator-name" placeholder="对标达人名称" />
-              <input type="text" id="remix-creator-platform" placeholder="平台 (如 TikTok)" />
+              <select id="remix-creator-platform" style="padding:6px;border:1px solid #e2e8f0;border-radius:6px;">
+                <option value="">选择平台</option>
+                <option value="tiktok">TikTok</option>
+                <option value="instagram">Instagram</option>
+                <option value="youtube">YouTube</option>
+              </select>
+              <input type="text" id="remix-creator-platform-id" placeholder="平台ID (如 @username)" />
+              <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:#64748b;">
+                <input type="checkbox" id="remix-creator-auto-download" /> 自动下载主页全部视频
+              </label>
               <button id="remix-confirm-creator" class="button button-primary" type="button">确认</button>
               <button id="remix-cancel-creator" class="button button-secondary" type="button">取消</button>
             </div>
@@ -1899,6 +1908,41 @@
       <div style="position:relative;width:100%;height:100%;display:flex;align-items:center;justify-content:center;">
         <img id="image-lightbox-img" src="" style="max-width:95vw;max-height:90vh;object-fit:contain;" />
         <button id="image-lightbox-close" type="button" style="position:absolute;top:16px;right:16px;font-size:24px;color:#fff;background:none;border:none;cursor:pointer;">×</button>
+      </div>
+    </div>
+
+    <!-- 编辑对标达人弹窗 -->
+    <div id="creator-edit-modal" class="modal-overlay" style="display:none;z-index:10001;">
+      <div class="modal" style="max-width:450px;">
+        <div class="modal-header">
+          <h3>编辑对标达人</h3>
+          <button type="button" class="modal-close" onclick="document.getElementById('creator-edit-modal').style.display='none'">×</button>
+        </div>
+        <div style="padding:16px;">
+          <div style="margin-bottom:12px;">
+            <label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px;">达人名称</label>
+            <input type="text" id="creator-edit-name" style="width:100%;padding:8px;border:1px solid #e2e8f0;border-radius:6px;" />
+          </div>
+          <div style="margin-bottom:12px;">
+            <label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px;">平台</label>
+            <select id="creator-edit-platform" style="width:100%;padding:8px;border:1px solid #e2e8f0;border-radius:6px;">
+              <option value="">选择平台</option>
+              <option value="tiktok">TikTok</option>
+              <option value="instagram">Instagram</option>
+              <option value="youtube">YouTube</option>
+            </select>
+          </div>
+          <div style="margin-bottom:12px;">
+            <label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px;">平台ID (如 @username)</label>
+            <input type="text" id="creator-edit-platform-id" style="width:100%;padding:8px;border:1px solid #e2e8f0;border-radius:6px;" />
+          </div>
+          <div style="margin-bottom:12px;">
+            <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:#64748b;">
+              <input type="checkbox" id="creator-edit-auto-download" /> 自动下载主页全部视频
+            </label>
+          </div>
+          <button id="creator-edit-save" class="button button-primary" type="button" style="width:100%;padding:10px;">保存</button>
+        </div>
       </div>
     </div>
 

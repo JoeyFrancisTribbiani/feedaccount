@@ -2367,7 +2367,12 @@ export function createMonitorServer({
         if (request.method === "POST" && pathname === "/api/remix/creators") {
           const body = await readJson(request);
           if (!body.name) { sendJson(response, 400, { error: "缺少达人名称" }); return; }
-          sendJson(response, 200, store.createRemixCreator({ name: body.name, platform: body.platform || null }));
+          sendJson(response, 200, store.createRemixCreator({
+            name: body.name,
+            platform: body.platform || null,
+            platformId: body.platformId || null,
+            autoDownload: Boolean(body.autoDownload),
+          }));
           return;
         }
         const remixCreatorMatch = pathname.match(/^\/api\/remix\/creators\/([^/]+)$/);
@@ -2375,6 +2380,17 @@ export function createMonitorServer({
           const id = decodeURIComponent(remixCreatorMatch[1]);
           store.deleteRemixCreator(id);
           sendJson(response, 200, { ok: true });
+          return;
+        }
+        if (request.method === "PUT" && remixCreatorMatch) {
+          const id = decodeURIComponent(remixCreatorMatch[1]);
+          const body = await readJson(request);
+          sendJson(response, 200, store.updateRemixCreator(id, {
+            name: body.name,
+            platform: body.platform,
+            platformId: body.platformId,
+            autoDownload: body.autoDownload,
+          }));
           return;
         }
 

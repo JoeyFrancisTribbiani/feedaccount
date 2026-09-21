@@ -3419,9 +3419,10 @@ function renderRemixCreators() {
     <div class="remix-creator-item ${remix.selectedCreatorId === c.id ? "active" : ""}" data-id="${escapeHtml(c.id)}">
       <div class="remix-creator-info">
         <strong>${escapeHtml(c.name)}</strong>
-        <span>${escapeHtml(c.platform || "")} ${c._count?.videos || 0}视频 · ${c._count?.resources || 0}资源</span>
+        <span>${escapeHtml(c.platform || "")}${c.platformId ? " · " + escapeHtml(c.platformId) : ""} ${c.autoDownload ? ' · <span style="color:#22c55e;">自动下载</span>' : ""} · ${c._count?.videos || 0}视频 · ${c._count?.resources || 0}资源</span>
       </div>
       <div style="display:flex;align-items:center;gap:4px;">
+        <button class="button button-secondary" data-edit-creator="${escapeHtml(c.id)}" title="编辑" style="font-size:10px;padding:2px 6px;">编辑</button>
         <button class="button button-secondary remix-resume-dl-btn" data-resume-dl="${escapeHtml(c.id)}" data-creator-name="${escapeHtml(c.name)}" title="继续下载未完成的视频" style="font-size:10px;padding:2px 6px;">继续下载</button>
         <button class="remix-del-btn" data-del-creator="${escapeHtml(c.id)}" title="删除">×</button>
       </div>
@@ -3463,6 +3464,35 @@ function renderRemixCreators() {
         renderRemixResources();
       }
       await fetchRemixCreators();
+    });
+  });
+  // 绑定编辑按钮
+  remixEl.creatorsList.querySelectorAll("[data-edit-creator]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const creator = remix.creators.find((c) => c.id === btn.dataset.editCreator);
+      if (!creator) return;
+      document.querySelector("#creator-edit-name").value = creator.name || "";
+      document.querySelector("#creator-edit-platform").value = creator.platform || "";
+      document.querySelector("#creator-edit-platform-id").value = creator.platformId || "";
+      document.querySelector("#creator-edit-auto-download").checked = Boolean(creator.autoDownload);
+      document.querySelector("#creator-edit-modal").style.display = "flex";
+      document.querySelector("#creator-edit-save").onclick = async () => {
+        const name = document.querySelector("#creator-edit-name").value.trim();
+        if (!name) { showToast("名称不能为空", true); return; }
+        const platform = document.querySelector("#creator-edit-platform").value || null;
+        const platformId = document.querySelector("#creator-edit-platform-id").value.trim() || null;
+        const autoDownload = document.querySelector("#creator-edit-auto-download").checked;
+        try {
+          await request(`/api/remix/creators/${encodeURIComponent(creator.id)}`, {
+            method: "PUT", body: JSON.stringify({ name, platform, platformId, autoDownload }),
+          });
+          showToast("已保存");
+          document.querySelector("#creator-edit-modal").style.display = "none";
+          await fetchRemixCreators();
+          renderRemixCreators();
+        } catch (err) { showToast(`保存失败: ${err.message}`, true); }
+      };
     });
   });
   // 绑定继续下载按钮
@@ -4983,14 +5013,26 @@ function openTaskLogModal(taskId) {
       overlay.querySelector("#task-log-list").innerHTML = '<li class="muted-activity">加载失败</li>';
     });
 }
-remixEl.cancelCreator.addEventListener("click", () => { remixEl.addCreatorForm.classList.add("hidden"); remixEl.creatorName.value = ""; remixEl.creatorPlatform.value = ""; });
+remixEl.cancelCreator.addEventListener("click", () => {
+  remixEl.addCreatorForm.classList.add("hidden");
+  remixEl.creatorName.value = "";
+  remixEl.creatorPlatform.value = "";
+  document.querySelector("#remix-creator-platform-id").value = "";
+  document.querySelector("#remix-creator-auto-download").checked = false;
+});
 remixEl.confirmCreator.addEventListener("click", async () => {
   const name = remixEl.creatorName.value.trim();
   if (!name) return;
+  const platform = remixEl.creatorPlatform.value.trim() || null;
+  const platformId = document.querySelector("#remix-creator-platform-id").value.trim() || null;
+  const autoDownload = document.querySelector("#remix-creator-auto-download").checked;
   try {
-    const data = await request("/api/remix/creators", { method: "POST", body: JSON.stringify({ name, platform: remixEl.creatorPlatform.value.trim() || null }) });
+    const data = await request("/api/remix/creators", { method: "POST", body: JSON.stringify({ name, platform, platformId, autoDownload }) });
     remixEl.addCreatorForm.classList.add("hidden");
-    remixEl.creatorName.value = ""; remixEl.creatorPlatform.value = "";
+    remixEl.creatorName.value = "";
+    remixEl.creatorPlatform.value = "";
+    document.querySelector("#remix-creator-platform-id").value = "";
+    document.querySelector("#remix-creator-auto-download").checked = false;
     await fetchRemixCreators();
     remix.selectedCreatorId = data.id;
     await fetchRemixVideos(data.id);
