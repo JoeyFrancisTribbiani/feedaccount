@@ -4566,6 +4566,65 @@ export function createMonitorServer({
           return;
         }
 
+        // POST /api/ios-farm/save-draft — 上传图片到 iPhone 并保存为 TikTok 草稿
+        if (request.method === "POST" && pathname === "/api/ios-farm/save-draft") {
+          if (!iosFarmClient) { sendJson(response, 503, { error: "iOS Farm 未配置" }); return; }
+          const body = await readJson(request);
+          if (!body.udid || !body.filePath) {
+            sendJson(response, 400, { error: "缺少 udid 或 filePath" });
+            return;
+          }
+          try {
+            // 解析本地文件路径
+            let localPath = body.filePath;
+            if (localPath.startsWith("/data/")) {
+              localPath = path.resolve(THIS_DIR, "..", localPath.replace(/^\//, ""));
+            } else if (localPath.match(/^[A-Za]:/)) {
+              // 本地绝对路径直接用
+            } else {
+              localPath = path.resolve(localPath);
+            }
+            if (!existsSync(localPath)) {
+              sendJson(response, 400, { error: `文件不存在: ${localPath}` });
+              return;
+            }
+
+            const fileName = path.basename(localPath);
+            const isImage = /\.(png|jpg|jpeg|webp)$/i.test(fileName);
+            const mimeType = isImage ? "image/png" : "video/mp4";
+
+            store.logCdpEvent(null, "info", `保存草稿: 上传文件 ${fileName} 到 iPhone (${body.udid})`);
+
+            // 1. 上传文件到 Mac
+            const asset = await iosFarmClient.uploadAsset(localPath, fileName);
+            store.logCdpEvent(null, "info", `保存草稿: 文件上传成功, assetId=${asset.id || asset.assetId}`);
+
+            // 2. 创建 draft 任务（destination=draft）
+            const caption = body.caption || "";
+            const schedule = await iosFarmClient.createPostSchedule({
+              deviceUdid: body.udid,
+              media: [{
+                assetId: asset.id || asset.assetId,
+                name: asset.originalName || fileName,
+                mimeType,
+              }],
+              account: "",
+              caption,
+              destination: "draft",
+              timing: { kind: "now" },
+            });
+
+            const scheduleId = schedule?.id || schedule?.scheduleId;
+            store.logCdpEvent(null, "info", `保存草稿: 任务已创建, scheduleId=${scheduleId}`);
+
+            sendJson(response, 200, { ok: true, scheduleId, message: "草稿保存任务已创建" });
+          } catch (e) {
+            store.logCdpEvent(null, "error", `保存草稿失败: ${e.message}`);
+            sendJson(response, 400, { error: e.message });
+          }
+          return;
+        }
+
         // GET /api/ios-farm/executions — 列出执行历史
         const iosFarmExecMatch = pathname.match(/^\/api\/ios-farm\/executions\/?$/);
         if (request.method === "GET" && iosFarmExecMatch) {
