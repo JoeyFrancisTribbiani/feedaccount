@@ -137,7 +137,8 @@ function genId() {
 }
 
 function sanitizeFilename(name) {
-  return (name || "").replace(/[<>:"/\\|?*]/g, "_").replace(/\s+/g, " ").trim().substring(0, 100);
+  const EMOJI = /[\u{1F000}-\u{1FFFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE00}-\u{FE0F}\u{1F900}-\u{1F9FF}\u{2700}-\u{27BF}]/gu;
+  return (name || "").replace(EMOJI, '').replace(/[<>:"/\\|?*]/g, "_").replace(/\s+/g, " ").trim().substring(0, 100);
 }
 
 function randomBetween(min, max) {

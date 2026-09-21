@@ -1,0 +1,60 @@
+{
+  "remix_creators": {
+    "count": 0,
+    "columns": [],
+    "rows": []
+  },
+  "matrix_profiles": {
+    "count": 0,
+    "columns": [],
+    "rows": []
+  },
+  "tk_accounts": {
+    "count": 0,
+    "columns": [],
+    "rows": []
+  },
+  "matrix_auto_publish_config": {
+    "error": "no such table: matrix_auto_publish_config"
+  },
+  "ai_remix_presets": {
+    "count": 0,
+    "columns": [],
+    "rows": []
+  },
+  "remix_resources": {
+    "count": 0,
+    "columns": [],
+    "rows": []
+  },
+  "chrome_instances": {
+    "count": 0,
+    "columns": [],
+    "rows": []
+  },
+  "matrix_accounts": {
+    "count": 0,
+    "columns": [],
+    "rows": []
+  },
+  "tk_video_materials": {
+    "count": 0,
+    "columns": [],
+    "rows": []
+  },
+  "creator_video_monitor": {
+    "count": 0,
+    "columns": [],
+    "rows": []
+  },
+  "remix_tasks": {
+    "count": 0,
+    "columns": [],
+    "rows": []
+  },
+  "tk_publish_jobs": {
+    "count": 0,
+    "columns": [],
+    "rows": []
+  }
+}

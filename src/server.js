@@ -355,6 +355,11 @@ async function parseMultipartSimple(request) {
   return { fields, files };
 }
 
+const EMOJI_REGEX = /[\u{1F000}-\u{1FFFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE00}-\u{FE0F}\u{1F900}-\u{1F9FF}\u{2700}-\u{27BF}]/gu;
+function sanitizeFileName(name) {
+  return (name || "ai_remix").replace(EMOJI_REGEX, '').replace(/[<>:"/\\|?*]/g, '_').replace(/\s+/g, ' ').trim().substring(0, 100);
+}
+
 async function serveStatic(publicDir, urlPath, response, headOnly = false) {
   const requested = urlPath === "/" ? "index.html" : decodeURIComponent(urlPath.slice(1));
   const normalized = path.normalize(requested).replace(/^(\.\.[/\\])+/, "");
@@ -864,7 +869,7 @@ export function createMonitorServer({
             if (multiVideoMode) {
               // 多视频混剪模式：ChatGPT 返回的已经是成品视频，直接标记完成
               store.logCdpEvent(null, "info", `多视频混剪模式，视频直接作为成品`, null, taskId);
-              const safeName = (videoTitle || "ai_remix").replace(/[<>:"/\\|?*]/g, '_').substring(0, 100);
+              const safeName = sanitizeFileName(videoTitle);
               const finalOutputName = `${safeName}_${taskId.substring(0, 8)}.mp4`;
               const finalOutputPath = path.join(getOutputDir(), finalOutputName);
               const { copyFile } = await import("fs/promises");
@@ -993,7 +998,7 @@ export function createMonitorServer({
                     }
 
                     // 4. concat 拼接
-                    const finalOutputName = `${(videoTitle || "ai_remix").replace(/[<>:"/\\|?*]/g, '_').substring(0, 100)}_${taskId.substring(0, 8)}.mp4`;
+                    const finalOutputName = `${sanitizeFileName(videoTitle)}_${taskId.substring(0, 8)}.mp4`;
                     const finalOutputPath = path.join(getOutputDir(), finalOutputName);
                     const listFile = path.join(getOutputDir(), `concat_list_${Date.now()}.txt`);
                     const { writeFileSync: writeSync } = await import("fs");
@@ -4066,7 +4071,7 @@ export function createMonitorServer({
                   if (!segFiles.length) throw new Error("没有成功裁剪任何分段");
 
                   // concat 拼接
-                  const finalOutputName = `${(origTask.title || "ai_remix").replace(/[<>:"/\\|?*]/g, '_').substring(0, 100)}_${taskId.substring(0, 8)}.mp4`;
+                  const finalOutputName = `${sanitizeFileName(origTask.title)}_${taskId.substring(0, 8)}.mp4`;
                   const finalOutputPath = path.join(getOutputDir(), finalOutputName);
                   const listFile = path.join(getOutputDir(), `concat_list_${Date.now()}.txt`);
                   const { writeFileSync: writeSync } = await import("fs");
