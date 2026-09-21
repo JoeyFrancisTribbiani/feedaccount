@@ -1690,7 +1690,20 @@ export function createMonitorServer({
             sendJson(response, 200, { ok: true, ...result });
           } else if (action === "daemon-status") {
             const status = getCdpDaemonStatus(instId);
-            sendJson(response, 200, { ok: true, ...status });
+            // 同时检测 Chrome 端口是否在线
+            let chromeOnline = false;
+            try {
+              const http = await import('node:http');
+              chromeOnline = await new Promise((resolve) => {
+                const req = http.default.get(`http://${inst.cdpHost || '127.0.0.1'}:${inst.cdpPort}/json/version`, { timeout: 2000 }, (res) => {
+                  resolve(res.statusCode === 200);
+                  res.destroy();
+                });
+                req.on('error', () => resolve(false));
+                req.on('timeout', () => { req.destroy(); resolve(false); });
+              });
+            } catch {}
+            sendJson(response, 200, { ok: true, ...status, chromeOnline });
           }
         } catch (e) {
           store.logCdpEvent(instId, "error", `守护进程操作失败 (${action}): ${e.message}`);
@@ -1803,6 +1816,17 @@ export function createMonitorServer({
           profilePath: profilePath,
         });
         store.logCdpEvent(instance.id, "info", `Chrome 调试实例已启动 (PID=${child.pid}, 端口=${cdpPort})`);
+
+        // 自动启动 daemon
+        try {
+          const daemonResult = startCdpDaemon(instance);
+          store.logCdpEvent(instance.id, "info", `守护进程已自动启动 (PID=${daemonResult.pid}, 端口=${instance.daemonPort})`);
+        } catch (e) {
+          store.logCdpEvent(instance.id, "error", `守护进程自动启动失败: ${e.message}`);
+        }
+
+        // 等待 Chrome 端口就绪
+        await new Promise(resolve => setTimeout(resolve, 2000));
 
         sendJson(response, 200, { ok: true, pid: child.pid, chromePath, cdpPort, profilePath, instanceId: instance.id });
         return;

@@ -5222,13 +5222,13 @@ function renderCdpInstances() {
   list.forEach(inst => checkCdpOnlineStatus(inst));
 }
 
-// 检测单个 CDP 实例是否在线
+// 检测单个 CDP 实例是否在线（通过后端 API 避免 CORS）
 async function checkCdpOnlineStatus(inst) {
   const row = cdpEl.tableBody?.querySelector(`tr[data-cdp-id="${CSS.escape(inst.id)}"] td.cdp-online-status`);
   if (!row) return;
   try {
-    const res = await fetch(`http://${inst.cdpHost || 'localhost'}:${inst.cdpPort}/json/version`, { signal: AbortSignal.timeout(3000) });
-    if (res.ok) {
+    const res = await request(`/api/cdp/instances/${encodeURIComponent(inst.id)}/daemon-status`, { method: "GET" });
+    if (res.chromeOnline) {
       row.innerHTML = '<span style="color:#22c55e;font-size:12px;font-weight:600;">● 在线</span>';
     } else {
       row.innerHTML = '<span style="color:#ef4444;font-size:12px;">● 离线</span>';
