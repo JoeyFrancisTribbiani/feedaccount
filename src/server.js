@@ -5624,6 +5624,101 @@ if (isMain) {
   const { server, jobs, autoScheduler } = createMonitorServer({ bitBrowserApiUrl, databasePath });
   autoScheduler.start();
 
+  // --- 达人自动下载主页视频 ---
+  // 每 30 分钟检查一次，对 auto_download=1 且有 platform_id 的达人，解析主页并下载未下载的视频
+  let autoDownloadRunning = false;
+  async function runAutoDownload() {
+    if (autoDownloadRunning) return;
+    autoDownloadRunning = true;
+    try {
+      const creators = store.db.prepare(
+        "SELECT id, name, platform, platform_id, auto_download FROM remix_creators WHERE auto_download = 1 AND platform_id IS NOT NULL AND platform_id != ''"
+      ).all();
+      if (!creators.length) return;
+      store.logCdpEvent(null, "info", `自动下载: 检查 ${creators.length} 个开启自动下载的达人`);
+
+      for (const creator of creators) {
+        // 只处理 TikTok 平台
+        if (creator.platform && creator.platform.toLowerCase() !== "tiktok") continue;
+        const platformId = creator.platform_id.replace(/^@/, "");
+
+        try {
+          store.logCdpEvent(null, "info", `自动下载: 开始解析 @${platformId} (达人: ${creator.name})`);
+
+          // 调用 parse-profile API 解析主页
+          const parseRes = await fetch(`http://127.0.0.1:${port || DEFAULT_SERVER_PORT}/api/tiktok/parse-profile`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ url: `https://www.tiktok.com/@${platformId}` }),
+            signal: AbortSignal.timeout(30000),
+          });
+          if (!parseRes.ok) {
+            store.logCdpEvent(null, "error", `自动下载: 解析 @${platformId} 失败 (HTTP ${parseRes.status})`);
+            continue;
+          }
+
+          // 等待解析完成（最多 5 分钟）
+          const parseTaskId = (await parseRes.json()).taskId;
+          if (parseTaskId) {
+            // 轮询等待解析完成
+            let parseDone = false;
+            for (let i = 0; i < 60; i++) {
+              await new Promise(r => setTimeout(r, 5000));
+              const statusRes = await fetch(`http://127.0.0.1:${port || DEFAULT_SERVER_PORT}/api/tiktok/parse-status/${encodeURIComponent(parseTaskId)}`, {
+                signal: AbortSignal.timeout(5000),
+              });
+              if (statusRes.ok) {
+                const statusData = await statusRes.json();
+                const logs = statusData.logs || [];
+                if (logs.some(l => l.message?.includes('"done"') || l.message?.includes('"error"'))) {
+                  parseDone = true;
+                  break;
+                }
+              }
+            }
+            if (!parseDone) {
+              store.logCdpEvent(null, "warning", `自动下载: 解析 @${platformId} 超时`);
+            }
+          }
+
+          // 解析完成后，下载该达人所有未下载的视频
+          await new Promise(r => setTimeout(r, 3000));
+          const pending = store.db.prepare(
+            "SELECT id, source_url FROM remix_videos WHERE creator_id = ? AND downloaded = 0 AND source_url IS NOT NULL AND source_url != '' ORDER BY COALESCE(create_time, '9999999999') ASC LIMIT 50"
+          ).all(creator.id);
+
+          if (!pending.length) {
+            store.logCdpEvent(null, "info", `自动下载: @${platformId} 所有视频已下载完成`);
+            continue;
+          }
+
+          store.logCdpEvent(null, "info", `自动下载: @${platformId} 有 ${pending.length} 个未下载视频，开始下载`);
+
+          // 串行下载
+          for (const v of pending) {
+            try {
+              await processSingleTiktokDownload(v.source_url);
+              store.logCdpEvent(null, "info", `自动下载完成: ${v.source_url}`);
+            } catch (e) {
+              store.logCdpEvent(null, "error", `自动下载失败: ${v.source_url} - ${e.message}`);
+            }
+            await new Promise(r => setTimeout(r, 3000));
+          }
+        } catch (e) {
+          store.logCdpEvent(null, "error", `自动下载: 处理 @${platformId} 异常: ${e.message}`);
+        }
+      }
+    } catch (e) {
+      store.logCdpEvent(null, "error", `自动下载任务异常: ${e.message}`);
+    } finally {
+      autoDownloadRunning = false;
+    }
+  }
+
+  // 启动后 60 秒执行第一次，之后每 30 分钟检查一次
+  setTimeout(() => runAutoDownload().catch(() => {}), 60000);
+  setInterval(() => runAutoDownload().catch(() => {}), 30 * 60 * 1000);
+
   // 自动启动 ngrok
   const ngrokCfg = loadNgrokConfig();
   if (ngrokCfg?.autoStart && ngrokCfg?.url) {
