@@ -4601,6 +4601,7 @@ export function createMonitorServer({
 
             const updated = store.upsertMatrixAutoPublishConfig(matrixId, {
               enabled: body.enabled,
+              autoStock: body.autoStock,
               presetId: body.presetId,
               dailyLimit: body.dailyLimit,
               dailyStock: body.dailyStock,

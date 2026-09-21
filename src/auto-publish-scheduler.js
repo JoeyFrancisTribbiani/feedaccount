@@ -716,6 +716,10 @@ export class AutoPublishScheduler extends EventTarget {
           matrixId = mp?.matrix_id;
         }
         const cfg = matrixId ? this._getMatrixConfig(matrixId) : null;
+
+        // 自动发布没开启（只有自动库存），不排期发布
+        if (cfg && !cfg.enabled) continue;
+
         const dailyLimit = cfg?.dailyLimit ?? 3;
 
         // 获取或初始化今日计数（按北京时间）

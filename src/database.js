@@ -652,6 +652,7 @@ export class LocalDatabase {
     // 补充 cdp_instance_id 列（调度器混剪仍需要）
     this.#ensureColumn("matrix_auto_publish_config", "cdp_instance_id", "TEXT");
     this.#ensureColumn("matrix_auto_publish_config", "daily_stock", "INTEGER DEFAULT 3");
+    this.#ensureColumn("matrix_auto_publish_config", "auto_stock", "INTEGER DEFAULT 0");
 
     // 2.4.5 matrix_profiles 重建为 1:1 约束（若旧约束仍在）
     // 注意：必须在数据迁移（2.4.3/2.4.4）之前执行，确保新表已是 1:1 约束
@@ -1881,6 +1882,7 @@ export class LocalDatabase {
     return {
       matrixId: row.matrix_id,
       enabled: row.enabled ? 1 : 0,
+      autoStock: row.auto_stock ? 1 : 0,
       presetId: row.preset_id || null,
       dailyLimit: Number(row.daily_limit ?? 3),
       dailyStock: Number(row.daily_stock ?? 3),
@@ -1897,7 +1899,7 @@ export class LocalDatabase {
   }
 
   upsertMatrixAutoPublishConfig(matrixId, {
-    enabled = undefined, presetId = undefined, dailyLimit = undefined, dailyStock = undefined,
+    enabled = undefined, autoStock = undefined, presetId = undefined, dailyLimit = undefined, dailyStock = undefined,
     monitorIntervalHours = undefined, lastMonitorAt = undefined,
     publishTimeSlots = undefined, ratio = undefined,
     hashtagsJson = undefined, privacyLevel = undefined, cdpInstanceId = undefined,
@@ -1911,6 +1913,7 @@ export class LocalDatabase {
       const params = [];
       // 改用 !== undefined 判断，这样传 null 可以清空对应字段
       if (enabled !== undefined) { sets.push("enabled = ?"); params.push(enabled ? 1 : 0); }
+      if (autoStock !== undefined) { sets.push("auto_stock = ?"); params.push(autoStock ? 1 : 0); }
       if (presetId !== undefined) { sets.push("preset_id = ?"); params.push(presetId); }
       if (dailyLimit !== undefined) { sets.push("daily_limit = ?"); params.push(dailyLimit); }
       if (dailyStock !== undefined) { sets.push("daily_stock = ?"); params.push(dailyStock); }
@@ -1929,13 +1932,14 @@ export class LocalDatabase {
     } else {
       this.db.prepare(`
         INSERT INTO matrix_auto_publish_config
-          (matrix_id, enabled, preset_id, daily_limit, daily_stock, monitor_interval_hours,
+          (matrix_id, enabled, auto_stock, preset_id, daily_limit, daily_stock, monitor_interval_hours,
            last_monitor_at, publish_time_slots, ratio, hashtags_json,
            privacy_level, cdp_instance_id, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         matrixId,
         enabled !== undefined ? (enabled ? 1 : 0) : 0,
+        autoStock !== undefined ? (autoStock ? 1 : 0) : 0,
         presetId !== undefined ? presetId : null,
         dailyLimit !== undefined ? dailyLimit : 3,
         dailyStock !== undefined ? dailyStock : 3,
@@ -1954,11 +1958,12 @@ export class LocalDatabase {
 
   listEnabledMatrixConfigs() {
     const rows = this.db
-      .prepare("SELECT * FROM matrix_auto_publish_config WHERE enabled = 1")
+      .prepare("SELECT * FROM matrix_auto_publish_config WHERE enabled = 1 OR auto_stock = 1")
       .all();
     return rows.map((r) => ({
       matrixId: r.matrix_id,
       enabled: r.enabled !== 0,
+      autoStock: r.auto_stock !== 0,
       presetId: r.preset_id || null,
       dailyLimit: Number(r.daily_limit ?? 3),
       dailyStock: Number(r.daily_stock ?? 3),

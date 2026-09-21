@@ -6163,6 +6163,16 @@ function renderMatrixAutoPublishConfig(cfg) {
       </div>
     </div>
     <div class="mx-ap-row">
+      <span class="mx-ap-label">自动库存</span>
+      <div class="mx-ap-value">
+        <label class="mx-ap-switch">
+          <input type="checkbox" id="mx-ap-auto-stock" ${cfg.autoStock ? 'checked' : ''} />
+          <span class="mx-ap-switch-slider"></span>
+        </label>
+        <span style="font-size:11px;color:var(--text-muted,#94a3b8);">开启后即使不自动发布也会每天混剪补充库存</span>
+      </div>
+    </div>
+    <div class="mx-ap-row">
       <span class="mx-ap-label">混剪方案</span>
       <div class="mx-ap-value">
         <select id="mx-ap-preset" style="min-width:160px;">
@@ -6267,6 +6277,7 @@ async function saveMatrixAutoPublishConfig() {
   const intervalEl = document.querySelector('#mx-ap-interval');
   const payload = {
     enabled: enabledEl?.checked ? 1 : 0,
+    autoStock: document.querySelector('#mx-ap-auto-stock')?.checked ? 1 : 0,
     presetId: presetEl?.value || null,
     dailyLimit: parseInt(dailyEl?.value, 10) || 0,
     dailyStock: parseInt(stockEl?.value, 10) || 0,
@@ -6306,7 +6317,7 @@ mxEl.saveAutopublish?.addEventListener('click', () => saveMatrixAutoPublishConfi
 
 // 自动发布开关 change 事件 — 自动保存
 document.addEventListener('change', (e) => {
-  if (e.target?.id === 'mx-ap-enabled') {
+  if (e.target?.id === 'mx-ap-enabled' || e.target?.id === 'mx-ap-auto-stock') {
     saveMatrixAutoPublishConfig();
   }
   if (e.target?.id === 'mx-ap-preset' || e.target?.id === 'mx-ap-daily' || e.target?.id === 'mx-ap-stock' || e.target?.id === 'mx-ap-interval') {
