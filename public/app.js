@@ -6152,62 +6152,69 @@ function renderMatrixAutoPublishConfig(cfg) {
   const slotsVal = cfg.publishTimeSlots ? (typeof cfg.publishTimeSlots === 'string' ? (() => { try { return JSON.parse(cfg.publishTimeSlots).join(', '); } catch { return cfg.publishTimeSlots; } })() : cfg.publishTimeSlots.join(', ')) : '';
 
   mxEl.autopublishConfig.innerHTML = `
-    <div class="mx-ap-row">
-      <span class="mx-ap-label">自动发布</span>
-      <div class="mx-ap-value">
-        <label class="mx-ap-switch">
-          <input type="checkbox" id="mx-ap-enabled" ${enabled ? 'checked' : ''} />
-          <span class="mx-ap-switch-slider"></span>
-        </label>
-        <span style="font-size:11px;color:var(--text-muted,#94a3b8);">${enabled ? '已开启' : '已关闭'}</span>
+    <!-- ====== 自动库存 ====== -->
+    <div style="border:1px solid var(--line);border-radius:8px;padding:12px;margin-bottom:12px;">
+      <div class="mx-ap-row" style="border:none;padding:0 0 8px 0;">
+        <span class="mx-ap-label" style="font-weight:700;font-size:13px;">自动库存</span>
+        <div class="mx-ap-value">
+          <label class="mx-ap-switch">
+            <input type="checkbox" id="mx-ap-auto-stock" ${cfg.autoStock ? 'checked' : ''} />
+            <span class="mx-ap-switch-slider"></span>
+          </label>
+          <span style="font-size:11px;color:var(--text-muted,#94a3b8);">开启后按配置每天混剪补充库存，不自动发布</span>
+        </div>
+      </div>
+      <div class="mx-ap-row">
+        <span class="mx-ap-label">混剪方案</span>
+        <div class="mx-ap-value">
+          <select id="mx-ap-preset" style="min-width:160px;">
+            <option value="">不指定</option>
+            ${presetOptions}
+          </select>
+        </div>
+      </div>
+      <div class="mx-ap-row">
+        <span class="mx-ap-label">每日库存数</span>
+        <div class="mx-ap-value">
+          <input type="number" id="mx-ap-stock" min="0" max="50" value="${escapeHtml(String(cfg.dailyStock ?? 3))}" style="width:60px;" /> 条
+          <span class="mx-ap-hint">（库存低于此值时触发混剪）</span>
+        </div>
+      </div>
+      <div class="mx-ap-row">
+        <span class="mx-ap-label">监控间隔</span>
+        <div class="mx-ap-value">
+          <input type="number" id="mx-ap-interval" min="1" max="168" value="${escapeHtml(String(cfg.monitorIntervalHours ?? 6))}" style="width:70px;" /> 小时
+        </div>
       </div>
     </div>
-    <div class="mx-ap-row">
-      <span class="mx-ap-label">自动库存</span>
-      <div class="mx-ap-value">
-        <label class="mx-ap-switch">
-          <input type="checkbox" id="mx-ap-auto-stock" ${cfg.autoStock ? 'checked' : ''} />
-          <span class="mx-ap-switch-slider"></span>
-        </label>
-        <span style="font-size:11px;color:var(--text-muted,#94a3b8);">开启后即使不自动发布也会每天混剪补充库存</span>
+
+    <!-- ====== 自动发布 ====== -->
+    <div style="border:1px solid var(--line);border-radius:8px;padding:12px;">
+      <div class="mx-ap-row" style="border:none;padding:0 0 8px 0;">
+        <span class="mx-ap-label" style="font-weight:700;font-size:13px;">自动发布</span>
+        <div class="mx-ap-value">
+          <label class="mx-ap-switch">
+            <input type="checkbox" id="mx-ap-enabled" ${enabled ? 'checked' : ''} />
+            <span class="mx-ap-switch-slider"></span>
+          </label>
+          <span style="font-size:11px;color:var(--text-muted,#94a3b8);">${enabled ? '已开启' : '已关闭'}</span>
+        </div>
       </div>
-    </div>
-    <div class="mx-ap-row">
-      <span class="mx-ap-label">混剪方案</span>
-      <div class="mx-ap-value">
-        <select id="mx-ap-preset" style="min-width:160px;">
-          <option value="">不指定</option>
-          ${presetOptions}
-        </select>
+      <div class="mx-ap-row">
+        <span class="mx-ap-label">每日发布上限</span>
+        <div class="mx-ap-value">
+          <input type="number" id="mx-ap-daily" min="0" max="50" value="${escapeHtml(String(cfg.dailyLimit ?? 3))}" style="width:60px;" /> 条
+        </div>
       </div>
-    </div>
-    <div class="mx-ap-row">
-      <span class="mx-ap-label">每日发布上限</span>
-      <div class="mx-ap-value">
-        <input type="number" id="mx-ap-daily" min="0" max="50" value="${escapeHtml(String(cfg.dailyLimit ?? 3))}" style="width:60px;" /> 条
-      </div>
-    </div>
-    <div class="mx-ap-row">
-      <span class="mx-ap-label">每日库存数</span>
-      <div class="mx-ap-value">
-        <input type="number" id="mx-ap-stock" min="0" max="50" value="${escapeHtml(String(cfg.dailyStock ?? 3))}" style="width:60px;" /> 条
-        <span class="mx-ap-hint">（库存低于此值时触发混剪）</span>
-      </div>
-    </div>
-    <div class="mx-ap-row">
-      <span class="mx-ap-label">监控间隔</span>
-      <div class="mx-ap-value">
-        <input type="number" id="mx-ap-interval" min="1" max="168" value="${escapeHtml(String(cfg.monitorIntervalHours ?? 6))}" style="width:70px;" /> 小时
-      </div>
-    </div>
-    <div class="mx-ap-row">
-      <span class="mx-ap-label">发布时间段</span>
-      <div class="mx-ap-value" style="display:flex;flex-direction:column;gap:4px;width:280px;">
-        <div id="mx-ap-slots-list" style="display:flex;flex-wrap:wrap;gap:4px;"></div>
-        <div style="display:flex;gap:4px;">
-          <input type="time" id="mx-ap-time-input" style="width:90px;font-size:12px;padding:2px 4px;border:1px solid var(--line);border-radius:4px;background:var(--bg);color:var(--text);" />
-          <button type="button" id="mx-ap-time-add" class="button button-secondary" style="font-size:11px;padding:2px 8px;">+ 添加时间</button>
-          <span style="font-size:10px;color:var(--text-muted);align-self:center;">HH:MM 精确时间</span>
+      <div class="mx-ap-row">
+        <span class="mx-ap-label">发布时间段</span>
+        <div class="mx-ap-value" style="display:flex;flex-direction:column;gap:4px;width:280px;">
+          <div id="mx-ap-slots-list" style="display:flex;flex-wrap:wrap;gap:4px;"></div>
+          <div style="display:flex;gap:4px;">
+            <input type="time" id="mx-ap-time-input" style="width:90px;font-size:12px;padding:2px 4px;border:1px solid var(--line);border-radius:4px;background:var(--bg);color:var(--text);" />
+            <button type="button" id="mx-ap-time-add" class="button button-secondary" style="font-size:11px;padding:2px 8px;">+ 添加时间</button>
+            <span style="font-size:10px;color:var(--text-muted);align-self:center;">HH:MM 精确时间</span>
+          </div>
         </div>
       </div>
     </div>
