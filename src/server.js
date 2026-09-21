@@ -4686,9 +4686,20 @@ export function createMonitorServer({
           }
 
           // 查矩阵的 profile_id（tiktok 平台账号绑定的实例）
-          const matrixProfile = store.db
+          let matrixProfile = store.db
             .prepare("SELECT profile_id FROM matrix_profiles WHERE matrix_id = ?")
             .all(body.matrixId);
+
+          // 如果指定了账号，只发到该账号绑定的 profile
+          if (body.accountId) {
+            const accProfile = store.db
+              .prepare("SELECT mp.profile_id FROM matrix_accounts ma JOIN matrix_profiles mp ON mp.matrix_id = ma.matrix_id WHERE ma.id = ?")
+              .get(body.accountId);
+            if (accProfile?.profile_id) {
+              matrixProfile = matrixProfile.filter(mp => mp.profile_id === accProfile.profile_id);
+            }
+          }
+
           if (!matrixProfile.length) {
             sendJson(response, 400, { error: "该矩阵没有绑定的发布实例" });
             return;

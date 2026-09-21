@@ -8530,6 +8530,19 @@ const autoPublish = {
     matrixSel.innerHTML = '<option value="">请选择矩阵</option>' +
       (this.matrices || []).map(m => `<option value="${escapeHtml(m.id)}">${escapeHtml(m.name)}</option>`).join('');
 
+    // 矩阵切换时加载账号
+    matrixSel.onchange = () => {
+      const accSel = document.getElementById('manual-add-account');
+      const mid = matrixSel.value;
+      if (!mid) { accSel.innerHTML = '<option value="">该矩阵所有账号</option>'; return; }
+      const m = (this.matrices || []).find(x => x.id === mid);
+      const accs = m?.accounts || [];
+      accSel.innerHTML = '<option value="">该矩阵所有账号</option>' +
+        accs.map(a => `<option value="${escapeHtml(a.id)}">${escapeHtml(a.platform || '')} / ${escapeHtml(a.accountName || '')}</option>`).join('');
+    };
+    // 初始触发一次
+    matrixSel.onchange();
+
     // 加载已完成的混剪任务
     videoSel.innerHTML = '<option value="">加载中…</option>';
     try {
@@ -8547,18 +8560,20 @@ const autoPublish = {
 
   async submitManualAdd() {
     const matrixId = document.getElementById('manual-add-matrix')?.value;
+    const accountId = document.getElementById('manual-add-account')?.value || '';
     const remixTaskId = document.getElementById('manual-add-video')?.value;
     const publishTime = document.getElementById('manual-add-time')?.value || '';
 
     if (!matrixId) { showToast('请选择矩阵', true); return; }
     if (!remixTaskId) { showToast('请选择视频', true); return; }
 
-    if (!confirm(`确认添加到待发布池？\n矩阵: ${this.matrices.find(m => m.id === matrixId)?.name || matrixId}\n发布时间: ${publishTime || '立即排期'}`)) return;
+    const accLabel = accountId ? (this.matrices.find(m => m.id === matrixId)?.accounts?.find(a => a.id === accountId)?.accountName || accountId) : '所有账号';
+    if (!confirm(`确认添加到待发布池？\n矩阵: ${this.matrices.find(m => m.id === matrixId)?.name || matrixId}\n账号: ${accLabel}\n发布时间: ${publishTime || '立即排期'}`)) return;
 
     try {
       const res = await request('/api/auto-publish/manual-add', {
         method: 'POST',
-        body: JSON.stringify({ matrixId, remixTaskId, publishTime }),
+        body: JSON.stringify({ matrixId, accountId, remixTaskId, publishTime }),
       });
       showToast(`已添加 ${res.created?.length || 0} 个发布任务到待发布池`);
       document.getElementById('manual-add-modal').style.display = 'none';
