@@ -1935,7 +1935,7 @@ export class LocalDatabase {
           (matrix_id, enabled, auto_stock, preset_id, daily_limit, daily_stock, monitor_interval_hours,
            last_monitor_at, publish_time_slots, ratio, hashtags_json,
            privacy_level, cdp_instance_id, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         matrixId,
         enabled !== undefined ? (enabled ? 1 : 0) : 0,
